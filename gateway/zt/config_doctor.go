@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net/url"
@@ -42,18 +41,6 @@ type doctorResult struct {
 	Warnings      int            `json:"warnings"`
 	Resolved      doctorResolved `json:"resolved"`
 	Checks        []doctorCheck  `json:"checks"`
-}
-
-func runConfigCommand(repoRoot string, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("Usage: zt config doctor")
-	}
-	switch args[0] {
-	case "doctor":
-		return runConfigDoctor(repoRoot, args[1:])
-	default:
-		return fmt.Errorf("Unknown config subcommand: %s\nUsage: zt config doctor", args[0])
-	}
 }
 
 func runConfigDoctor(repoRoot string, args []string) error {
@@ -258,10 +245,4 @@ func runConfigDoctor(repoRoot string, args []string) error {
 		return fmt.Errorf("config doctor failed")
 	}
 	return nil
-}
-
-func emitDoctorJSON(v doctorResult) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
 }
