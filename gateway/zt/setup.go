@@ -1,47 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
-
-type setupCheck struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
-}
-
-type setupResolved struct {
-	AutoSync        bool   `json:"auto_sync"`
-	AutoSyncSource  string `json:"auto_sync_source"`
-	ControlPlaneURL string `json:"control_plane_url"`
-	ControlPlaneSrc string `json:"control_plane_url_source"`
-	APIKeySet       bool   `json:"api_key_set"`
-	APIKeySource    string `json:"api_key_source"`
-	SpoolDir        string `json:"spool_dir"`
-}
-
-type setupResult struct {
-	OK            bool          `json:"ok"`
-	SchemaVersion int           `json:"schema_version"`
-	GeneratedAt   string        `json:"generated_at"`
-	Command       string        `json:"command"`
-	Argv          []string      `json:"argv"`
-	RepoRoot      string        `json:"repo_root"`
-	ConfigSource  string        `json:"config_source"`
-	Failures      int           `json:"failures"`
-	Warnings      int           `json:"warnings"`
-	Resolved      setupResolved `json:"resolved"`
-	Checks        []setupCheck  `json:"checks"`
-	QuickFixes    []string      `json:"quick_fixes,omitempty"`
-	Next          []string      `json:"next,omitempty"`
-}
 
 func runSetup(repoRoot string, opts setupOptions) error {
 	jsonOut := opts.JSON
@@ -258,73 +224,6 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
 	if !result.OK {
 		return fmt.Errorf("setup checks failed")
-	}
-	return nil
-}
-
-func emitSetupJSON(v setupResult) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
-}
-
-func quickFixForMissingTool(name string) string {
-	switch name {
-	case "go":
-		return "Install Go (required). macOS(Homebrew): `brew install go`"
-	case "gpg":
-		return "Install GnuPG for secure-pack verification/signing. macOS(Homebrew): `brew install gnupg`"
-	case "clamscan":
-		return "Install ClamAV scanner. macOS(Homebrew): `brew install clamav`"
-	case "freshclam":
-		return "Install ClamAV updater (`freshclam`) for `zt send --update`. macOS(Homebrew): `brew install clamav`"
-	case "yara":
-		return "Install YARA for rule-based scanning. macOS(Homebrew): `brew install yara`"
-	default:
-		return ""
-	}
-}
-
-func dedupeStrings(items []string) []string {
-	if len(items) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(items))
-	seen := map[string]struct{}{}
-	for _, v := range items {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			continue
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	return out
-}
-
-func checkControlPlaneHealth(baseURL, apiKey string) error {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if baseURL == "" {
-		return fmt.Errorf("empty base url")
-	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/healthz", nil)
-	if err != nil {
-		return err
-	}
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("status=%s", resp.Status)
 	}
 	return nil
 }
