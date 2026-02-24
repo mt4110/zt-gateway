@@ -6,6 +6,7 @@ import (
 
 	"github.com/algo-artis/secure-pack/internal/config"
 	"github.com/algo-artis/secure-pack/internal/ui"
+	"github.com/algo-artis/secure-pack/internal/workflows"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +26,9 @@ for transfer over insecure channels like Slack.`,
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		if code := workflows.ErrorCode(err); code != "" {
+			fmt.Fprintf(os.Stderr, "SECURE_PACK_ERROR_CODE=%s\n", code)
+		}
 		fmt.Println(err)
 		os.Exit(1)
 	}

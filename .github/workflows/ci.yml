@@ -21,6 +21,18 @@ jobs:
     - name: Build
       run: nix build .#zt
 
+    - name: Supply-Chain Setup JSON Gate (fixture)
+      run: |
+        chmod +x scripts/ci/check-zt-setup-json-gate.sh
+        ./scripts/ci/check-zt-setup-json-gate.sh
+
+    - name: Supply-Chain Setup JSON Gate (actual repo; fail-closed when artifacts exist)
+      env:
+        ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS: ${{ vars.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS != '' && vars.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS || secrets.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS }}
+      run: |
+        chmod +x scripts/ci/check-zt-setup-json-actual-gate.sh
+        ./scripts/ci/check-zt-setup-json-actual-gate.sh
+
     - name: Run Integration Tests
       run: |
         chmod +x test/integration.sh

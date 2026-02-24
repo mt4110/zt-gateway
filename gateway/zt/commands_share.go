@@ -15,11 +15,10 @@ func stringsHasSuffixFold(s, suffix string) bool {
 }
 
 func printReceiverVerifyHint(artifactPath string, copyCommand bool) {
-	base := filepath.Base(strings.TrimSpace(artifactPath))
-	if base == "" || base == "." || base == string(filepath.Separator) {
+	cmd := receiverVerifyCommand(artifactPath)
+	if cmd == "" {
 		return
 	}
-	cmd := fmt.Sprintf("zt verify ./%s", base)
 	fmt.Printf("[SHARE] Receiver command example: %s\n", cmd)
 	if !copyCommand {
 		return
@@ -33,12 +32,11 @@ func printReceiverVerifyHint(artifactPath string, copyCommand bool) {
 }
 
 func printReceiverShareText(artifactPath, format string) {
-	base := filepath.Base(strings.TrimSpace(artifactPath))
-	if base == "" || base == "." || base == string(filepath.Separator) {
+	cmd := receiverVerifyCommand(artifactPath)
+	if cmd == "" {
 		return
 	}
 	fmt.Println("[SHARE TEXT]")
-	cmd := fmt.Sprintf("zt verify ./%s", base)
 	switch resolveShareFormat(format) {
 	case "en":
 		fmt.Println("Please run the following command on the receiver side to verify the file.")
@@ -47,6 +45,25 @@ func printReceiverShareText(artifactPath, format string) {
 		fmt.Println("受信側で次のコマンドを実行して検証してください。")
 		fmt.Println(cmd)
 	}
+}
+
+func receiverVerifyCommand(artifactPath string) string {
+	base := filepath.Base(strings.TrimSpace(artifactPath))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	if !stringsHasSuffixFold(base, ".spkg.tgz") {
+		return ""
+	}
+	// Always quote the path so copied examples keep working with spaces and symbols.
+	return fmt.Sprintf("zt verify -- %s", shellQuotePOSIX("./"+base))
+}
+
+func shellQuotePOSIX(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 func resolveShareFormat(format string) string {

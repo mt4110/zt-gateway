@@ -67,6 +67,11 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		APIKeySource:    cpAPIKeySrc,
 		SpoolDir:        spoolDir,
 	}
+	if pinInfo := collectSetupRootPinJSONInfo(repoRoot); pinInfo != nil {
+		result.Resolved.ActualRootFingerprint = pinInfo.ActualRootFingerprint
+		result.Resolved.PinSource = pinInfo.PinSource
+		result.Resolved.PinMatchCount = pinInfo.PinMatchCount
+	}
 	addCheck("auto_sync_resolution", "ok", fmt.Sprintf("resolved=%t source=%s", autoSync, autoSyncSrc))
 	if !jsonOut {
 		fmt.Printf("[INFO] auto_sync=%t (%s)\n", autoSync, autoSyncSrc)
@@ -173,6 +178,15 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	checkTool("freshclam", false, "needed when using --update for ClamAV definitions")
 	checkTool("yara", false, "recommended for rule-based scanning")
 
+	preflight := collectSetupPreflightChecks(repoRoot)
+	for _, c := range preflight.Checks {
+		addCheck(c.Name, c.Status, c.Message)
+		if !jsonOut {
+			printSetupCheckLine(c)
+		}
+	}
+	quickFixes = append(quickFixes, preflight.QuickFixes...)
+
 	if cpURL != "" {
 		if !jsonOut {
 			fmt.Println("")
@@ -195,10 +209,13 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	result.QuickFixes = dedupeStrings(quickFixes)
 	result.Next = []string{
 		"Sender: zt send [--client <name>] <file>",
-		"Receiver: zt verify <artifact.zp|packet.spkg.tgz>",
+		"Receiver: zt verify <packet.spkg.tgz>",
 		"Details: zt --help-advanced",
 	}
 	result.OK = result.Failures == 0
+	if !result.OK {
+		result.ErrorCode = ztErrorCodeSetupChecksFailed
+	}
 
 	if jsonOut {
 		emitSetupJSON(result)
@@ -219,11 +236,45 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	fmt.Println("")
 	fmt.Println("[NEXT]")
 	fmt.Println("1. Sender:   zt send [--client <name>] <file>")
-	fmt.Println("2. Receiver: zt verify <artifact.zp|packet.spkg.tgz>")
+	fmt.Println("2. Receiver: zt verify <packet.spkg.tgz>")
 	fmt.Println("3. Details:  zt --help-advanced")
 	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
 	if !result.OK {
+		printZTErrorCode(result.ErrorCode)
 		return fmt.Errorf("setup checks failed")
 	}
 	return nil
+}
+
+type setupRootPinJSONInfo struct {
+	ActualRootFingerprint string
+	PinSource             string
+	PinMatchCount         int
+}
+
+func collectSetupRootPinJSONInfo(repoRoot string) *setupRootPinJSONInfo {
+	pins, source, pinErr := resolveSecurePackRootPubKeyFingerprintPinsWithSource()
+	info := &setupRootPinJSONInfo{PinSource: source}
+	if pinErr != nil {
+		info.PinSource = "invalid"
+	}
+	rootPubKeyPath := filepath.Join(repoRoot, "tools", "secure-pack", "ROOT_PUBKEY.asc")
+	if _, err := os.Stat(rootPubKeyPath); err != nil {
+		if info.PinSource == "" {
+			info.PinSource = "none"
+		}
+		return info
+	}
+	if _, err := exec.LookPath("gpg"); err != nil {
+		return info
+	}
+	actual, err := readRootPubKeyFingerprint(rootPubKeyPath)
+	if err != nil {
+		return info
+	}
+	info.ActualRootFingerprint = actual
+	if pinErr == nil {
+		info.PinMatchCount = countFingerprintMatches(actual, pins)
+	}
+	return info
 }

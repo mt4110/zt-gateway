@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fixture_dir="${repo_root}/testdata/secure-pack-supplychain"
+tmp_repo="$(mktemp -d)"
+cleanup() {
+  rm -rf "${tmp_repo}"
+}
+trap cleanup EXIT
+
+mkdir -p "${tmp_repo}/policy" "${tmp_repo}/tools/secure-pack" "${tmp_repo}/gateway/zt"
+cp "${fixture_dir}/tools.lock" "${tmp_repo}/tools/secure-pack/tools.lock"
+cp "${fixture_dir}/tools.lock.sig" "${tmp_repo}/tools/secure-pack/tools.lock.sig"
+cp "${fixture_dir}/ROOT_PUBKEY.asc" "${tmp_repo}/tools/secure-pack/ROOT_PUBKEY.asc"
+
+cat > "${tmp_repo}/policy/policy.toml" <<'EOF'
+[policy]
+name = "ci-fixture"
+EOF
+
+cat > "${tmp_repo}/policy/scan_policy.toml" <<'EOF'
+required_scanners = []
+require_clamav_db = false
+EOF
+
+fpr="$(tr -d '\r\n' < "${fixture_dir}/FINGERPRINT.txt")"
+json_out="${tmp_repo}/zt-setup.json"
+zt_bin="${tmp_repo}/zt-bin"
+
+(
+  cd "${repo_root}"
+  go build -o "${zt_bin}" ./gateway/zt
+)
+
+(
+  cd "${tmp_repo}"
+  ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${fpr}" "${zt_bin}" setup --json > "${json_out}"
+)
+
+python3 - "${json_out}" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+checks = {c.get("name"): c.get("status") for c in data.get("checks", [])}
+required = [
+    "secure_pack_supply_chain_files",
+    "secure_pack_root_pubkey_fingerprint",
+    "secure_pack_tools_lock_signature",
+]
+bad = [(name, checks.get(name)) for name in required if checks.get(name) != "ok"]
+if not data.get("ok"):
+    raise SystemExit(f"zt setup fixture gate failed: ok=false error_code={data.get('error_code')}")
+if bad:
+    raise SystemExit("zt setup fixture gate failed checks: " + ", ".join(f"{k}={v}" for k, v in bad))
+print("zt setup --json fixture gate OK")
+PY

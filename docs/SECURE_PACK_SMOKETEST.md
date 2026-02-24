@@ -12,6 +12,31 @@
 
 - `gpg` がインストール済み
 - リポジトリルートでコマンド実行
+- `tools/secure-pack/tools.lock` / `tools.lock.sig` / `ROOT_PUBKEY.asc` が配置済み（`zt send` は fail-closed）
+
+## ROOT_PUBKEY fingerprint pin 設定（必須）
+
+`zt setup` / `zt send` precheck は `ROOT_PUBKEY.asc` の fingerprint pin が未設定だと失敗します。
+先に fingerprint を別経路（電話/対面/別チャネル）で確認し、環境変数に固定してください。
+
+```bash
+# 1) repo内の root key fingerprint を取得（表示値は別経路で照合）
+ROOT_FPR="$(gpg --show-keys --with-colons ./tools/secure-pack/ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+
+# 2) zt の precheck/setup 用 pin（必須）
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+
+# 3) secure-pack 単体CLIも使う場合は同じ値を設定（任意）
+export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+```
+
+鍵ローテーション時は複数許容できます（`,` または改行区切り）:
+
+```bash
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="OLD_FPR_40HEX,NEW_FPR_40HEX"
+```
+
+本番運用の切替手順（併記期間 / 切替日 / 削除日 / rollback）は `docs/SECURE_PACK_KEY_ROTATION_RUNBOOK.md` を参照してください。
 
 ## セットアップ（推奨）
 
@@ -30,6 +55,8 @@ bash ./scripts/dev/setup-secure-pack-localtest-gpg.sh
 
 ```bash
 export GNUPGHOME="$(pwd)/tmp/gnupg-smoketest"
+ROOT_FPR="$(gpg --show-keys --with-colons ./tools/secure-pack/ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
 go run ./gateway/zt send --client local-smoketest safe.txt
 go run ./gateway/zt verify ./bundle_local-smoketest_*.spkg.tgz
 ```
@@ -50,3 +77,4 @@ go run ./gateway/zt send --client local-smoketest safe.txt
 - `local-smoketest.txt` はローカル検証用の recipient 設定です
 - 実運用の fingerprint や鍵はコミットしないでください
 - `GNUPGHOME` はローカル検証用ディレクトリに限定してください
+- root key fingerprint は `ROOT_PUBKEY.asc` を受け取った経路とは別経路で確認してから pin してください

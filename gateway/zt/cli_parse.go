@@ -12,46 +12,66 @@ func parseSendArgs(args []string) (sendOptions, error) {
 	fs.SetOutput(os.Stderr)
 
 	var client string
+	var allowDegradedScan bool
 	var strict bool
 	var forcePublic bool
 	var autoUpdate bool
 	var syncNow bool
 	var noAutoSync bool
 	var copyCommand bool
+	var shareJSON bool
 	var shareFormat string
+	var shareRoutes multiStringFlag
 	fs.StringVar(&client, "client", "", "Recipient client name for modern secure-pack adapter")
-	fs.BoolVar(&strict, "strict", false, "Deny if no scanners are available in secure-scan JSON mode")
+	fs.BoolVar(&allowDegradedScan, "allow-degraded-scan", false, "Allow degraded scan mode in zt send (unsafe): permit no-scanner-available allow result")
+	fs.BoolVar(&strict, "strict", false, "Enable strict scan mode (default for zt send; kept for explicit/compat usage)")
 	fs.BoolVar(&forcePublic, "force-public", false, "Pass through secure-scan public repo guard")
 	fs.BoolVar(&autoUpdate, "update", false, "Auto-update secure-scan definitions before scan")
 	fs.BoolVar(&syncNow, "sync-now", false, "Force-sync local event spool to control plane after command")
 	fs.BoolVar(&noAutoSync, "no-auto-sync", false, "Disable background auto-sync to control plane (events are only spooled locally unless sync is triggered)")
 	fs.BoolVar(&copyCommand, "copy-command", false, "Copy receiver verify command to clipboard (macOS pbcopy preferred)")
-	fs.StringVar(&shareFormat, "share-format", "ja", "Share text language for receiver hint: auto|ja|en")
+	fs.BoolVar(&shareJSON, "share-json", false, "Emit receiver share payload as JSON for share routes that support structured output")
+	fs.StringVar(&shareFormat, "share-format", "auto", "Share text language for receiver hint: auto|ja|en (default: auto)")
+	fs.Var(&shareRoutes, "share-route", "Additional share transport route: none | stdout | clipboard | file:<path> | command-file:<path> (repeatable)")
 
 	if err := fs.Parse(args); err != nil {
 		return sendOptions{}, err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return sendOptions{}, fmt.Errorf("Usage: zt send [--client <name>] [--strict] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-format auto|ja|en] <file>")
+		return sendOptions{}, fmt.Errorf("Usage: zt send --client <name> [--strict | --allow-degraded-scan] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-json] [--share-format auto|ja|en] <file>")
+	}
+	if strings.TrimSpace(client) == "" {
+		return sendOptions{}, fmt.Errorf("zt send requires --client <name> (legacy artifact.zp path was removed)")
+	}
+	if strict && allowDegradedScan {
+		return sendOptions{}, fmt.Errorf("--strict and --allow-degraded-scan cannot be used together")
 	}
 	shareFormat = strings.ToLower(strings.TrimSpace(shareFormat))
 	if shareFormat == "" {
-		shareFormat = "ja"
+		shareFormat = "auto"
 	}
 	if shareFormat != "auto" && shareFormat != "ja" && shareFormat != "en" {
 		return sendOptions{}, fmt.Errorf("invalid --share-format: %q (expected auto, ja or en)", shareFormat)
 	}
+	for _, raw := range shareRoutes.Values {
+		if _, err := parseShareRoute(raw); err != nil {
+			return sendOptions{}, fmt.Errorf("invalid --share-route %q: %w", raw, err)
+		}
+	}
 	return sendOptions{
-		InputFile:   rest[0],
-		Client:      client,
-		Strict:      strict,
-		ForcePublic: forcePublic,
-		AutoUpdate:  autoUpdate,
-		SyncNow:     syncNow,
-		NoAutoSync:  noAutoSync,
-		CopyCommand: copyCommand,
-		ShareFormat: shareFormat,
+		InputFile:         rest[0],
+		Client:            client,
+		AllowDegradedScan: allowDegradedScan,
+		Strict:            strict,
+		ForcePublic:       forcePublic,
+		AutoUpdate:        autoUpdate,
+		SyncNow:           syncNow,
+		NoAutoSync:        noAutoSync,
+		CopyCommand:       copyCommand,
+		ShareJSON:         shareJSON,
+		ShareFormat:       shareFormat,
+		ShareRoutes:       append([]string(nil), shareRoutes.Values...),
 	}, nil
 }
 
@@ -116,7 +136,7 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return verifyOptions{}, fmt.Errorf("Usage: zt verify [--sync-now] [--no-auto-sync] <artifact_dir|packet.spkg.tgz>")
+		return verifyOptions{}, fmt.Errorf("Usage: zt verify [--sync-now] [--no-auto-sync] <packet.spkg.tgz>")
 	}
 	opts.ArtifactPath = rest[0]
 	return opts, nil

@@ -24,6 +24,49 @@ func checkUpdate() {
 	}
 }
 
+func resolveSendScanStrict(opts sendOptions, envZTScanStrict bool) (bool, string) {
+	if opts.AllowDegradedScan {
+		return false, "[Scan] degraded scan mode enabled (--allow-degraded-scan). No-scanner-available may be allowed (unsafe)."
+	}
+	if opts.Strict {
+		return true, "[Scan] strict mode enabled (--strict; default for zt send)"
+	}
+	if envZTScanStrict {
+		return true, "[Scan] strict mode enabled by default (`ZT_SCAN_STRICT=1` is redundant for zt send)"
+	}
+	return true, "[Scan] strict mode enabled by default (zt send)"
+}
+
+func runSendSecurePackPrecheck(repoRoot string) (bool, []string) {
+	filesCheck, rootPinCheck, sigCheck, fixes := buildSecurePackSupplyChainSetupChecks(repoRoot)
+	checks := []setupCheck{filesCheck, rootPinCheck, sigCheck}
+
+	ok := true
+	for _, c := range checks {
+		if c.Status != "ok" {
+			ok = false
+			break
+		}
+	}
+
+	if ok {
+		fmt.Println("[Precheck] secure-pack supply-chain OK (root key fingerprint pinned; tools.lock signature verified)")
+		return true, nil
+	}
+
+	fmt.Println("[Precheck] secure-pack supply-chain issues detected before packing:")
+	for _, c := range checks {
+		if c.Status == "ok" {
+			continue
+		}
+		printSetupCheckLine(c)
+	}
+	if len(fixes) > 0 {
+		fmt.Printf("[Hint] %s\n", fixes[0])
+	}
+	return false, fixes
+}
+
 func runScan(adapters *toolAdapters, opts scanOptions) {
 	if cpEvents != nil {
 		if opts.NoAutoSync {
@@ -32,13 +75,22 @@ func runScan(adapters *toolAdapters, opts scanOptions) {
 	}
 	targetPath, err := filepath.Abs(opts.Target)
 	if err != nil {
+		printZTErrorCode(ztErrorCodeScanInvalidPath)
 		fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
 		os.Exit(1)
 	}
 	info, err := os.Stat(targetPath)
 	if err != nil {
+		printZTErrorCode(ztErrorCodeScanStatFailed)
 		fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
 		os.Exit(1)
+	}
+	if !info.IsDir() {
+		if err := enforceFileTypeConsistency(targetPath); err != nil {
+			printZTErrorCode(ztErrorCodeScanInputRejected)
+			fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// File scan defaults to legacy JSON adapter (machine-readable) to preserve zt flow.
@@ -53,15 +105,18 @@ func runScan(adapters *toolAdapters, opts scanOptions) {
 				if len(stderr) > 0 {
 					fmt.Fprintf(os.Stderr, "%s", string(stderr))
 				}
+				printZTErrorCode(ztErrorCodeScanCheckFailed)
 				os.Exit(1)
 			}
 			return
 		}
 		if err != nil {
 			if len(stderr) > 0 {
+				printZTErrorCode(ztErrorCodeScanCheckFailed)
 				fmt.Fprintf(os.Stderr, "Scan Error: %s\n", strings.TrimSpace(string(stderr)))
 				os.Exit(1)
 			}
+			printZTErrorCode(ztErrorCodeScanCheckFailed)
 			fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -70,6 +125,7 @@ func runScan(adapters *toolAdapters, opts scanOptions) {
 
 	fmt.Println("[Adapter] Using interactive secure-scan (new CLI/TUI)")
 	if err := adapters.interactiveScan(targetPath, opts.ForcePublic, opts.AutoUpdate); err != nil {
+		printZTErrorCode(ztErrorCodeScanTUIFailed)
 		fmt.Fprintf(os.Stderr, "Failed to run secure-scan TUI: %v\n", err)
 		os.Exit(1)
 	}
@@ -83,6 +139,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	}
 	inputPath, err := filepath.Abs(opts.InputFile)
 	if err != nil {
+		printZTErrorCode(ztErrorCodeSendInvalidPath)
 		fmt.Printf("GATEWAY_ERROR: Failed to resolve file path: %v\n", err)
 		os.Exit(1)
 	}
@@ -91,14 +148,34 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	policyFile := filepath.Join(adapters.repoRoot, "policy", "extension_policy.toml")
 	extPolicy, policyErr := loadExtensionPolicy(policyFile)
 	if policyErr != nil {
-		fmt.Printf("[Policy] WARN failed to load %s, using defaults: %v\n", policyFile, policyErr)
-		extPolicy = defaultExtensionPolicy()
+		if os.IsNotExist(policyErr) {
+			fmt.Printf("[Policy] WARN %s not found, using secure defaults: %v\n", policyFile, policyErr)
+			extPolicy = defaultExtensionPolicy()
+		} else {
+			printZTErrorCode(ztErrorCodeSendExtPolicyLoad)
+			fmt.Printf("[BLOCKED] Failed to load %s: %v\n", policyFile, policyErr)
+			fmt.Println("Reason: extension policy parse/load failure is treated as fail-closed to avoid unsafe routing defaults.")
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			os.Exit(1)
+		}
 	}
 	scanPolicyFile := filepath.Join(adapters.repoRoot, "policy", "scan_policy.toml")
 	scanPol, scanPolicyErr := loadScanPolicy(scanPolicyFile)
 	if scanPolicyErr != nil {
-		fmt.Printf("[Policy] WARN failed to load %s, using defaults: %v\n", scanPolicyFile, scanPolicyErr)
-		scanPol = defaultScanPolicy()
+		if os.IsNotExist(scanPolicyErr) {
+			fmt.Printf("[Policy] WARN %s not found, using secure defaults: %v\n", scanPolicyFile, scanPolicyErr)
+			scanPol = defaultScanPolicy()
+		} else {
+			printZTErrorCode(ztErrorCodeSendScanPolicyLoad)
+			fmt.Printf("[BLOCKED] Failed to load %s: %v\n", scanPolicyFile, scanPolicyErr)
+			fmt.Println("Reason: scan policy parse/load failure is treated as fail-closed to avoid degraded scanning requirements.")
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			os.Exit(1)
+		}
 	}
 	mode, policyReason := resolveExtensionMode(inputPath, extPolicy)
 	fmt.Printf("[Policy] %s (%s) source=%s\n", mode, policyReason, extPolicy.Source)
@@ -106,6 +183,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		fmt.Printf("[Policy] scan requirements: required_scanners=%v require_clamav_db=%t source=%s\n", scanPol.RequiredScanners, scanPol.RequireClamAVDB, scanPol.Source)
 	}
 	if mode == ExtModeDeny {
+		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
 		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %s\n", policyReason)
 		if opts.SyncNow {
 			runSyncEvents(true)
@@ -113,7 +191,24 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	if err := enforceFilePolicy(inputPath, mode, extPolicy); err != nil {
+		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
 		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		os.Exit(1)
+	}
+	if err := enforceFileTypeConsistency(inputPath); err != nil {
+		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
+		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		os.Exit(1)
+	}
+	if ok, _ := runSendSecurePackPrecheck(adapters.repoRoot); !ok {
+		printZTErrorCode(ztErrorCodePrecheckSupplyChain)
+		fmt.Println("[BLOCKED] secure-pack supply-chain precheck failed; fix the items above and retry `zt send`.")
 		if opts.SyncNow {
 			runSyncEvents(true)
 		}
@@ -122,14 +217,8 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 
 	// 1. secure-scan check (new secure-scan JSON mode)
 	fmt.Println("[Step 1/3] Scanning...")
-	scanStrict := opts.Strict
-	if !scanStrict && envBool("ZT_SCAN_STRICT") {
-		scanStrict = true
-		fmt.Println("[Scan] strict mode enabled via ZT_SCAN_STRICT=1 (deprecated: prefer --strict)")
-	}
-	if scanStrict && opts.Strict {
-		fmt.Println("[Scan] strict mode enabled (--strict)")
-	}
+	scanStrict, strictMsg := resolveSendScanStrict(opts, envBool("ZT_SCAN_STRICT"))
+	fmt.Println(strictMsg)
 	output, scanStderr, err := adapters.modernScanCheckJSON(
 		inputPath,
 		opts.ForcePublic,
@@ -142,21 +231,25 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	var res ScanResult
 	if jsonErr := json.Unmarshal(output, &res); jsonErr != nil {
 		if opts.AutoUpdate && len(scanStderr) > 0 {
+			printZTErrorCode(ztErrorCodeSendScanUpdateFail)
 			fmt.Printf("GATEWAY_ERROR: secure-scan update/scan failed before JSON result.\n")
 			fmt.Printf("Hint: `--update` requires `freshclam` (ClamAV updater) and network access.\n")
 			fmt.Printf("stderr: %s\n", strings.TrimSpace(string(scanStderr)))
 			os.Exit(1)
 		}
+		printZTErrorCode(ztErrorCodeSendScanJSONParse)
 		fmt.Printf("GATEWAY_ERROR: Failed to parse scan result: %v\nRaw output: %s\n", jsonErr, string(output))
 		os.Exit(1)
 	}
 	if err != nil && res.Result == "" {
 		if opts.AutoUpdate && len(scanStderr) > 0 {
+			printZTErrorCode(ztErrorCodeSendScanUpdateFail)
 			fmt.Printf("GATEWAY_ERROR: secure-scan failed during `--update` pre-scan step.\n")
 			fmt.Printf("Hint: install `freshclam` / ClamAV DB tooling, or rerun without `--update`.\n")
 			fmt.Printf("stderr: %s\n", strings.TrimSpace(string(scanStderr)))
 			os.Exit(1)
 		}
+		printZTErrorCode(ztErrorCodeSendScanCheckFail)
 		fmt.Printf("GATEWAY_ERROR: secure-scan (modern JSON adapter) failed: %v\nOutput: %s\n", err, string(output))
 		if len(scanStderr) > 0 {
 			fmt.Printf("stderr: %s\n", strings.TrimSpace(string(scanStderr)))
@@ -171,6 +264,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	}
 
 	if res.Result != "allow" {
+		printZTErrorCode(ztErrorCodeSendScanDenied)
 		fmt.Printf("\n[BLOCKED] File was rejected by secure-scan.\nReason: %s\n", res.Reason)
 		if opts.SyncNow {
 			runSyncEvents(true)
@@ -185,6 +279,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		fmt.Println("[Step 2/3] Sanitizing (secure-rebuild)...")
 		tmpFile, err := os.CreateTemp("", "zt-sanitized-*"+filepath.Ext(inputPath))
 		if err != nil {
+			printZTErrorCode(ztErrorCodeSendSanitizeTemp)
 			fmt.Printf("GATEWAY_ERROR: Failed to create temp file: %v\n", err)
 			os.Exit(1)
 		}
@@ -194,6 +289,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 
 		rebuildOut, rebuildErr := adapters.rebuild(inputPath, sanitizedPath)
 		if rebuildErr != nil {
+			printZTErrorCode(ztErrorCodeSendSanitizeFail)
 			fmt.Printf("GATEWAY_ERROR: Sanitization failed: %v\nOutput: %s\n", rebuildErr, string(rebuildOut))
 			os.Exit(1)
 		}
@@ -211,6 +307,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		fmt.Printf("[Adapter] Using modern secure-pack (client=%s)\n", opts.Client)
 		packetPath, packOut, packErr := adapters.modernPackSingleFile(sanitizedPath, cwd, opts.Client)
 		if packErr != nil {
+			printZTErrorCode(ztErrorCodeSendPackFail)
 			fmt.Printf("GATEWAY_ERROR: Packing failed (modern adapter): %v\nOutput: %s\n", packErr, string(packOut))
 			os.Exit(1)
 		}
@@ -221,25 +318,11 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 			runSyncEvents(true)
 		}
 		fmt.Printf("\n[SUCCESS] Packet generated.\n%s\nSaved: %s\n", string(packOut), packetPath)
-		printReceiverShareText(packetPath, opts.ShareFormat)
-		printReceiverVerifyHint(packetPath, opts.CopyCommand)
+		deliverReceiverShare(packetPath, opts)
 		return
 	}
-
-	fmt.Println("[Adapter] Using legacy secure-pack PoC (no --client specified)")
-	packOut, packErr := adapters.legacyPack(sanitizedPath, cwd)
-	if packErr != nil {
-		fmt.Printf("GATEWAY_ERROR: Packing failed (legacy adapter): %v\nOutput: %s\n", packErr, string(packOut))
-		os.Exit(1)
-	}
-	var scanMeta map[string]any
-	_ = json.Unmarshal(output, &scanMeta)
-	emitArtifactEvent("artifact.zp", filepath.Join(cwd, "artifact.zp"), inputPath, "", stringField(scanMeta, "rule_hash"))
-	if opts.SyncNow {
-		runSyncEvents(true)
-	}
-	artifactPath := filepath.Join(cwd, "artifact.zp")
-	fmt.Printf("\n[SUCCESS] Artifact generated.\n%s\n", string(packOut))
-	printReceiverShareText(artifactPath, opts.ShareFormat)
-	printReceiverVerifyHint(artifactPath, opts.CopyCommand)
+	printZTErrorCode(ztErrorCodeSendClientRequired)
+	fmt.Println("[BLOCKED] zt send now requires --client <name> and only supports spkg.tgz packets.")
+	fmt.Println("Reason: legacy artifact.zp path was removed.")
+	os.Exit(1)
 }

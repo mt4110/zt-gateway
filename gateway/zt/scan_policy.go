@@ -15,9 +15,9 @@ type scanPolicy struct {
 
 func defaultScanPolicy() scanPolicy {
 	return scanPolicy{
-		Source:           "built-in defaults",
-		RequiredScanners: nil,
-		RequireClamAVDB:  false,
+		Source:           "built-in secure defaults",
+		RequiredScanners: []string{"ClamAV", "YARA"},
+		RequireClamAVDB:  true,
 	}
 }
 

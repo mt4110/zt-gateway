@@ -1,0 +1,4 @@
+gpg_sha256="d0871bc0b26cf1308ace6f6fe800de2a4d914e9b8c67c02f9c1b6adbb778c41e"
+gpg_version="gpg (GnuPG) 2.4.4"
+tar_sha256="867ff0dfd2d702cfebcff6a64eee5835c928fe359b9deced92e442211362d16d"
+tar_version="tar (GNU tar) 1.35"

@@ -13,15 +13,18 @@ type ScanResult struct {
 }
 
 type sendOptions struct {
-	InputFile   string
-	Client      string
-	Strict      bool
-	ForcePublic bool
-	AutoUpdate  bool
-	SyncNow     bool
-	NoAutoSync  bool
-	CopyCommand bool
-	ShareFormat string
+	InputFile         string
+	Client            string
+	AllowDegradedScan bool
+	Strict            bool
+	ForcePublic       bool
+	AutoUpdate        bool
+	SyncNow           bool
+	NoAutoSync        bool
+	CopyCommand       bool
+	ShareJSON         bool
+	ShareFormat       string
+	ShareRoutes       []string
 }
 
 type scanOptions struct {

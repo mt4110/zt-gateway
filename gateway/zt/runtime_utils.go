@@ -49,22 +49,12 @@ func isConfigDoctorJSONMode(args []string) bool {
 	}
 	switch args[0] {
 	case "doctor":
-		for _, a := range args[1:] {
-			if a == "--json" {
-				return true
-			}
-		}
-		return false
+		return hasTruthyJSONFlag(args[1:])
 	case "config":
 		if len(args) < 2 || args[1] != "doctor" {
 			return false
 		}
-		for _, a := range args[2:] {
-			if a == "--json" {
-				return true
-			}
-		}
-		return false
+		return hasTruthyJSONFlag(args[2:])
 	default:
 		return false
 	}
@@ -75,7 +65,36 @@ func isQuietStartupCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "setup", "help", "-h", "--help", "--help-advanced":
+	case "setup", "doctor", "help", "-h", "--help", "--help-advanced":
+		return true
+	case "config":
+		return len(args) >= 2 && args[1] == "doctor"
+	default:
+		return false
+	}
+}
+
+func hasTruthyJSONFlag(args []string) bool {
+	for _, a := range args {
+		a = strings.TrimSpace(a)
+		if a == "--" {
+			return false
+		}
+		for _, prefix := range []string{"--json", "-json"} {
+			if a == prefix {
+				return true
+			}
+			if strings.HasPrefix(a, prefix+"=") {
+				return parseLooseBool(strings.TrimSpace(strings.TrimPrefix(a, prefix+"=")))
+			}
+		}
+	}
+	return false
+}
+
+func parseLooseBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "t", "true", "y", "yes", "on":
 		return true
 	default:
 		return false

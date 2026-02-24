@@ -19,10 +19,15 @@ type setupResolved struct {
 	APIKeySet       bool   `json:"api_key_set"`
 	APIKeySource    string `json:"api_key_source"`
 	SpoolDir        string `json:"spool_dir"`
+	// Optional supply-chain pin details for machine-readable CI diagnostics.
+	ActualRootFingerprint string `json:"actual_root_fingerprint,omitempty"`
+	PinSource             string `json:"pin_source,omitempty"`
+	PinMatchCount         int    `json:"pin_match_count,omitempty"`
 }
 
 type setupResult struct {
 	OK            bool          `json:"ok"`
+	ErrorCode     string        `json:"error_code,omitempty"`
 	SchemaVersion int           `json:"schema_version"`
 	GeneratedAt   string        `json:"generated_at"`
 	Command       string        `json:"command"`
