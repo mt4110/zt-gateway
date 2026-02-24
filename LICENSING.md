@@ -4,6 +4,7 @@ This project is currently released under **Apache License 2.0**.
 
 - OSS use: `LICENSE` (Apache-2.0)
 - Commercial use / alternative terms: available by separate commercial agreement (contact required)
+- Commercial terms notice (non-license placeholder): `COMMERCIAL_TERMS_NOTICE.md`
 
 Important:
 
@@ -16,4 +17,3 @@ Why this policy:
 - Preserve the option to offer commercial terms later (support, OEM, custom integration, private features, etc.)
 
 If you plan to ship this in a commercial product and need a different risk / support model, open an issue or contact the maintainer.
-
