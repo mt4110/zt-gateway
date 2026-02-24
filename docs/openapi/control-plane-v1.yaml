@@ -1,0 +1,703 @@
+openapi: 3.0.3
+info:
+  title: zt-gateway Control Plane API
+  version: 0.1.0-mvp
+  description: >
+    Control Plane ingest and policy distribution API for zt-gateway.
+    This API is for audit/policy/rule metadata, not end-user file upload.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Health
+  - name: Events
+  - name: Policies
+  - name: Dashboard
+  - name: Admin
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  time: { type: string, format: date-time }
+  /v1/events/scan:
+    post:
+      tags: [Events]
+      summary: Ingest scan event
+      description: >
+        Accepts a signed envelope (`zt-event-envelope-v1`) or raw JSON event payload.
+        If the server is configured with event signature verification, envelopes are required.
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/ScanEvent'
+                - $ref: '#/components/schemas/SignedEnvelope'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAccepted'
+  /v1/events/artifact:
+    post:
+      tags: [Events]
+      summary: Ingest artifact creation event
+      description: >
+        Accepts a signed envelope (`zt-event-envelope-v1`) or raw JSON event payload.
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/ArtifactEvent'
+                - $ref: '#/components/schemas/SignedEnvelope'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAccepted'
+  /v1/events/verify:
+    post:
+      tags: [Events]
+      summary: Ingest verification event
+      description: >
+        Accepts a signed envelope (`zt-event-envelope-v1`) or raw JSON event payload.
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/VerifyEvent'
+                - $ref: '#/components/schemas/SignedEnvelope'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAccepted'
+  /v1/policies/extension/latest:
+    get:
+      tags: [Policies]
+      summary: Get latest extension policy TOML
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+            Last-Modified:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+        '304':
+          description: Not Modified
+  /v1/policies/scan/latest:
+    get:
+      tags: [Policies]
+      summary: Get latest scan policy TOML
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+            Last-Modified:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+        '304':
+          description: Not Modified
+  /v1/dashboard/activity:
+    get:
+      tags: [Dashboard]
+      summary: Minimal activity summary from event_ingest
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+        - name: tenant_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter activity by envelope tenant_id.
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [scan, artifact, verify]
+          style: form
+          explode: true
+          description: >
+            Filter by kind. Preferred form is repeated query parameters (`kind=scan&kind=verify`);
+            comma-separated values (`kind=scan,verify`) are also accepted for compatibility.
+          description: Filter by event kind.
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Start of time window (RFC3339/RFC3339Nano; YYYY-MM-DD also accepted).
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: End of time window (RFC3339/RFC3339Nano; YYYY-MM-DD also accepted).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardActivityResponse'
+        '503':
+          description: Postgres not configured
+  /v1/dashboard/activity/groups:
+    get:
+      tags: [Dashboard]
+      summary: Grouped activity counts from event_ingest
+      parameters:
+        - name: group_by
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [tenant, kind]
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [scan, artifact, verify]
+          style: form
+          explode: true
+          description: >
+            Filter by kind. Preferred form is repeated query parameters (`kind=scan&kind=verify`);
+            comma-separated values (`kind=scan,verify`) are also accepted for compatibility.
+        - name: top_n
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Alias for `top_n`.
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [count_desc, count_asc, key_asc, key_desc]
+            default: count_desc
+        - name: include_zero
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: >
+            When `group_by=kind`, include zero-count buckets for `scan`, `artifact`, `verify`.
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardGroupedResponse'
+  /v1/admin/event-keys:
+    get:
+      tags: [Admin]
+      summary: List event signing keys (Postgres-backed)
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EventSigningKey'
+                  tenant_id: { type: string }
+                  count: { type: integer }
+    post:
+      tags: [Admin]
+      summary: Create or upsert event signing key
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventSigningKeyUpsertRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    $ref: '#/components/schemas/EventSigningKey'
+  /v1/admin/event-keys/{key_id}:
+    get:
+      tags: [Admin]
+      summary: Get one event signing key
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    $ref: '#/components/schemas/EventSigningKey'
+        '404':
+          description: Not Found
+  /v1/admin/event-keys/{key_id}/history:
+    get:
+      tags: [Admin]
+      summary: Read append-only audit history for one event signing key
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/EventSigningKeyAuditAction'
+          style: form
+          explode: true
+          description: >
+            Filter by audit action. Preferred form is repeated query parameters;
+            comma-separated values are also accepted for compatibility.
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSigningKeyHistoryResponse'
+    put:
+      tags: [Admin]
+      summary: Upsert one event signing key by key_id
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventSigningKeyUpsertRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    $ref: '#/components/schemas/EventSigningKey'
+    patch:
+      tags: [Admin]
+      summary: Partially update one event signing key (enabled toggle)
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventSigningKeyPatchRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    $ref: '#/components/schemas/EventSigningKey'
+        '404':
+          description: Not Found
+    delete:
+      tags: [Admin]
+      summary: Disable or delete one event signing key
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [disable, delete]
+            default: disable
+          description: `disable` sets enabled=false; `delete` removes the row.
+        - name: updated_by
+          in: query
+          required: false
+          schema: { type: string }
+        - name: reason
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  key_id: { type: string }
+                  mode: { type: string }
+        '404':
+          description: Not Found
+components:
+  parameters:
+    ApiKeyHeader:
+      name: X-API-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Required when the Control Plane is configured with an API key.
+  schemas:
+    IngestAccepted:
+      type: object
+      properties:
+        status: { type: string, example: accepted }
+        event_id: { type: string }
+        ingest_id: { type: string }
+      required: [status, ingest_id]
+    EventBase:
+      type: object
+      properties:
+        event_id: { type: string }
+        occurred_at: { type: string, format: date-time }
+        host_id: { type: string }
+        tool_version: { type: string }
+      required: [event_id, occurred_at]
+    ScanEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          properties:
+            command: { type: string, enum: [scan, send] }
+            target_name: { type: string }
+            result: { type: string, enum: [allow, deny] }
+            reason: { type: string }
+            summary: { type: object, additionalProperties: true }
+            scanners:
+              type: array
+              items: { type: object, additionalProperties: true }
+            policy: { type: object, additionalProperties: true }
+            provenance: { type: object, additionalProperties: true }
+            rule_hash: { type: string }
+            raw_scan: { type: object, additionalProperties: true }
+          required: [command, target_name, result, reason]
+    ArtifactEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          properties:
+            artifact_kind: { type: string }
+            artifact_sha256: { type: string }
+            file_name: { type: string }
+            sender_identity: { type: string }
+            recipient_name: { type: string }
+            signer_fingerprint: { type: string }
+            policy_version: { type: string }
+            rule_hash: { type: string }
+            artifact_path: { type: string }
+          required: [artifact_kind, file_name]
+    VerifyEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          properties:
+            artifact_sha256: { type: string }
+            artifact_kind: { type: string }
+            verifier_identity: { type: string }
+            result: { type: string, enum: [verified, failed, warning] }
+            reason: { type: string }
+            details: { type: object, additionalProperties: true }
+          required: [result, reason]
+    PolicyResponse:
+      type: object
+      properties:
+        version: { type: string }
+        sha256: { type: string }
+        content_toml: { type: string }
+        effective_at: { type: string, format: date-time }
+      required: [sha256, content_toml]
+    SignedEnvelope:
+      type: object
+      properties:
+        envelope_version: { type: string, example: zt-event-envelope-v1 }
+        alg: { type: string, example: Ed25519 }
+        key_id: { type: string }
+        created_at: { type: string, format: date-time }
+        endpoint: { type: string, example: /v1/events/scan }
+        payload_sha256: { type: string }
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/ScanEvent'
+            - $ref: '#/components/schemas/ArtifactEvent'
+            - $ref: '#/components/schemas/VerifyEvent'
+        signature: { type: string, description: base64-encoded Ed25519 signature }
+      required:
+        [envelope_version, alg, created_at, endpoint, payload_sha256, payload, signature]
+    DashboardRecentEvent:
+      type: object
+      properties:
+        kind: { type: string }
+        event_id: { type: string }
+        envelope_tenant_id: { type: string }
+        envelope_key_id: { type: string }
+        envelope_verified: { type: boolean }
+        received_at: { type: string, format: date-time }
+    DashboardActivityResponse:
+      type: object
+      properties:
+        total_events: { type: integer }
+        last_24h_counts:
+          type: object
+          additionalProperties:
+            type: integer
+        recent:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardRecentEvent'
+        limit: { type: integer }
+        kind: { type: string, enum: [scan, artifact, verify] }
+        tenant_id: { type: string }
+        window:
+          type: object
+          additionalProperties: true
+        source: { type: string, example: event_ingest }
+        generated_at: { type: string, format: date-time }
+      required: [total_events, recent, limit, source]
+    DashboardGroupedResponse:
+      type: object
+      properties:
+        group_by: { type: string, enum: [tenant, kind] }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              count: { type: integer }
+            required: [key, count]
+        total_events: { type: integer }
+        tenant_id: { type: string }
+        kind: { type: string, enum: [scan, artifact, verify] }
+        kinds:
+          type: array
+          items: { type: string, enum: [scan, artifact, verify] }
+        kind_filter_state:
+          type: string
+          enum: [none, single, multi]
+        returned_groups: { type: integer }
+        sort: { type: string, enum: [count_desc, count_asc, key_asc, key_desc] }
+        top_n: { type: integer }
+        truncated: { type: boolean }
+        include_zero: { type: boolean }
+        window:
+          type: object
+          additionalProperties: true
+        source: { type: string, example: event_ingest }
+        generated_at: { type: string, format: date-time }
+      required: [group_by, items, total_events, source]
+    EventSigningKey:
+      type: object
+      properties:
+        key_id: { type: string }
+        tenant_id: { type: string }
+        alg: { type: string, example: Ed25519 }
+        public_key_b64: { type: string }
+        enabled: { type: boolean }
+        source: { type: string }
+        updated_by: { type: string }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [key_id, alg, public_key_b64, enabled]
+    EventSigningKeyUpsertRequest:
+      type: object
+      properties:
+        key_id: { type: string }
+        tenant_id: { type: string }
+        alg: { type: string, example: Ed25519 }
+        public_key_b64: { type: string }
+        enabled: { type: boolean }
+        updated_by: { type: string }
+        reason: { type: string }
+      required: [key_id, public_key_b64]
+    EventSigningKeyPatchRequest:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        updated_by: { type: string }
+        reason: { type: string }
+      required: [enabled]
+    EventSigningKeyAuditAction:
+      type: string
+      enum:
+      enum:
+      enum:
+        # BEGIN GENERATED: EventSigningKeyAuditAction
+        - bootstrap_upsert
+        - admin_patch
+        - admin_disable
+        - admin_delete
+        # END GENERATED: EventSigningKeyAuditAction
+    EventSigningKeyAuditRecord:
+      type: object
+      properties:
+        audit_id: { type: integer }
+        key_id: { type: string }
+        action:
+          $ref: '#/components/schemas/EventSigningKeyAuditAction'
+        tenant_id: { type: string }
+        enabled: { type: boolean }
+        source: { type: string }
+        updated_by: { type: string }
+        reason: { type: string }
+        meta:
+          type: object
+          additionalProperties: true
+        occurred_at: { type: string, format: date-time }
+      required: [audit_id, key_id, action, occurred_at]
+    EventSigningKeyHistoryResponse:
+      type: object
+      properties:
+        key_id: { type: string }
+        count: { type: integer }
+        limit: { type: integer }
+        action:
+          $ref: '#/components/schemas/EventSigningKeyAuditAction'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventSigningKeyAuditAction'
+        window:
+          type: object
+          additionalProperties: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventSigningKeyAuditRecord'
+      required: [key_id, count, limit, items]

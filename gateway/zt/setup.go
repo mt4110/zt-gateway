@@ -1,0 +1,330 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+type setupCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+type setupResolved struct {
+	AutoSync        bool   `json:"auto_sync"`
+	AutoSyncSource  string `json:"auto_sync_source"`
+	ControlPlaneURL string `json:"control_plane_url"`
+	ControlPlaneSrc string `json:"control_plane_url_source"`
+	APIKeySet       bool   `json:"api_key_set"`
+	APIKeySource    string `json:"api_key_source"`
+	SpoolDir        string `json:"spool_dir"`
+}
+
+type setupResult struct {
+	OK            bool          `json:"ok"`
+	SchemaVersion int           `json:"schema_version"`
+	GeneratedAt   string        `json:"generated_at"`
+	Command       string        `json:"command"`
+	Argv          []string      `json:"argv"`
+	RepoRoot      string        `json:"repo_root"`
+	ConfigSource  string        `json:"config_source"`
+	Failures      int           `json:"failures"`
+	Warnings      int           `json:"warnings"`
+	Resolved      setupResolved `json:"resolved"`
+	Checks        []setupCheck  `json:"checks"`
+	QuickFixes    []string      `json:"quick_fixes,omitempty"`
+	Next          []string      `json:"next,omitempty"`
+}
+
+func runSetup(repoRoot string, opts setupOptions) error {
+	jsonOut := opts.JSON
+	if !jsonOut {
+		fmt.Println("[SETUP] zt quick setup check")
+		fmt.Println("This checks local config, signing key env, required tools, and control-plane reachability.")
+	}
+
+	result := setupResult{
+		SchemaVersion: 1,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		Command:       "zt setup",
+		Argv:          append([]string(nil), os.Args...),
+		RepoRoot:      repoRoot,
+		Checks:        make([]setupCheck, 0, 16),
+	}
+	quickFixes := make([]string, 0, 8)
+	addCheck := func(name, status, msg string) {
+		result.Checks = append(result.Checks, setupCheck{Name: name, Status: status, Message: msg})
+		switch status {
+		case "fail":
+			result.Failures++
+		case "warn":
+			result.Warnings++
+		}
+	}
+
+	cfg, cfgErr := loadZTClientConfig(repoRoot)
+	if cfgErr != nil {
+		addCheck("zt_client_config", "fail", cfgErr.Error())
+		if !jsonOut {
+			fmt.Printf("[FAIL] zt_client.toml parse error: %v\n", cfgErr)
+		}
+		cfg = defaultZTClientConfig()
+		result.ConfigSource = "(parse_failed)"
+	} else {
+		result.ConfigSource = cfg.Source
+		addCheck("zt_client_config", "ok", "loaded from "+cfg.Source)
+		if !jsonOut {
+			fmt.Printf("[OK]   zt_client config loaded (%s)\n", cfg.Source)
+		}
+	}
+
+	autoSync, autoSyncSrc := resolveEventAutoSyncDefault(cfg)
+	cpURL, cpURLSrc := resolveControlPlaneURL(cfg)
+	cpAPIKey, cpAPIKeySrc := resolveControlPlaneAPIKey(cfg)
+	spoolDir := strings.TrimSpace(os.Getenv("ZT_EVENT_SPOOL_DIR"))
+	if spoolDir == "" {
+		spoolDir = filepath.Join(repoRoot, ".zt-spool")
+	}
+	result.Resolved = setupResolved{
+		AutoSync:        autoSync,
+		AutoSyncSource:  autoSyncSrc,
+		ControlPlaneURL: cpURL,
+		ControlPlaneSrc: cpURLSrc,
+		APIKeySet:       cpAPIKey != "",
+		APIKeySource:    cpAPIKeySrc,
+		SpoolDir:        spoolDir,
+	}
+	addCheck("auto_sync_resolution", "ok", fmt.Sprintf("resolved=%t source=%s", autoSync, autoSyncSrc))
+	if !jsonOut {
+		fmt.Printf("[INFO] auto_sync=%t (%s)\n", autoSync, autoSyncSrc)
+	}
+	if cpURL == "" {
+		addCheck("control_plane_url", "warn", "empty ("+cpURLSrc+")")
+		if !jsonOut {
+			fmt.Printf("[WARN] control_plane_url is empty (%s)\n", cpURLSrc)
+		}
+		quickFixes = append(quickFixes, "Set `control_plane_url` in `policy/zt_client.toml` (or `ZT_CONTROL_PLANE_URL`) if you want event sync / dashboard.")
+	} else {
+		addCheck("control_plane_url", "ok", "configured ("+cpURLSrc+")")
+		if !jsonOut {
+			fmt.Printf("[OK]   control_plane_url configured (%s)\n", cpURLSrc)
+		}
+	}
+	if cpAPIKey == "" {
+		addCheck("control_plane_api_key", "warn", "empty ("+cpAPIKeySrc+")")
+		if !jsonOut {
+			fmt.Printf("[WARN] control_plane_api_key is empty (%s)\n", cpAPIKeySrc)
+		}
+		quickFixes = append(quickFixes, "Set `api_key` in `policy/zt_client.toml` (or `ZT_CONTROL_PLANE_API_KEY`) if your Control Plane requires auth.")
+	} else {
+		addCheck("control_plane_api_key", "ok", "configured ("+cpAPIKeySrc+")")
+		if !jsonOut {
+			fmt.Printf("[OK]   control_plane_api_key configured (%s)\n", cpAPIKeySrc)
+		}
+	}
+
+	if err := os.MkdirAll(spoolDir, 0o755); err != nil {
+		addCheck("spool_dir", "fail", fmt.Sprintf("mkdir failed: %s (%v)", spoolDir, err))
+		if !jsonOut {
+			fmt.Printf("[FAIL] spool dir create failed: %s (%v)\n", spoolDir, err)
+		}
+	} else {
+		testFile := filepath.Join(spoolDir, ".setup-write-test")
+		if err := os.WriteFile(testFile, []byte("ok\n"), 0o600); err != nil {
+			addCheck("spool_dir", "fail", fmt.Sprintf("not writable: %s (%v)", spoolDir, err))
+			if !jsonOut {
+				fmt.Printf("[FAIL] spool dir not writable: %s (%v)\n", spoolDir, err)
+			}
+		} else {
+			_ = os.Remove(testFile)
+			addCheck("spool_dir", "ok", "writable: "+spoolDir)
+			if !jsonOut {
+				fmt.Printf("[OK]   spool dir writable: %s\n", spoolDir)
+			}
+		}
+	}
+
+	if signer, err := loadEventEnvelopeSignerFromEnv(); err != nil {
+		addCheck("event_signing_key_env", "fail", err.Error())
+		if !jsonOut {
+			fmt.Printf("[FAIL] event signing key env invalid: %v\n", err)
+		}
+	} else if signer == nil {
+		addCheck("event_signing_key_env", "warn", "not configured (ZT_EVENT_SIGNING_ED25519_PRIV_B64)")
+		if !jsonOut {
+			fmt.Println("[WARN] event signing key env not configured (ZT_EVENT_SIGNING_ED25519_PRIV_B64)")
+		}
+		quickFixes = append(quickFixes, "Set `ZT_EVENT_SIGNING_ED25519_PRIV_B64` (and optional `ZT_EVENT_SIGNING_KEY_ID`) to sign events sent to Control Plane.")
+	} else {
+		keyID := signer.KeyID
+		if keyID == "" {
+			keyID = "(empty)"
+		}
+		addCheck("event_signing_key_env", "ok", "loaded key_id="+keyID)
+		if !jsonOut {
+			fmt.Printf("[OK]   event signing key env loaded (key_id=%s)\n", keyID)
+		}
+	}
+
+	if !jsonOut {
+		fmt.Println("")
+		fmt.Println("[TOOLS] local executables")
+	}
+	checkTool := func(name string, required bool, note string) {
+		if p, err := exec.LookPath(name); err == nil {
+			addCheck("tool."+name, "ok", p)
+			if !jsonOut {
+				fmt.Printf("[OK]   %s -> %s\n", name, p)
+			}
+			return
+		}
+		if required {
+			addCheck("tool."+name, "fail", "not found ("+note+")")
+			if !jsonOut {
+				fmt.Printf("[FAIL] %s not found (%s)\n", name, note)
+			}
+			quickFixes = append(quickFixes, quickFixForMissingTool(name))
+			return
+		}
+		addCheck("tool."+name, "warn", "not found ("+note+")")
+		if !jsonOut {
+			fmt.Printf("[WARN] %s not found (%s)\n", name, note)
+		}
+		if fix := quickFixForMissingTool(name); fix != "" {
+			quickFixes = append(quickFixes, fix)
+		}
+	}
+	checkTool("go", true, "needed to run local tools in this repo")
+	checkTool("gpg", false, "needed for secure-pack packet signing/verification workflows")
+	checkTool("clamscan", false, "recommended for malware scanning")
+	checkTool("freshclam", false, "needed when using --update for ClamAV definitions")
+	checkTool("yara", false, "recommended for rule-based scanning")
+
+	if cpURL != "" {
+		if !jsonOut {
+			fmt.Println("")
+		}
+		if err := checkControlPlaneHealth(cpURL, cpAPIKey); err != nil {
+			addCheck("control_plane_health", "warn", err.Error())
+			if !jsonOut {
+				fmt.Printf("[WARN] control plane health check failed: %v\n", err)
+			}
+			quickFixes = append(quickFixes, "Start Control Plane and verify `GET /healthz`, then rerun `zt setup`.")
+		} else {
+			msg := strings.TrimRight(cpURL, "/") + "/healthz"
+			addCheck("control_plane_health", "ok", "reachable: "+msg)
+			if !jsonOut {
+				fmt.Printf("[OK]   control plane reachable: %s\n", msg)
+			}
+		}
+	}
+
+	result.QuickFixes = dedupeStrings(quickFixes)
+	result.Next = []string{
+		"Sender: zt send [--client <name>] <file>",
+		"Receiver: zt verify <artifact.zp|packet.spkg.tgz>",
+		"Details: zt --help-advanced",
+	}
+	result.OK = result.Failures == 0
+
+	if jsonOut {
+		emitSetupJSON(result)
+		if !result.OK {
+			return fmt.Errorf("setup checks failed")
+		}
+		return nil
+	}
+
+	if len(result.QuickFixes) > 0 {
+		fmt.Println("")
+		fmt.Println("[QUICK FIX]")
+		for i, fix := range result.QuickFixes {
+			fmt.Printf("%d. %s\n", i+1, fix)
+		}
+	}
+
+	fmt.Println("")
+	fmt.Println("[NEXT]")
+	fmt.Println("1. Sender:   zt send [--client <name>] <file>")
+	fmt.Println("2. Receiver: zt verify <artifact.zp|packet.spkg.tgz>")
+	fmt.Println("3. Details:  zt --help-advanced")
+	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
+	if !result.OK {
+		return fmt.Errorf("setup checks failed")
+	}
+	return nil
+}
+
+func emitSetupJSON(v setupResult) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+}
+
+func quickFixForMissingTool(name string) string {
+	switch name {
+	case "go":
+		return "Install Go (required). macOS(Homebrew): `brew install go`"
+	case "gpg":
+		return "Install GnuPG for secure-pack verification/signing. macOS(Homebrew): `brew install gnupg`"
+	case "clamscan":
+		return "Install ClamAV scanner. macOS(Homebrew): `brew install clamav`"
+	case "freshclam":
+		return "Install ClamAV updater (`freshclam`) for `zt send --update`. macOS(Homebrew): `brew install clamav`"
+	case "yara":
+		return "Install YARA for rule-based scanning. macOS(Homebrew): `brew install yara`"
+	default:
+		return ""
+	}
+}
+
+func dedupeStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, v := range items {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func checkControlPlaneHealth(baseURL, apiKey string) error {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return fmt.Errorf("empty base url")
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/healthz", nil)
+	if err != nil {
+		return err
+	}
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("status=%s", resp.Status)
+	}
+	return nil
+}

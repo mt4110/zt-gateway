@@ -1,0 +1,13 @@
+# zt CLI client behavior defaults
+# Precedence for event auto-sync:
+#   1) CLI: --no-auto-sync (disable only for that command)
+#   2) ENV: ZT_NO_AUTO_SYNC / ZT_EVENT_AUTO_SYNC
+#   3) This file
+#   4) Built-in default (true)
+
+auto_sync = true
+
+# Optional local defaults for Control Plane connectivity.
+# ENV vars override these values.
+control_plane_url = ""
+api_key = ""

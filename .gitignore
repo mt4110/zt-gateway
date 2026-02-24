@@ -1,0 +1,68 @@
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/zt
+/gateway/zt/zt
+/tools/secure-pack/secure-pack
+/tools/secure-scan/secure-scan
+/tools/secure-rebuild/secure-rebuild
+/control-plane/api/zt-control-plane
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool / coverage artifacts
+*.out
+coverage.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace
+go.work.sum
+
+# Nix
+result
+result-*
+
+# Generated artifacts / temp outputs
+artifact.zp/
+dist/
+extracted_*/
+*.spkg.tgz
+tmp/
+tmp_*/
+
+# Tool caches
+.cache/
+tmp_gocache/
+**/.cache/
+**/tmp_gocache/
+
+# Local env/config
+.env
+.env.*
+*.local
+
+# zt local control-plane event spool
+.zt-spool/
+
+# local control-plane server data
+control-plane/data/
+control-plane/config/event_key_registry.json
+control-plane/config/event_key_registry.toml
+
+# Local smoke/demo fixtures (keep examples under docs/examples instead)
+/safe.txt
+/test_image.jpg
+/huge_file.pdf
+
+# Archived draft docs / local scratch docs
+/README_.md

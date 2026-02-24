@@ -1,0 +1,19 @@
+{
+    "version": "0.2",
+    "ignorePaths": [
+        "flake.lock",
+        "*.sum",
+        "artifact.zp/**"
+    ],
+    "dictionaryDefinitions": [],
+    "dictionaries": [],
+    "words": [
+        "nixpkgs",
+        "nixos",
+        "numtide",
+        "gopls",
+        "takemura",
+        "algo",
+        "artis"
+    ]
+}

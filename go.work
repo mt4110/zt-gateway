@@ -1,0 +1,9 @@
+go 1.25.4
+
+use (
+	./control-plane/api
+	./gateway/zt
+	./tools/secure-pack
+	./tools/secure-scan
+	./tools/secure-rebuild
+)
