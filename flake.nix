@@ -16,24 +16,32 @@
             version = "0.1.0";
             src = ./gateway/zt;
             vendorHash = null;
+            env.GOWORK = "off";
+            doCheck = false;
         };
         secure-scan = pkgs.buildGoModule {
             pname = "secure-scan";
             version = "0.1.0";
             src = ./tools/secure-scan;
-            vendorHash = null;
+            vendorHash = "sha256-XFVJWzU+36FXeoAtGYO/WAXxfgHXLEXxvAzeX8dmJo4=";
+            env.GOWORK = "off";
+            doCheck = false;
         };
         secure-pack = pkgs.buildGoModule {
             pname = "secure-pack";
             version = "0.1.0";
             src = ./tools/secure-pack;
-            vendorHash = null;
+            vendorHash = "sha256-5tCb1gPbdM3il1VmmGsdN4Wh5c7gFBiGqUqPKHKpvF0=";
+            env.GOWORK = "off";
+            doCheck = false;
         };
         secure-rebuild = pkgs.buildGoModule {
             pname = "secure-rebuild";
             version = "0.1.0";
             src = ./tools/secure-rebuild;
             vendorHash = null;
+            env.GOWORK = "off";
+            doCheck = false;
         };
         
         zt = pkgs.symlinkJoin {
