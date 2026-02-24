@@ -14,7 +14,7 @@
 - ネットワークを信用しなくても、署名と検証で受け渡しの証明を持てる
 - SaaS依存なしでも運用できる（ローカル実行 + 後で監査同期）
 
-ライセンス方針（現時点）: Apache-2.0 をベースに公開しつつ、将来の商用契約オプションを用意する方針です（`/Users/masakitakemura/algo_artis/zt-gateway/LICENSING.md`）。
+ライセンス方針（現時点）: Apache-2.0 をベースに公開しつつ、将来の商用契約オプションを用意する方針です（`LICENSING.md`）。
 
 ## 3分で試す（Quick Start）
 
@@ -172,15 +172,16 @@ colima stop
 補足:
 
 - `docker compose` プラグインが無い環境では `docker-compose` を使ってください
-- Postgres dual-write の検証手順は `/Users/masakitakemura/algo_artis/zt-gateway/docs/CONTROL_PLANE_POSTGRES_SMOKETEST.md` を参照
+- Postgres dual-write の検証手順は `docs/CONTROL_PLANE_POSTGRES_SMOKETEST.md` を参照
 - `zt` のイベント送信運用は `--no-auto-sync`（ローカル spool のみ）と `--sync-now`（コマンド終了時に強制同期）を使い分けできます
-- `zt` のイベント自動同期デフォルトは `/Users/masakitakemura/algo_artis/zt-gateway/policy/zt_client.toml` の `auto_sync` で設定できます（優先順位: `CLI --no-auto-sync` > `ENV (ZT_NO_AUTO_SYNC / ZT_EVENT_AUTO_SYNC)` > `zt_client.toml` > built-in）
+- `zt` のイベント自動同期デフォルトは `policy/zt_client.toml` の `auto_sync` で設定できます（優先順位: `CLI --no-auto-sync` > `ENV (ZT_NO_AUTO_SYNC / ZT_EVENT_AUTO_SYNC)` > `zt_client.toml` > built-in）
 - `zt_client.toml` には `control_plane_url` / `api_key` も置けます（優先順位: `ENV (ZT_CONTROL_PLANE_URL / ZT_CONTROL_PLANE_API_KEY)` > `zt_client.toml` > built-in）
 - 設定確認は `zt config doctor` で実行できます（設定解決元、spool 書き込み可否、署名鍵ENVの妥当性など）
 - CI 用には `zt config doctor --json` を使うと純JSONで判定結果を取得できます
 - `zt config doctor --json` は `version` と `exit_code` を含むので、CI 側で安定して判定できます
 - `zt config doctor --json` は `schema_version` も含むので、CI 側でJSON互換判定を固定化できます
 - `zt setup --json` も `schema_version` を含み、**破壊的変更時のみ** version を上げます（追加フィールドでは据え置き）
+- `zt setup --json` の互換性ルールは `docs/SETUP_JSON_SCHEMA_POLICY.md` を参照
 - `zt config doctor --json` は `generated_at` (UTC RFC3339) を含むので、CIログの時刻突合にも使えます
 - `zt config doctor --json` は `command` / `argv` も含むので、CI実行時のトレースがしやすくなります
 
