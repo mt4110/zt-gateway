@@ -15,7 +15,7 @@ echo "[TEST] Case 1: Sending safe.txt (Should Succeed)"
 # Assuming 'nix run' is too slow for tight loop dev, but good for CI.
 # We will use 'go run' for speed if acceptable, but let's stick to 'nix run' to match "Goal" criteria.
 # To speed up local runs, we can use the binaries directly if built, but 'nix run' is the contract.
-nix run .#zt -- send safe.txt
+nix run .#zt -- send --force-public safe.txt
 
 if [ -d "artifact.zp" ]; then
     echo "  [PASS] Artifact directory created."
@@ -37,7 +37,7 @@ rm -rf artifact.zp
 # Case 2: Blocked File
 echo "[TEST] Case 2: Sending blocked.exe (Should Fail with Exit 1)"
 set +e
-nix run .#zt -- send blocked.exe
+nix run .#zt -- send --force-public blocked.exe
 EXIT_CODE=$?
 set -e
 
