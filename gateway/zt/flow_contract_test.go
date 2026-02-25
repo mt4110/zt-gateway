@@ -10,10 +10,11 @@ import (
 )
 
 type receiverSharePayload struct {
-	Kind    string `json:"kind"`
-	Format  string `json:"format"`
-	Command string `json:"command"`
-	Text    string `json:"text"`
+	Kind        string                   `json:"kind"`
+	Format      string                   `json:"format"`
+	Command     string                   `json:"command"`
+	Text        string                   `json:"text"`
+	ReceiptHint receiverShareReceiptHint `json:"receipt_hint"`
 }
 
 func TestShareJSONToVerifyToReceipt_E2EContract(t *testing.T) {
@@ -90,12 +91,25 @@ func TestShareJSONToVerifyToReceipt_E2EContract(t *testing.T) {
 	if share.Command == "" {
 		t.Fatalf("share command is empty")
 	}
+	if share.ReceiptHint.Version != "v1" {
+		t.Fatalf("receipt_hint.version = %q, want v1", share.ReceiptHint.Version)
+	}
+	if strings.TrimSpace(share.ReceiptHint.Path) == "" {
+		t.Fatalf("receipt_hint.path is empty")
+	}
+	if strings.TrimSpace(share.ReceiptHint.Command) == "" {
+		t.Fatalf("receipt_hint.command is empty")
+	}
+	wantReceiptCommand := fmt.Sprintf("zt verify --receipt-out %s -- %s", shellQuotePOSIX(share.ReceiptHint.Path), strings.TrimSpace(strings.TrimPrefix(share.Command, "zt verify --")))
+	if share.ReceiptHint.Command != wantReceiptCommand {
+		t.Fatalf("receipt_hint.command = %q, want %q", share.ReceiptHint.Command, wantReceiptCommand)
+	}
 
 	verifyArgsFromShare, err := parseVerifyArgsFromShareCommand(share.Command)
 	if err != nil {
 		t.Fatalf("parseVerifyArgsFromShareCommand returned error: %v", err)
 	}
-	receiptOut := filepath.Join(repoRoot, "receipt", "verify.json")
+	receiptOut := filepath.Join(repoRoot, strings.TrimPrefix(share.ReceiptHint.Path, "./"))
 	verifyArgs := append([]string{"--receipt-out", receiptOut}, verifyArgsFromShare...)
 	opts, err := parseVerifyArgs(verifyArgs)
 	if err != nil {

@@ -40,6 +40,10 @@
   - `format` = `ja` or `en`
   - `command` = `zt verify ...`
   - `text` = 人間向け共有文（末尾改行を含む）
+  - `receipt_hint` (v0.8.0 additive, optional)
+    - `version` = `v1`
+    - `path` = 推奨レシート出力パス
+    - `command` = `zt verify --receipt-out ...`
 
 ### 2.4 Verification Receipt (v1)
 
@@ -93,6 +97,7 @@
 ### 2.7 Flow E2E Contract
 
 - `zt send --share-json` で出る `command` をそのまま `zt verify` に渡したとき、`receipt_version=v1` の receipt が生成されること
+- `receipt_hint.path` / `receipt_hint.command` は、受信側で `--receipt-out` を追加した verify 導線として利用できること
 - 契約テストは `send -> share-json -> verify -> receipt` を1本で検証する
 
 ## 3. テストゲート (v0.4)

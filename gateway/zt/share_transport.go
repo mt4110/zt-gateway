@@ -57,8 +57,15 @@ func parseShareRoute(raw string) (shareRoute, error) {
 }
 
 type receiverShareMessage struct {
-	Command string
-	Format  string
+	Command     string
+	Format      string
+	ReceiptHint *receiverShareReceiptHint
+}
+
+type receiverShareReceiptHint struct {
+	Version string `json:"version"`
+	Path    string `json:"path"`
+	Command string `json:"command"`
 }
 
 func buildReceiverShareMessage(artifactPath, format string) (receiverShareMessage, bool) {
@@ -67,8 +74,9 @@ func buildReceiverShareMessage(artifactPath, format string) (receiverShareMessag
 		return receiverShareMessage{}, false
 	}
 	return receiverShareMessage{
-		Command: cmd,
-		Format:  resolveShareFormat(format),
+		Command:     cmd,
+		Format:      resolveShareFormat(format),
+		ReceiptHint: buildReceiverReceiptHint(artifactPath),
 	}, true
 }
 
@@ -83,15 +91,17 @@ func renderReceiverShareText(msg receiverShareMessage) string {
 
 func renderReceiverShareJSON(msg receiverShareMessage) string {
 	payload := struct {
-		Kind    string `json:"kind"`
-		Format  string `json:"format"`
-		Command string `json:"command"`
-		Text    string `json:"text"`
+		Kind        string                    `json:"kind"`
+		Format      string                    `json:"format"`
+		Command     string                    `json:"command"`
+		Text        string                    `json:"text"`
+		ReceiptHint *receiverShareReceiptHint `json:"receipt_hint,omitempty"`
 	}{
-		Kind:    "receiver_verify_hint",
-		Format:  msg.Format,
-		Command: msg.Command,
-		Text:    renderReceiverShareText(msg),
+		Kind:        "receiver_verify_hint",
+		Format:      msg.Format,
+		Command:     msg.Command,
+		Text:        renderReceiverShareText(msg),
+		ReceiptHint: msg.ReceiptHint,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -99,6 +109,85 @@ func renderReceiverShareJSON(msg receiverShareMessage) string {
 		return `{"kind":"receiver_verify_hint","error":"json_marshal_failed"}`
 	}
 	return string(data) + "\n"
+}
+
+func buildReceiverReceiptHint(artifactPath string) *receiverShareReceiptHint {
+	path := receiverSuggestedReceiptPath(artifactPath)
+	command := receiverVerifyCommandWithReceipt(artifactPath)
+	if path == "" || command == "" {
+		return nil
+	}
+	return &receiverShareReceiptHint{
+		Version: "v1",
+		Path:    path,
+		Command: command,
+	}
+}
+
+func receiverSuggestedReceiptPath(artifactPath string) string {
+	base := resolveReceiverPacketBase(artifactPath)
+	if base == "" {
+		return ""
+	}
+	stem := base[:len(base)-len(".spkg.tgz")]
+	if strings.TrimSpace(stem) == "" {
+		stem = "packet"
+	}
+	safe := sanitizeReceiptPathToken(stem)
+	if safe == "" {
+		safe = "packet"
+	}
+	return "./receipt_" + safe + ".json"
+}
+
+func receiverVerifyCommandWithReceipt(artifactPath string) string {
+	base := resolveReceiverPacketBase(artifactPath)
+	if base == "" {
+		return ""
+	}
+	receiptPath := receiverSuggestedReceiptPath(artifactPath)
+	if receiptPath == "" {
+		return ""
+	}
+	return fmt.Sprintf("zt verify --receipt-out %s -- %s", shellQuotePOSIX(receiptPath), shellQuotePOSIX("./"+base))
+}
+
+func resolveReceiverPacketBase(artifactPath string) string {
+	base := filepath.Base(strings.TrimSpace(artifactPath))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	if !stringsHasSuffixFold(base, ".spkg.tgz") {
+		return ""
+	}
+	return base
+}
+
+func sanitizeReceiptPathToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range token {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	s := strings.Trim(b.String(), "._-")
+	if s == "" {
+		return ""
+	}
+	return s
 }
 
 type shareTransport interface {
