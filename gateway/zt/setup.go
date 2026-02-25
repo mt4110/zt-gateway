@@ -241,9 +241,9 @@ func runSetup(repoRoot string, opts setupOptions) error {
 
 	result.QuickFixes = dedupeStrings(quickFixes)
 	result.Next = []string{
-		"Sender: zt send [--client <name>] <file>",
-		"Receiver: zt verify <packet.spkg.tgz>",
-		"Details: zt --help-advanced",
+		setupNextSender,
+		setupNextReceiver,
+		setupNextDetails,
 	}
 	result.OK = result.Failures == 0
 	if !result.OK {
@@ -283,9 +283,9 @@ func runSetup(repoRoot string, opts setupOptions) error {
 
 	fmt.Println("")
 	fmt.Println("[NEXT]")
-	fmt.Println("1. Sender:   zt send [--client <name>] <file>")
-	fmt.Println("2. Receiver: zt verify <packet.spkg.tgz>")
-	fmt.Println("3. Details:  zt --help-advanced")
+	fmt.Printf("1. %s\n", setupNextSender)
+	fmt.Printf("2. %s\n", setupNextReceiver)
+	fmt.Printf("3. %s\n", setupNextDetails)
 	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
 	if !result.OK {
 		printZTErrorCode(result.ErrorCode)

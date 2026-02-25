@@ -18,4 +18,8 @@ const (
 	cliVerifyUsage = "Usage: zt " + cliVerifySignature
 	cliSyncUsage   = "Usage: zt " + cliSyncSignature
 	cliConfigUsage = "Usage: zt " + cliConfigSignature
+
+	setupNextSender   = "Sender: zt send --client <name> <file>"
+	setupNextReceiver = "Receiver: zt verify <packet.spkg.tgz>"
+	setupNextDetails  = "Details: zt --help-advanced"
 )
