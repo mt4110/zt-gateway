@@ -21,9 +21,16 @@ patterns=(
 )
 
 for p in "${patterns[@]}"; do
-  if ! rg -n --fixed-strings "$p" "$openapi" >/dev/null; then
-    echo "missing OpenAPI contract line: $p" >&2
-    exit 1
+  if command -v rg >/dev/null 2>&1; then
+    if ! rg -n --fixed-strings "$p" "$openapi" >/dev/null; then
+      echo "missing OpenAPI contract line: $p" >&2
+      exit 1
+    fi
+  else
+    if ! grep -n -F -q "$p" "$openapi"; then
+      echo "missing OpenAPI contract line: $p" >&2
+      exit 1
+    fi
   fi
 done
 

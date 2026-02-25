@@ -233,7 +233,10 @@ func (s *eventSpool) post(q queuedEvent) error {
 			ErrorCode:   errorCode,
 		}
 	}
-	ackBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	ackBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		return fmt.Errorf("ingest_ack_read_failed:%w", err)
+	}
 	if err := validateIngestAcceptedACK(q, ackBody); err != nil {
 		return err
 	}

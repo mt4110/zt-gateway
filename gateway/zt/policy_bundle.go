@@ -49,8 +49,6 @@ type policyBundleSigningPayload struct {
 	ContentTOML       string `json:"content_toml"`
 	MinGatewayVersion string `json:"min_gateway_version"`
 	DuplicateRule     string `json:"duplicate_rule"`
-	PolicySetID       string `json:"policy_set_id,omitempty"`
-	FreshnessSLOSec   int64  `json:"freshness_slo_seconds,omitempty"`
 }
 
 type policyBundleVerifyError struct {
@@ -208,8 +206,6 @@ func policyBundleSigningBytes(bundle signedPolicyBundle) ([]byte, error) {
 		ContentTOML:       bundle.ContentTOML,
 		MinGatewayVersion: strings.TrimSpace(bundle.MinGatewayVersion),
 		DuplicateRule:     strings.TrimSpace(bundle.DuplicateRule),
-		PolicySetID:       strings.TrimSpace(bundle.PolicySetID),
-		FreshnessSLOSec:   bundle.FreshnessSLOSec,
 	}
 	return json.Marshal(payload)
 }
