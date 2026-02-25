@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -91,4 +93,49 @@ func TestRunSetup_JSONQuickFixRetryContractByProfile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunSetup_JSONQuickFixCommandsContractByProfile(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile string
+	}{
+		{name: "public", profile: trustProfilePublic},
+		{name: "confidential", profile: trustProfileConfidential},
+		{name: "regulated", profile: trustProfileRegulated},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			out := captureStdout(t, func() {
+				_ = runSetup(repoRoot, setupOptions{JSON: true, Profile: tc.profile})
+			})
+			var got setupResult
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("json.Unmarshal returned error: %v\n%s", err, out)
+			}
+			if got.QuickFixBundle == nil {
+				t.Fatalf("QuickFixBundle is nil")
+			}
+			wantProfileFix := fmt.Sprintf(
+				"Create `%s` and `%s` for profile `%s`, or rerun with `--profile %s`.",
+				filepath.Join(repoRoot, "policy", "extension_policy.toml"),
+				filepath.Join(repoRoot, "policy", "scan_policy.toml"),
+				tc.profile,
+				trustProfileInternal,
+			)
+			if !containsString(got.QuickFixBundle.Commands, wantProfileFix) {
+				t.Fatalf("commands missing profile fix:\nwant=%q\ngot=%#v", wantProfileFix, got.QuickFixBundle.Commands)
+			}
+		})
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
