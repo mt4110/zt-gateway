@@ -416,6 +416,15 @@ func parseAuditPayloadFields(payloadJSON []byte) auditPayloadFields {
 	}
 	var dec *policyDecision
 	if m, ok := mapFromAnyMap(payload, "policy_decision"); ok {
+		var ftg *fileTypeGuardSummary
+		if ftgMap, ok := mapFromAnyMap(m, "file_type_guard"); ok {
+			ftg = normalizeFileTypeGuardSummary(&fileTypeGuardSummary{
+				Extension:    stringFromAnyMap(ftgMap, "extension"),
+				DetectedKind: stringFromAnyMap(ftgMap, "detected_kind"),
+				DetectedMIME: stringFromAnyMap(ftgMap, "detected_mime"),
+				ReasonCode:   stringFromAnyMap(ftgMap, "reason_code"),
+			})
+		}
 		candidate := policyDecision{
 			Decision:      stringFromAnyMap(m, "decision"),
 			ReasonCode:    stringFromAnyMap(m, "reason_code"),
@@ -426,6 +435,7 @@ func parseAuditPayloadFields(payloadJSON []byte) auditPayloadFields {
 			ErrorCode:     stringFromAnyMap(m, "error_code"),
 			Source:        stringFromAnyMap(m, "source"),
 			MinGatewayVer: stringFromAnyMap(m, "min_gateway_version"),
+			FileTypeGuard: ftg,
 		}
 		n := normalizePolicyDecision(candidate)
 		dec = &n

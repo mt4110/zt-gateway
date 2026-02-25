@@ -89,3 +89,16 @@ func TestFailureEnvelope_Contract(t *testing.T) {
 		t.Fatalf("commands = %#v, want deduped length 2", qfb["commands"])
 	}
 }
+
+func TestBuildQuickFixBundleWithCode_RunbookAnchorContract(t *testing.T) {
+	got := buildQuickFixBundleWithCode("sync attention required", []string{"zt sync --force --json"}, "zt sync --force --json", syncErrorCodeBacklogSLOBreached)
+	if got == nil {
+		t.Fatalf("bundle = nil")
+	}
+	if got.Runbook != "docs/OPERATIONS.md" {
+		t.Fatalf("Runbook = %q", got.Runbook)
+	}
+	if got.RunbookAnchor != "#sync-backlog-slo-breached-v070" {
+		t.Fatalf("RunbookAnchor = %q, want #sync-backlog-slo-breached-v070", got.RunbookAnchor)
+	}
+}

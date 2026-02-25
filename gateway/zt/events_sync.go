@@ -336,6 +336,7 @@ func populateSyncBacklogMetrics(res *syncResult, items []queuedEvent, now time.T
 	res.RetryableCount = 0
 	res.FailClosedCount = 0
 	res.OldestPendingAgeSeconds = 0
+	res.OldestPendingAt = ""
 	res.NextRetryAt = ""
 	if len(items) == 0 {
 		return
@@ -371,6 +372,7 @@ func populateSyncBacklogMetrics(res *syncResult, items []queuedEvent, now time.T
 		if age > 0 {
 			res.OldestPendingAgeSeconds = age
 		}
+		res.OldestPendingAt = oldest.UTC().Format(time.RFC3339Nano)
 	}
 	if nextRetrySet {
 		res.NextRetryAt = nextRetry.UTC().Format(time.RFC3339Nano)

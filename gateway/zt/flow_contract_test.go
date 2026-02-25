@@ -137,7 +137,11 @@ func installFlowContractGoStub(t *testing.T, repoRoot string) {
 	stub := `#!/bin/sh
 set -eu
 if [ "${1:-}" = "run" ] && [ "${2:-}" = "./tools/secure-scan/cmd/secure-scan" ]; then
-  echo '{"result":"allow","reason":"clean","rule_hash":"flow-contract-rule"}'
+  if [ -n "${ZT_TEST_SCAN_JSON:-}" ]; then
+    printf '%s\n' "${ZT_TEST_SCAN_JSON}"
+  else
+    echo '{"result":"allow","reason":"clean","rule_hash":"flow-contract-rule"}'
+  fi
   exit 0
 fi
 if [ "${1:-}" = "run" ] && [ "${3:-}" = "verify" ]; then

@@ -9,7 +9,7 @@ const (
 	cliVerifySignature = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>"
 	cliAuditSignature  = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
 	cliSyncSignature   = "sync [--force] [--json]"
-	cliPolicySignature = "policy status [--json] [--kind extension|scan]"
+	cliPolicySignature = "policy status [--json] [--kind extension|scan|all]"
 	cliConfigSignature = "config doctor [--json]"
 	cliDoctorSignature = "doctor [--json]"
 	cliHelpSignature   = "help [advanced]"

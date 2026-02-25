@@ -30,6 +30,9 @@ func TestEnforceFileTypeConsistency_BlocksPDFWithoutEOFMarker(t *testing.T) {
 	if !strings.Contains(err.Error(), "pdf_missing_eof_marker") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if got := extractMagicMismatchReason(err); got != "pdf_missing_eof_marker" {
+		t.Fatalf("reason = %q, want pdf_missing_eof_marker", got)
+	}
 }
 
 func TestEnforceFileTypeConsistency_BlocksExeRenamedTxt(t *testing.T) {
@@ -44,6 +47,9 @@ func TestEnforceFileTypeConsistency_BlocksExeRenamedTxt(t *testing.T) {
 	if !strings.Contains(err.Error(), "policy.magic_mismatch") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if got := extractMagicMismatchReason(err); got != "expected_text_like" {
+		t.Fatalf("reason = %q, want expected_text_like", got)
+	}
 }
 
 func TestEnforceFileTypeConsistency_BlocksZipRenamedPDF(t *testing.T) {
@@ -57,6 +63,9 @@ func TestEnforceFileTypeConsistency_BlocksZipRenamedPDF(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "expected_pdf") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := extractMagicMismatchReason(err); got != "expected_pdf" {
+		t.Fatalf("reason = %q, want expected_pdf", got)
 	}
 }
 
@@ -86,6 +95,9 @@ func TestEnforceFileTypeConsistency_BlocksPseudoOOXMLDocxWithoutMainPart(t *test
 	if !strings.Contains(err.Error(), "expected_docx_ooxml") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if got := extractMagicMismatchReason(err); got != "expected_docx_ooxml" {
+		t.Fatalf("reason = %q, want expected_docx_ooxml", got)
+	}
 }
 
 func TestEnforceFileTypeConsistency_BlocksPlainZipRenamedDocx(t *testing.T) {
@@ -99,6 +111,9 @@ func TestEnforceFileTypeConsistency_BlocksPlainZipRenamedDocx(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "expected_docx_ooxml") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := extractMagicMismatchReason(err); got != "expected_docx_ooxml" {
+		t.Fatalf("reason = %q, want expected_docx_ooxml", got)
 	}
 }
 
@@ -144,4 +159,21 @@ func createZipFile(t *testing.T, path string, files map[string]string) {
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func extractMagicMismatchReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(err.Error())
+	const prefix = "policy.magic_mismatch:"
+	idx := strings.Index(raw, prefix)
+	if idx < 0 {
+		return ""
+	}
+	s := strings.TrimSpace(raw[idx+len(prefix):])
+	if i := strings.Index(s, "("); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	return s
 }

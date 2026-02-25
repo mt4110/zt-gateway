@@ -11,9 +11,9 @@
 ## まず確認する順番（問い合わせ / CI失敗）
 
 1. `ZT_ERROR_CODE=...` が出ているか確認
-2. `zt policy status --json` で `set_consistency` / `freshness_state` / `sync_error_code` を確認
+2. `zt policy status --json` で `set_consistency` / `freshness_state` / `sync_error_code` を確認（v0.7.0 実装後は `--kind all` を優先）
 3. `zt sync --json` で `error_class` / `error_code` / `pending_count` / `oldest_pending_age_seconds` を確認
-4. JSON出力がある場合は `quick_fix_bundle.runbook` を起点に修復コマンドを実行
+4. JSON出力がある場合は `quick_fix_bundle.runbook` と `quick_fix_bundle.runbook_anchor`（存在時）を起点に修復コマンドを実行
 5. `ZT_SEND_PACK_FAILED` の場合は `SECURE_PACK_ERROR_CODE=...` を確認
 6. supply-chain 系なら `zt setup --json` の `secure_pack_*` checks と `resolved.pin_*` を確認
 
@@ -114,6 +114,74 @@
 - 一次対応:
   1. CP `202` 応答が `endpoint` / `payload_sha256` / `accepted_at` を返すか確認
   2. Gateway-CP 間で body 変換（proxy/filter）が入っていないか確認
+  3. 修正後に `zt sync --force --json` で再送成功を確認
+
+## v0.7.0 一次対応フロー（設計反映）
+
+この節は `docs/architecture/V0.7.0_DESIGN.md` に基づく運用更新案です。
+実装完了後は以下の順序で固定します。
+
+判定順序（固定）:
+
+1. `zt policy status --json --kind all` で `overall_set_consistency` / `overall_freshness_state` / `critical_kinds` を確認
+2. `zt sync --json` で `backlog_slo_seconds` / `backlog_breached` / `backlog_breached_since` / `error_code` を確認
+3. `quick_fix_bundle.runbook_anchor` がある場合は該当アンカーに直接遷移する
+4. `runbook_anchor` がない場合は本ページの `error_code` 対応節で一次復旧する
+
+### file-type-guard-reason-codes
+
+- 想定トリガ: `ZT_SEND_POLICY_BLOCKED` かつ `reason=policy_magic_mismatch:*`
+- 主要 `reason_code`:
+  - `expected_pdf`: `.pdf` 拡張子だが PDF シグネチャ不一致
+  - `pdf_missing_eof_marker`: PDF 末尾 `%%EOF` が見つからない
+  - `expected_text_like`: `.txt/.md/.csv/.json` だが text 判定不可
+  - `expected_docx_ooxml` / `expected_xlsx_ooxml` / `expected_pptx_ooxml`: OOXML 必須部品不足
+- 一次対応:
+  1. ファイル供給元へ再取得を依頼（転送中破損・誤拡張子を除外）
+  2. MIME/magic bytes 偽装が疑われる場合は `DENY` 維持で運用レビュー
+  3. policy 例外化は変更審査を通すまで禁止（fail-closed 維持）
+
+### policy-scan-posture-violation
+
+- 想定トリガ: `policy_scan_posture_violation`
+- 症状:
+  - strict 必須 profile（`internal/confidential/regulated`）で degraded 実行が混入
+  - `required_scanners` / `require_clamav_db` 契約不一致
+- 一次対応:
+  1. `policy/scan_policy.toml`（または profile policy）を確認
+  2. scanner 実行環境（ClamAV DB / YARA）を復旧
+  3. 復旧後に `zt setup --json` と `zt send` を再実行
+
+### policy-set-consistency-reason
+
+- 想定トリガ: `set_consistency!=consistent`
+- 代表 reason:
+  - `skew_detected`
+  - `missing_extension`
+  - `missing_scan`
+  - `set_id_missing`
+- 一次対応:
+  1. extension/scan の publish セットを同じ `policy_set_id` に揃える
+  2. `zt sync --force --json` 実行
+  3. `zt policy status --json --kind all` で収束確認
+
+### sync-backlog-slo-breached-v070
+
+- 想定トリガ: `error_code=sync_backlog_slo_breached` + `backlog_breached=true`
+- 一次対応:
+  1. `pending_count` と `backlog_breached_since` の推移を監視
+  2. `http_5xx` / `transport_failed` の継続要因を除去
+  3. `zt sync --force --json` で backlog 減少を確認
+
+### ingest-ack-mismatch-v070
+
+- 想定トリガ: `error_code=ingest_ack_mismatch`
+- v0.7.0 確認項目:
+  - `ack_schema_version`
+  - `canonical_payload_sha256`
+- 一次対応:
+  1. CP の 202 ACK が canonical hash を返しているか確認
+  2. Gateway-CP 間の payload 正規化/改変有無を確認
   3. 修正後に `zt sync --force --json` で再送成功を確認
 
 ## Policy Control Loop 一次復旧（v0.5f）

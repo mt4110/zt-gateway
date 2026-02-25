@@ -15,10 +15,11 @@ type trustStatus struct {
 }
 
 type quickFixBundle struct {
-	Why      string   `json:"why"`
-	Commands []string `json:"commands,omitempty"`
-	Runbook  string   `json:"runbook,omitempty"`
-	Retry    string   `json:"retry,omitempty"`
+	Why           string   `json:"why"`
+	Commands      []string `json:"commands,omitempty"`
+	Runbook       string   `json:"runbook,omitempty"`
+	RunbookAnchor string   `json:"runbook_anchor,omitempty"`
+	Retry         string   `json:"retry,omitempty"`
 }
 
 func newTrustStatusSuccess(receiptID string) trustStatus {
@@ -56,6 +57,10 @@ func printTrustStatusLine(status trustStatus) {
 }
 
 func buildQuickFixBundle(summary string, quickFixes []string, retryCommand string) *quickFixBundle {
+	return buildQuickFixBundleWithCode(summary, quickFixes, retryCommand, "")
+}
+
+func buildQuickFixBundleWithCode(summary string, quickFixes []string, retryCommand string, errorCode string) *quickFixBundle {
 	why := strings.TrimSpace(summary)
 	if why == "" {
 		why = "operation failed; apply fixes and retry"
@@ -69,9 +74,27 @@ func buildQuickFixBundle(summary string, quickFixes []string, retryCommand strin
 		commands = []string{retry}
 	}
 	return &quickFixBundle{
-		Why:      why,
-		Commands: commands,
-		Runbook:  "docs/OPERATIONS.md",
-		Retry:    retry,
+		Why:           why,
+		Commands:      commands,
+		Runbook:       "docs/OPERATIONS.md",
+		RunbookAnchor: runbookAnchorForErrorCode(errorCode),
+		Retry:         retry,
+	}
+}
+
+func runbookAnchorForErrorCode(errorCode string) string {
+	switch strings.ToLower(strings.TrimSpace(errorCode)) {
+	case "policy_set_skew_detected":
+		return "#policy-set-consistency-reason"
+	case "policy_sync_slo_breached":
+		return "#policy-sync-slo-breached"
+	case "policy_scan_posture_violation":
+		return "#policy-scan-posture-violation"
+	case "sync_backlog_slo_breached":
+		return "#sync-backlog-slo-breached-v070"
+	case "ingest_ack_mismatch":
+		return "#ingest-ack-mismatch-v070"
+	default:
+		return ""
 	}
 }
