@@ -2,7 +2,10 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +15,12 @@ import (
 	"time"
 )
 
-const defaultPolicyBundleTTL = 7 * 24 * time.Hour
+const (
+	defaultPolicyBundleTTL           = 7 * 24 * time.Hour
+	defaultPolicySigningKeyFileRel   = "keys/policy_signing_ed25519.seed.b64"
+	defaultPolicyKeyIDPrefix         = "cp-policy-ed25519"
+	defaultPolicyKeyIDFingerprintLen = 16
+)
 
 type policyBundleSigner struct {
 	KeyID string
@@ -43,39 +51,111 @@ type policyBundleSigningPayload struct {
 	ContentTOML string `json:"content_toml"`
 }
 
-func loadPolicyBundleSignerFromEnv() (*policyBundleSigner, error) {
-	rawPriv := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64"))
-	if rawPriv == "" {
-		return nil, nil
+func loadPolicyBundleSigner(dataDir string) (*policyBundleSigner, error) {
+	ttl, err := loadPolicyBundleTTL()
+	if err != nil {
+		return nil, err
 	}
-	b, err := base64.StdEncoding.DecodeString(rawPriv)
+
+	priv, err := loadPolicyBundlePrivateKeyWithFallback(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	keyID := resolvePolicySigningKeyID(priv.Public().(ed25519.PublicKey))
+	return &policyBundleSigner{
+		KeyID: keyID,
+		Priv:  priv,
+		TTL:   ttl,
+	}, nil
+}
+
+func loadPolicyBundleTTL() (time.Duration, error) {
+	ttl := defaultPolicyBundleTTL
+	if rawTTL := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_BUNDLE_TTL_HOURS")); rawTTL != "" {
+		hours, err := strconv.Atoi(rawTTL)
+		if err != nil || hours <= 0 {
+			return 0, fmt.Errorf("ZT_CP_POLICY_BUNDLE_TTL_HOURS must be positive integer hours")
+		}
+		ttl = time.Duration(hours) * time.Hour
+	}
+	return ttl, nil
+}
+
+func loadPolicyBundlePrivateKeyWithFallback(dataDir string) (ed25519.PrivateKey, error) {
+	if rawPriv := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64")); rawPriv != "" {
+		return decodePolicyPrivateKeyB64(rawPriv)
+	}
+	keyPath, err := resolvePolicySigningKeyFilePath(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return loadOrCreatePolicyPrivateKeyFile(keyPath)
+}
+
+func resolvePolicySigningKeyFilePath(dataDir string) (string, error) {
+	keyPath := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_KEY_FILE"))
+	if keyPath == "" {
+		if strings.TrimSpace(dataDir) == "" {
+			return "", fmt.Errorf("dataDir is empty")
+		}
+		return filepath.Join(dataDir, defaultPolicySigningKeyFileRel), nil
+	}
+	if filepath.IsAbs(keyPath) {
+		return keyPath, nil
+	}
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("relative ZT_CP_POLICY_SIGNING_KEY_FILE requires dataDir")
+	}
+	return filepath.Join(dataDir, keyPath), nil
+}
+
+func loadOrCreatePolicyPrivateKeyFile(path string) (ed25519.PrivateKey, error) {
+	b, err := os.ReadFile(path)
+	if err == nil {
+		return decodePolicyPrivateKeyB64(strings.TrimSpace(string(b)))
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := rand.Read(seed); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	encodedSeed := base64.StdEncoding.EncodeToString(seed) + "\n"
+	if err := os.WriteFile(path, []byte(encodedSeed), 0o600); err != nil {
+		return nil, err
+	}
+	return ed25519.NewKeyFromSeed(seed), nil
+}
+
+func decodePolicyPrivateKeyB64(raw string) (ed25519.PrivateKey, error) {
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
 	if err != nil {
 		return nil, err
 	}
 	switch len(b) {
 	case ed25519.SeedSize:
-		b = ed25519.NewKeyFromSeed(b)
+		return ed25519.NewKeyFromSeed(b), nil
 	case ed25519.PrivateKeySize:
+		return ed25519.PrivateKey(b), nil
 	default:
 		return nil, fmt.Errorf("expected %d-byte seed or %d-byte private key, got %d", ed25519.SeedSize, ed25519.PrivateKeySize, len(b))
 	}
-	keyID := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_KEY_ID"))
-	if keyID == "" {
-		return nil, fmt.Errorf("ZT_CP_POLICY_SIGNING_KEY_ID is required")
+}
+
+func resolvePolicySigningKeyID(pub ed25519.PublicKey) string {
+	if keyID := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_KEY_ID")); keyID != "" {
+		return keyID
 	}
-	ttl := defaultPolicyBundleTTL
-	if rawTTL := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_BUNDLE_TTL_HOURS")); rawTTL != "" {
-		hours, err := strconv.Atoi(rawTTL)
-		if err != nil || hours <= 0 {
-			return nil, fmt.Errorf("ZT_CP_POLICY_BUNDLE_TTL_HOURS must be positive integer hours")
-		}
-		ttl = time.Duration(hours) * time.Hour
+	hash := sha256.Sum256(pub)
+	fp := hex.EncodeToString(hash[:])
+	if len(fp) > defaultPolicyKeyIDFingerprintLen {
+		fp = fp[:defaultPolicyKeyIDFingerprintLen]
 	}
-	return &policyBundleSigner{
-		KeyID: keyID,
-		Priv:  ed25519.PrivateKey(b),
-		TTL:   ttl,
-	}, nil
+	return defaultPolicyKeyIDPrefix + "-" + fp
 }
 
 func (s *policyBundleSigner) Sign(bundle policyBundle) (policyBundle, error) {

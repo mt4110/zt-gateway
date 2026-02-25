@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -123,6 +124,72 @@ func TestPolicyBundleSignatureContract_TamperBreaksVerification(t *testing.T) {
 	bundle.ContentTOML = "max_size_mb = 99\n"
 	if verifyPolicyBundleSignatureContract(t, bundle, signer.Priv.Public().(ed25519.PublicKey)) {
 		t.Fatalf("tampered bundle unexpectedly verified")
+	}
+}
+
+func TestPolicyBundleSignatureContract_LoadSignerAutoProvisionedFromDataDir(t *testing.T) {
+	t.Setenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64", "")
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_ID", "")
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_FILE", "")
+	t.Setenv("ZT_CP_POLICY_BUNDLE_TTL_HOURS", "")
+
+	dataDir := t.TempDir()
+	signer1, err := loadPolicyBundleSigner(dataDir)
+	if err != nil {
+		t.Fatalf("loadPolicyBundleSigner(first): %v", err)
+	}
+	if signer1 == nil {
+		t.Fatalf("signer1 = nil")
+	}
+	if !strings.HasPrefix(signer1.KeyID, defaultPolicyKeyIDPrefix+"-") {
+		t.Fatalf("key_id = %q, want %q prefix", signer1.KeyID, defaultPolicyKeyIDPrefix+"-")
+	}
+	keyPath := filepath.Join(dataDir, defaultPolicySigningKeyFileRel)
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatalf("os.Stat(%s): %v", keyPath, err)
+	}
+
+	signer2, err := loadPolicyBundleSigner(dataDir)
+	if err != nil {
+		t.Fatalf("loadPolicyBundleSigner(second): %v", err)
+	}
+	if signer2 == nil {
+		t.Fatalf("signer2 = nil")
+	}
+	if signer2.KeyID != signer1.KeyID {
+		t.Fatalf("key_id changed: %q -> %q", signer1.KeyID, signer2.KeyID)
+	}
+	if string(signer2.Priv) != string(signer1.Priv) {
+		t.Fatalf("private key changed between loads")
+	}
+}
+
+func TestPolicyBundleSignatureContract_LoadSignerEnvOverride(t *testing.T) {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(90 + i)
+	}
+	t.Setenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64", base64.StdEncoding.EncodeToString(seed))
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_ID", "ops-policy-key")
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_FILE", "custom/policy.seed.b64")
+	t.Setenv("ZT_CP_POLICY_BUNDLE_TTL_HOURS", "48")
+
+	signer, err := loadPolicyBundleSigner(t.TempDir())
+	if err != nil {
+		t.Fatalf("loadPolicyBundleSigner: %v", err)
+	}
+	if signer == nil {
+		t.Fatalf("signer = nil")
+	}
+	if signer.KeyID != "ops-policy-key" {
+		t.Fatalf("key_id = %q, want ops-policy-key", signer.KeyID)
+	}
+	if signer.TTL != 48*time.Hour {
+		t.Fatalf("ttl = %s, want 48h", signer.TTL)
+	}
+	wantPriv := ed25519.NewKeyFromSeed(seed)
+	if string(signer.Priv) != string(wantPriv) {
+		t.Fatalf("private key mismatch for env override")
 	}
 }
 

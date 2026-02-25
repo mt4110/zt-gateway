@@ -82,9 +82,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid ZT_CP_EVENT_VERIFY_PUBKEY_B64: %v", err)
 	}
-	policySigner, err := loadPolicyBundleSignerFromEnv()
+	policySigner, err := loadPolicyBundleSigner(dataDir)
 	if err != nil {
-		log.Fatalf("invalid policy signer env: %v", err)
+		log.Fatalf("invalid policy signer config: %v", err)
 	}
 	keyRegistry, err := loadEventKeyRegistry(cwd)
 	if err != nil {
