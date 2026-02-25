@@ -44,13 +44,18 @@ type queuedEvent struct {
 }
 
 type syncResult struct {
-	Sent           int
-	Remaining      int
-	Skipped        int
-	LastError      string
-	LastErrorClass string
-	LastErrorCode  string
-	Configured     bool
+	Sent                    int
+	Remaining               int
+	Skipped                 int
+	LastError               string
+	LastErrorClass          string
+	LastErrorCode           string
+	Configured              bool
+	PendingCount            int
+	OldestPendingAgeSeconds int64
+	RetryableCount          int
+	FailClosedCount         int
+	NextRetryAt             string
 }
 
 type eventEnvelopeSigner struct {
@@ -107,20 +112,26 @@ func runSyncEvents(force bool) {
 }
 
 type syncCommandJSONResult struct {
-	OK          bool     `json:"ok"`
-	SchemaVer   int      `json:"schema_version"`
-	GeneratedAt string   `json:"generated_at"`
-	Command     string   `json:"command"`
-	Argv        []string `json:"argv"`
-	Force       bool     `json:"force"`
-	Configured  bool     `json:"configured"`
-	Sent        int      `json:"sent"`
-	Remaining   int      `json:"remaining"`
-	Skipped     int      `json:"skipped"`
-	ErrorClass  string   `json:"error_class"`
-	ErrorCode   string   `json:"error_code"`
-	LastError   string   `json:"last_error,omitempty"`
-	ExitCode    int      `json:"exit_code"`
+	OK                  bool            `json:"ok"`
+	SchemaVer           int             `json:"schema_version"`
+	GeneratedAt         string          `json:"generated_at"`
+	Command             string          `json:"command"`
+	Argv                []string        `json:"argv"`
+	Force               bool            `json:"force"`
+	Configured          bool            `json:"configured"`
+	Sent                int             `json:"sent"`
+	Remaining           int             `json:"remaining"`
+	Skipped             int             `json:"skipped"`
+	PendingCount        int             `json:"pending_count"`
+	OldestPendingAgeSec int64           `json:"oldest_pending_age_seconds"`
+	RetryableCount      int             `json:"retryable_count"`
+	FailClosedCount     int             `json:"fail_closed_count"`
+	NextRetryAt         string          `json:"next_retry_at,omitempty"`
+	ErrorClass          string          `json:"error_class"`
+	ErrorCode           string          `json:"error_code"`
+	LastError           string          `json:"last_error,omitempty"`
+	QuickFixBundle      *quickFixBundle `json:"quick_fix_bundle,omitempty"`
+	ExitCode            int             `json:"exit_code"`
 }
 
 func runSyncEventsWithOptions(opts syncOptions) {
@@ -151,6 +162,10 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 		result.ErrorClass = syncErrorClassInternal
 		result.ErrorCode = syncErrorCodeSyncNotInitialized
 		result.LastError = "event spool is not initialized"
+		result.QuickFixBundle = buildQuickFixBundle("sync failed", []string{
+			"Re-run command from repository root so event spool can initialize.",
+			"Run `zt setup --json` to validate local spool path and config resolution.",
+		}, "zt sync --force --json")
 		if opts.JSON {
 			emitSyncJSON(out, result)
 		} else {
@@ -164,9 +179,19 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 	result.Sent = res.Sent
 	result.Remaining = res.Remaining
 	result.Skipped = res.Skipped
+	result.PendingCount = res.PendingCount
+	result.OldestPendingAgeSec = res.OldestPendingAgeSeconds
+	result.RetryableCount = res.RetryableCount
+	result.FailClosedCount = res.FailClosedCount
+	result.NextRetryAt = res.NextRetryAt
 	result.LastError = res.LastError
 	result.ErrorClass = normalizeSyncErrorClass(res.LastErrorClass)
 	result.ErrorCode = normalizeSyncErrorCode(res.LastErrorCode)
+	if result.ErrorClass == syncErrorClassNone && result.ErrorCode == syncErrorCodeNone && isSyncBacklogSLOBreached(res) {
+		result.ErrorClass = syncErrorClassRetryable
+		result.ErrorCode = syncErrorCodeBacklogSLOBreached
+		result.LastError = "sync backlog SLO breached"
+	}
 
 	if err != nil {
 		result.OK = false
@@ -179,6 +204,7 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 			result.ErrorClass = normalizeSyncErrorClass(info.Class)
 			result.ErrorCode = normalizeSyncErrorCode(info.Code)
 		}
+		result.QuickFixBundle = buildQuickFixBundle("sync failed", syncQuickFixes(result.ErrorCode), "zt sync --force --json")
 		if opts.JSON {
 			emitSyncJSON(out, result)
 		} else if isControlPlaneFailClosedSyncError(err) {
@@ -191,6 +217,9 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 	}
 
 	if opts.JSON {
+		if result.ErrorCode != syncErrorCodeNone {
+			result.QuickFixBundle = buildQuickFixBundle("sync attention required", syncQuickFixes(result.ErrorCode), "zt sync --force --json")
+		}
 		emitSyncJSON(out, result)
 		return 0
 	}
@@ -203,6 +232,47 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 		fmt.Fprintf(out, "[SYNC] last_error=%s\n", res.LastError)
 	}
 	return 0
+}
+
+func isSyncBacklogSLOBreached(res syncResult) bool {
+	slo := syncBacklogSLOSeconds()
+	return res.PendingCount > 0 && slo > 0 && res.OldestPendingAgeSeconds > slo
+}
+
+func syncBacklogSLOSeconds() int64 {
+	raw := strings.TrimSpace(os.Getenv("ZT_SYNC_BACKLOG_SLO_SECONDS"))
+	if raw == "" {
+		return int64((1 * time.Hour) / time.Second)
+	}
+	d, err := time.ParseDuration(raw + "s")
+	if err != nil || d <= 0 {
+		return int64((1 * time.Hour) / time.Second)
+	}
+	return int64(d / time.Second)
+}
+
+func syncQuickFixes(errorCode string) []string {
+	switch strings.TrimSpace(errorCode) {
+	case "envelope.key_id_required", "envelope.key_id_not_allowed":
+		return []string{
+			"Set `ZT_EVENT_SIGNING_KEY_ID` and align Control Plane event-key registry allow-list.",
+			"Retry with `zt sync --force --json` after key mapping is fixed.",
+		}
+	case syncErrorCodeIngestAckMismatch:
+		return []string{
+			"Ensure Control Plane returns 202 ACK with matching `payload_sha256`.",
+			"Check proxy/body mutation between Gateway and Control Plane.",
+		}
+	case syncErrorCodeBacklogSLOBreached:
+		return []string{
+			"Run `zt sync --force --json` and monitor `pending_count` until it decreases.",
+			"Investigate repeated retryable transport/5xx errors on Control Plane.",
+		}
+	default:
+		return []string{
+			"Check `zt sync --json` error_code/error_class and apply runbook steps in docs/OPERATIONS.md.",
+		}
+	}
 }
 
 func emitSyncJSON(w io.Writer, v syncCommandJSONResult) {

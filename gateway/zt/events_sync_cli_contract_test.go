@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestSyncCLIJSONContract_FailClosedExitCodeAndEnvelopeError(t *testing.T) {
@@ -48,6 +49,13 @@ func TestSyncCLIJSONContract_FailClosedExitCodeAndEnvelopeError(t *testing.T) {
 	}
 	if got, _ := payload["exit_code"].(float64); int(got) != 1 {
 		t.Fatalf("payload.exit_code = %v, want 1", got)
+	}
+	qfb, ok := payload["quick_fix_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("quick_fix_bundle missing: %#v", payload["quick_fix_bundle"])
+	}
+	if got, _ := qfb["runbook"].(string); got == "" {
+		t.Fatalf("quick_fix_bundle.runbook is empty")
 	}
 }
 
@@ -118,5 +126,97 @@ func TestSyncCLIJSONContract_RetryableTransportError(t *testing.T) {
 	}
 	if got, _ := payload["error_code"].(string); got != syncErrorCodeTransportFailed {
 		t.Fatalf("error_code = %q, want %q", got, syncErrorCodeTransportFailed)
+	}
+}
+
+func TestSyncCLIJSONContract_BacklogVisibilityContract(t *testing.T) {
+	spool := newEventSpool(t.TempDir())
+	spool.SetAutoSync(false)
+	// keep pending events local only to test backlog projection fields.
+	if err := spool.Enqueue("/v1/events/scan", map[string]any{"event_id": "evt_backlog_1"}); err != nil {
+		t.Fatalf("Enqueue(1): %v", err)
+	}
+	if err := spool.Enqueue("/v1/events/verify", map[string]any{"event_id": "evt_backlog_2"}); err != nil {
+		t.Fatalf("Enqueue(2): %v", err)
+	}
+	pending, err := readQueuedEvents(spool.pendingPath())
+	if err != nil {
+		t.Fatalf("readQueuedEvents: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending len = %d, want 2", len(pending))
+	}
+	pending[0].EnqueuedAt = time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano)
+	pending[0].ErrorClass = syncErrorClassRetryable
+	pending[0].NextRetryAt = time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339Nano)
+	pending[1].ErrorClass = syncErrorClassFailClosed
+	if err := rewriteQueuedEvents(spool.pendingPath(), pending); err != nil {
+		t.Fatalf("rewriteQueuedEvents: %v", err)
+	}
+
+	prev := cpEvents
+	cpEvents = spool
+	defer func() { cpEvents = prev }()
+
+	t.Setenv("ZT_SYNC_BACKLOG_SLO_SECONDS", "10")
+	var out bytes.Buffer
+	exitCode := runSyncEventsCommand(syncOptions{Force: false, JSON: true}, []string{"zt", "sync", "--json"}, &out)
+	if exitCode != 0 {
+		t.Fatalf("exit_code = %d, want 0", exitCode)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal stdout: %v (stdout=%s)", err, out.String())
+	}
+	if got, _ := payload["pending_count"].(float64); int(got) != 2 {
+		t.Fatalf("pending_count = %v, want 2", got)
+	}
+	if got, _ := payload["retryable_count"].(float64); int(got) != 1 {
+		t.Fatalf("retryable_count = %v, want 1", got)
+	}
+	if got, _ := payload["fail_closed_count"].(float64); int(got) != 1 {
+		t.Fatalf("fail_closed_count = %v, want 1", got)
+	}
+	if got, _ := payload["oldest_pending_age_seconds"].(float64); int(got) <= 0 {
+		t.Fatalf("oldest_pending_age_seconds = %v, want >0", got)
+	}
+	if got, _ := payload["error_code"].(string); got != syncErrorCodeBacklogSLOBreached {
+		t.Fatalf("error_code = %q, want %q", got, syncErrorCodeBacklogSLOBreached)
+	}
+}
+
+func TestSyncCLIJSONContract_AckIntegrityMismatchContract(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"accepted","endpoint":"/v1/events/scan","payload_sha256":"wrong","accepted_at":"2026-02-25T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	spool := newEventSpool(t.TempDir())
+	spool.SetAutoSync(false)
+	spool.SetControlPlaneURL(srv.URL)
+	if err := spool.Enqueue("/v1/events/scan", map[string]any{"event_id": "evt_sync_ack_mismatch"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	prev := cpEvents
+	cpEvents = spool
+	defer func() { cpEvents = prev }()
+
+	var out bytes.Buffer
+	exitCode := runSyncEventsCommand(syncOptions{Force: true, JSON: true}, []string{"zt", "sync", "--force", "--json"}, &out)
+	if exitCode != 1 {
+		t.Fatalf("exit_code = %d, want 1", exitCode)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal stdout: %v (stdout=%s)", err, out.String())
+	}
+	if got, _ := payload["error_class"].(string); got != syncErrorClassInternal {
+		t.Fatalf("error_class = %q, want %q", got, syncErrorClassInternal)
+	}
+	if got, _ := payload["error_code"].(string); got != syncErrorCodeIngestAckMismatch {
+		t.Fatalf("error_code = %q, want %q", got, syncErrorCodeIngestAckMismatch)
 	}
 }

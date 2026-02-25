@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestEventIngestEnvelopeErrorsContract(t *testing.T) {
@@ -289,6 +290,63 @@ func TestEventIngestEnvelopeErrorsContract(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIngestAccepted_AckIntegrityContract(t *testing.T) {
+	t.Parallel()
+
+	endpointKind := map[string]string{
+		"/v1/events/scan":     "scan",
+		"/v1/events/artifact": "artifact",
+		"/v1/events/verify":   "verify",
+	}
+	payloadByEndpoint := map[string][]byte{
+		"/v1/events/scan":     []byte(`{"event_id":"evt_ack_scan","command":"scan","target_name":"a.txt","result":"allow","reason":"clean"}`),
+		"/v1/events/artifact": []byte(`{"event_id":"evt_ack_artifact","artifact_kind":"packet","file_name":"bundle.spkg.tgz"}`),
+		"/v1/events/verify":   []byte(`{"event_id":"evt_ack_verify","result":"verified","reason":"ok"}`),
+	}
+
+	for endpoint, kind := range endpointKind {
+		endpoint := endpoint
+		kind := kind
+		t.Run(endpoint, func(t *testing.T) {
+			t.Parallel()
+			srv := newIngestContractServer(t, nil, false, nil)
+			rr := httptest.NewRecorder()
+			body := payloadByEndpoint[endpoint]
+			srv.handleEventIngest(kind).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body)))
+			if rr.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 (body=%s)", rr.Code, rr.Body.String())
+			}
+			resp := decodeJSONMapContract(t, rr.Body.Bytes())
+			if got, _ := resp["endpoint"].(string); got != endpoint {
+				t.Fatalf("endpoint = %q, want %q", got, endpoint)
+			}
+			if got, _ := resp["payload_sha256"].(string); got != canonicalPayloadSHAContract(t, body) {
+				t.Fatalf("payload_sha256 = %q, want %q", got, canonicalPayloadSHAContract(t, body))
+			}
+			acceptedAt, _ := resp["accepted_at"].(string)
+			if acceptedAt == "" {
+				t.Fatalf("accepted_at is empty")
+			}
+			if _, err := time.Parse(time.RFC3339, acceptedAt); err != nil {
+				t.Fatalf("accepted_at parse failed: %v", err)
+			}
+		})
+	}
+}
+
+func canonicalPayloadSHAContract(t *testing.T, body []byte) string {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("json.Unmarshal payload: %v", err)
+	}
+	canonical, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal payload: %v", err)
+	}
+	return sha256Hex(canonical)
 }
 
 func readErrorFieldContract(t *testing.T, body []byte) string {

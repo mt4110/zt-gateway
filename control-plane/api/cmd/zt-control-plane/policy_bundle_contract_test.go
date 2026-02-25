@@ -381,4 +381,10 @@ func assertPolicyBundleRequiredFieldsContract(t *testing.T, bundle policyBundle)
 	if bundle.DuplicateRule == "" {
 		t.Fatalf("duplicate_rule is empty")
 	}
+	if strings.TrimSpace(bundle.PolicySetID) == "" {
+		t.Fatalf("policy_set_id is empty")
+	}
+	if bundle.FreshnessSLOSec <= 0 {
+		t.Fatalf("freshness_slo_seconds = %d, want > 0", bundle.FreshnessSLOSec)
+	}
 }

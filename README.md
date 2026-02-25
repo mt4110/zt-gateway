@@ -252,7 +252,12 @@ flowchart LR
 - `zt setup --json` / `zt config doctor --json` を CI に入れて設定劣化を検知（fixtureゲート: `scripts/ci/check-zt-setup-json-gate.sh`）
 - policy 契約は独立ゲート `scripts/ci/check-policy-contract-gate.sh` を追加し、署名bundle / keyset / activation / decision の回帰を分離検知する
 - v0.5g の配布回帰は `scripts/ci/check-policy-rollout-gate.sh` で実行し、sync loop / keyset window / min version fail-closed / rollback 契約をまとめて検知する
+- v0.6.0MAX では `zt policy status --json` の `set_consistency` / `freshness_state` を一次判定の必須項目にする（`unknown` / `critical` は要調査）
+- v0.6.0MAX では `zt sync --json` の `pending_count` / `oldest_pending_age_seconds` / `retryable_count` / `fail_closed_count` を監視し、閾値超過時は backlog runbook を実行する
+- v0.6.0MAX では Control Plane ingest 202 応答の `payload_sha256` を ACK 整合検証し、`ingest_ack_mismatch` を fail-fast で検知する
+- v0.6.0MAX 契約ゲートは `scripts/ci/check-policy-set-gate.sh` / `scripts/ci/check-sync-observability-gate.sh` / `scripts/ci/check-openapi-contract-gate.sh` を追加して分離検知する
 - 次段の配布運用設計（v0.5g）は `docs/architecture/POLICY_CONTROL_LOOP_V0.5G_DESIGN.md` を正本として管理する
+- v0.6.0MAX 設計正本は `docs/architecture/V0.6.0MAX_DESIGN.md`
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
@@ -262,6 +267,15 @@ flowchart LR
 - `zt policy status --json` で `active/staged/last_known_good` と `last_sync_at/next_sync_at/sync_error_code` を確認できます（policy loop 一次切り分け向け）
 - `zt send` precheck 失敗時は `ZT_ERROR_CODE=ZT_PRECHECK_SUPPLY_CHAIN_FAILED`、`secure-pack send` は `SECURE_PACK_ERROR_CODE=...` を出力します
 - 運用一次対応の共通参照（CI/Helpdesk/runbook）は `docs/OPERATIONS.md` を正本として使用
+
+v0.6.0MAX 最短確認:
+
+```bash
+go run ./gateway/zt setup --json
+go run ./gateway/zt policy status --json --kind extension
+go run ./gateway/zt policy status --json --kind scan
+go run ./gateway/zt sync --json
+```
 
 ### 運用・CIの共通参照（短縮版）
 

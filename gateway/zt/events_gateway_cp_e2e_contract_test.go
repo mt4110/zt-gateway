@@ -4,11 +4,13 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestGatewayControlPlaneE2EContract_RegistryRejectsMissingKeyID(t *testing.T) {
@@ -151,8 +153,9 @@ func (s *registryE2EControlPlaneServer) Handle(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	rawBody, _ := io.ReadAll(r.Body)
 	var env signedEventEnvelope
-	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+	if err := json.Unmarshal(rawBody, &env); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"envelope.required"}`))
 		return
@@ -187,5 +190,10 @@ func (s *registryE2EControlPlaneServer) Handle(w http.ResponseWriter, r *http.Re
 	}
 
 	w.WriteHeader(http.StatusAccepted)
-	_, _ = w.Write([]byte(`{"status":"accepted"}`))
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":         "accepted",
+		"endpoint":       r.URL.Path,
+		"payload_sha256": canonicalEventPayloadSHA(rawBody),
+		"accepted_at":    time.Now().UTC().Format(time.RFC3339),
+	})
 }

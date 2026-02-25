@@ -107,6 +107,9 @@ func (s *server) handleEventIngest(kind string) http.HandlerFunc {
 			"ingest_id":      responseIngestID,
 			"duplicate":      duplicate,
 			"duplicate_rule": "event_id+payload_sha256",
+			"endpoint":       r.URL.Path,
+			"payload_sha256": payloadSHA,
+			"accepted_at":    now.Format(time.RFC3339),
 		})
 	}
 }
@@ -173,6 +176,8 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			ContentTOML:       string(b),
 			MinGatewayVersion: minimumGatewayVersion(),
 			DuplicateRule:     "manifest_id+profile+sha256",
+			PolicySetID:       policySetID(s.policySigner),
+			FreshnessSLOSec:   policyFreshnessSLOSeconds(profile),
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})
@@ -228,6 +233,9 @@ func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
 	etagBody := map[string]any{
 		"schema_version": "zt-policy-keyset-v1",
 		"keys":           []any{key},
+		"rotation_id":    policyKeyRotationID(s.policySigner),
+		"active_key_id":  policyActiveKeyID(s.policySigner),
+		"next_key_id":    policyNextKeyID(s.policySigner),
 	}
 	canonical, _ := json.Marshal(etagBody)
 	etag := fmt.Sprintf("\"sha256:%s\"", sha256Hex(canonical))
@@ -245,6 +253,11 @@ func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
 		"schema_version": "zt-policy-keyset-v1",
 		"generated_at":   generatedAt,
 		"keys":           []any{key},
+		"rotation_id":    policyKeyRotationID(s.policySigner),
+		"active_key_id":  policyActiveKeyID(s.policySigner),
+	}
+	if nextKeyID := policyNextKeyID(s.policySigner); nextKeyID != "" {
+		resp["next_key_id"] = nextKeyID
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

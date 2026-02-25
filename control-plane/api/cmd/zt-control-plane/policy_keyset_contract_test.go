@@ -13,6 +13,9 @@ import (
 type policyKeysetContractResponse struct {
 	SchemaVersion string                       `json:"schema_version"`
 	GeneratedAt   string                       `json:"generated_at"`
+	RotationID    string                       `json:"rotation_id"`
+	ActiveKeyID   string                       `json:"active_key_id"`
+	NextKeyID     string                       `json:"next_key_id,omitempty"`
 	Keys          []policyKeysetContractRecord `json:"keys"`
 }
 
@@ -45,6 +48,12 @@ func TestPolicyKeysetContract_ReturnsActiveEd25519Key(t *testing.T) {
 	}
 	if got.SchemaVersion != "zt-policy-keyset-v1" {
 		t.Fatalf("schema_version = %q, want zt-policy-keyset-v1", got.SchemaVersion)
+	}
+	if got.RotationID == "" {
+		t.Fatalf("rotation_id is empty")
+	}
+	if got.ActiveKeyID != signer.KeyID {
+		t.Fatalf("active_key_id = %q, want %q", got.ActiveKeyID, signer.KeyID)
 	}
 	if len(got.Keys) != 1 {
 		t.Fatalf("keys len = %d, want 1", len(got.Keys))

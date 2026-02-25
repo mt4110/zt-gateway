@@ -48,6 +48,8 @@ const (
 	syncErrorCodeSyncNotInitialized = "sync_not_initialized"
 	syncErrorCodeTransportFailed    = "transport_failed"
 	syncErrorCodeInternalFailed     = "internal_failed"
+	syncErrorCodeIngestAckMismatch  = "ingest_ack_mismatch"
+	syncErrorCodeBacklogSLOBreached = "sync_backlog_slo_breached"
 )
 
 type syncErrorInfo struct {
@@ -88,13 +90,17 @@ func classifySyncError(err error) syncErrorInfo {
 			Code:  normalizeSyncErrorCode(postErr.ErrorCode),
 		}
 	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(msg, syncErrorCodeIngestAckMismatch) {
+		return syncErrorInfo{Class: syncErrorClassInternal, Code: syncErrorCodeIngestAckMismatch}
+	}
 	// transport / timeout / context cancellation and similar I/O failures are retryable.
-	if errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+	if errors.Is(err, io.EOF) || strings.Contains(msg, "timeout") {
 		return syncErrorInfo{Class: syncErrorClassRetryable, Code: syncErrorCodeTransportFailed}
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "connection refused") ||
-		strings.Contains(strings.ToLower(err.Error()), "no such host") ||
-		strings.Contains(strings.ToLower(err.Error()), "tls:") {
+	if strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "tls:") {
 		return syncErrorInfo{Class: syncErrorClassRetryable, Code: syncErrorCodeTransportFailed}
 	}
 	return syncErrorInfo{Class: syncErrorClassInternal, Code: syncErrorCodeInternalFailed}
@@ -107,6 +113,7 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 		if err != nil {
 			if os.IsNotExist(err) {
 				res.Configured = s.cfg.BaseURL != ""
+				populateSyncBacklogMetrics(&res, nil, time.Now().UTC())
 				return nil
 			}
 			return err
@@ -114,6 +121,7 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 		res.Remaining = len(pending)
 		res.Configured = s.cfg.BaseURL != ""
 		if len(pending) == 0 || s.cfg.BaseURL == "" {
+			populateSyncBacklogMetrics(&res, pending, time.Now().UTC())
 			return nil
 		}
 
@@ -148,6 +156,19 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 					terminalErr = err
 					break
 				}
+				if info.Class == syncErrorClassInternal {
+					// Internal contract/consistency failure should fail-fast and stop current sync run.
+					q.NextRetryAt = now.Add(10 * time.Minute).Format(time.RFC3339Nano)
+					kept = append(kept, q)
+					if i+1 < len(pending) {
+						kept = append(kept, pending[i+1:]...)
+					}
+					res.LastError = err.Error()
+					res.LastErrorClass = info.Class
+					res.LastErrorCode = info.Code
+					terminalErr = err
+					break
+				}
 				q.NextRetryAt = nextRetryAt(q.Attempts, now).Format(time.RFC3339Nano)
 				kept = append(kept, q)
 				res.LastError = err.Error()
@@ -167,6 +188,7 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 			return err
 		}
 		res.Remaining = len(kept)
+		populateSyncBacklogMetrics(&res, kept, time.Now().UTC())
 		if terminalErr != nil {
 			return terminalErr
 		}
@@ -211,7 +233,60 @@ func (s *eventSpool) post(q queuedEvent) error {
 			ErrorCode:   errorCode,
 		}
 	}
+	ackBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err := validateIngestAcceptedACK(q, ackBody); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateIngestAcceptedACK(q queuedEvent, body []byte) error {
+	var ack map[string]any
+	if err := json.Unmarshal(body, &ack); err != nil {
+		return fmt.Errorf("%s:invalid_json", syncErrorCodeIngestAckMismatch)
+	}
+	gotSHA := strings.TrimSpace(anyStringFromMap(ack, "payload_sha256"))
+	wantSHA := canonicalEventPayloadSHA(q.Payload)
+	if gotSHA == "" || !strings.EqualFold(gotSHA, wantSHA) {
+		return fmt.Errorf("%s:payload_sha256_mismatch", syncErrorCodeIngestAckMismatch)
+	}
+	endpoint := strings.TrimSpace(anyStringFromMap(ack, "endpoint"))
+	if endpoint == "" || endpoint != strings.TrimSpace(q.Endpoint) {
+		return fmt.Errorf("%s:endpoint_mismatch", syncErrorCodeIngestAckMismatch)
+	}
+	acceptedAt := strings.TrimSpace(anyStringFromMap(ack, "accepted_at"))
+	if acceptedAt == "" {
+		return fmt.Errorf("%s:accepted_at_required", syncErrorCodeIngestAckMismatch)
+	}
+	if _, err := time.Parse(time.RFC3339, acceptedAt); err != nil {
+		return fmt.Errorf("%s:accepted_at_invalid", syncErrorCodeIngestAckMismatch)
+	}
+	return nil
+}
+
+func canonicalEventPayloadSHA(rawBody []byte) string {
+	payloadRaw := rawBody
+	var env signedEventEnvelope
+	if err := json.Unmarshal(rawBody, &env); err == nil && env.EnvelopeVersion != "" && len(env.Payload) > 0 {
+		payloadRaw = env.Payload
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+		return sha256HexBytes(payloadRaw)
+	}
+	canonical, err := json.Marshal(payload)
+	if err != nil {
+		return sha256HexBytes(payloadRaw)
+	}
+	return sha256HexBytes(canonical)
+}
+
+func anyStringFromMap(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, _ := m[key].(string)
+	return strings.TrimSpace(v)
 }
 
 func controlPlaneErrorField(body []byte) string {
@@ -248,6 +323,55 @@ func isControlPlaneFailClosedResponse(statusCode int, remoteErr string) bool {
 		return true
 	}
 	return false
+}
+
+func populateSyncBacklogMetrics(res *syncResult, items []queuedEvent, now time.Time) {
+	if res == nil {
+		return
+	}
+	res.PendingCount = len(items)
+	res.RetryableCount = 0
+	res.FailClosedCount = 0
+	res.OldestPendingAgeSeconds = 0
+	res.NextRetryAt = ""
+	if len(items) == 0 {
+		return
+	}
+
+	oldest := now
+	oldestSet := false
+	var nextRetry time.Time
+	nextRetrySet := false
+
+	for _, q := range items {
+		switch strings.ToLower(strings.TrimSpace(q.ErrorClass)) {
+		case syncErrorClassFailClosed:
+			res.FailClosedCount++
+		case syncErrorClassRetryable:
+			res.RetryableCount++
+		}
+		if enqueuedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(q.EnqueuedAt)); err == nil {
+			if !oldestSet || enqueuedAt.Before(oldest) {
+				oldest = enqueuedAt
+				oldestSet = true
+			}
+		}
+		if retryAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(q.NextRetryAt)); err == nil {
+			if !nextRetrySet || retryAt.Before(nextRetry) {
+				nextRetry = retryAt
+				nextRetrySet = true
+			}
+		}
+	}
+	if oldestSet {
+		age := now.UTC().Unix() - oldest.UTC().Unix()
+		if age > 0 {
+			res.OldestPendingAgeSeconds = age
+		}
+	}
+	if nextRetrySet {
+		res.NextRetryAt = nextRetry.UTC().Format(time.RFC3339Nano)
+	}
 }
 
 func appendJSONLine(path string, v any) error {

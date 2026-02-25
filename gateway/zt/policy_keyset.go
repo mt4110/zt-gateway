@@ -14,6 +14,9 @@ import (
 type policyKeysetResponse struct {
 	SchemaVersion string             `json:"schema_version"`
 	GeneratedAt   string             `json:"generated_at"`
+	RotationID    string             `json:"rotation_id,omitempty"`
+	ActiveKeyID   string             `json:"active_key_id,omitempty"`
+	NextKeyID     string             `json:"next_key_id,omitempty"`
 	Keys          []policyKeysetItem `json:"keys"`
 }
 
