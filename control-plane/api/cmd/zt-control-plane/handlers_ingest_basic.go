@@ -136,7 +136,11 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_profile"})
 			return
 		}
-		path := policyPathForProfile(s.policyDir, fileName, profile)
+		path, err := policyPathForProfile(s.policyDir, fileName, profile)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_profile"})
+			return
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "policy_not_found", "file": fileName})

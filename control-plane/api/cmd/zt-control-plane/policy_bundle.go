@@ -304,23 +304,29 @@ func policyBundleSigningBytes(bundle policyBundle) ([]byte, error) {
 
 func normalizePolicyProfile(raw string) (string, error) {
 	profile := strings.ToLower(strings.TrimSpace(raw))
-	if profile == "" {
+	switch profile {
+	case "", "internal":
 		return "internal", nil
-	}
-	for _, r := range profile {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			continue
-		}
+	case "public", "confidential", "regulated":
+		return profile, nil
+	default:
 		return "", fmt.Errorf("invalid profile")
 	}
-	return profile, nil
 }
 
-func policyPathForProfile(policyDir, fileName, profile string) string {
-	if profile == "" || profile == "internal" {
-		return filepath.Join(policyDir, fileName)
+func policyPathForProfile(policyDir, fileName, profile string) (string, error) {
+	switch strings.TrimSpace(profile) {
+	case "internal", "":
+		return filepath.Join(policyDir, fileName), nil
+	case "public":
+		return filepath.Join(policyDir, "profiles", "public", fileName), nil
+	case "confidential":
+		return filepath.Join(policyDir, "profiles", "confidential", fileName), nil
+	case "regulated":
+		return filepath.Join(policyDir, "profiles", "regulated", fileName), nil
+	default:
+		return "", fmt.Errorf("invalid profile")
 	}
-	return filepath.Join(policyDir, "profiles", profile, fileName)
 }
 
 func policyManifestID(fileName, profile, version, contentSHA string) string {
