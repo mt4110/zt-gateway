@@ -189,7 +189,7 @@ func setupContractRepoFixture(t *testing.T) string {
 	for _, tool := range []string{"go", "clamscan", "freshclam", "yara"} {
 		writeStub(tool, "#!/bin/sh\nexit 0\n")
 	}
-	t.Setenv("PATH", binDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	gpgSHA, err := fileSHA256ForSetup(gpgPath)
 	if err != nil {

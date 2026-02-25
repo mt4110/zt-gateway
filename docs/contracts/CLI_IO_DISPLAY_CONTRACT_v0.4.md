@@ -90,12 +90,18 @@
 }
 ```
 
+### 2.7 Flow E2E Contract
+
+- `zt send --share-json` で出る `command` をそのまま `zt verify` に渡したとき、`receipt_version=v1` の receipt が生成されること
+- 契約テストは `send -> share-json -> verify -> receipt` を1本で検証する
+
 ## 3. テストゲート (v0.4)
 
 `go test ./gateway/zt` で以下契約テストが通ること:
 
 - `cli_contract_test.go`: コマンド usage/ヘルプ契約
 - `config_doctor_test.go`: `zt config doctor --json` required fields / fail-warn-success 最小保証
+- `flow_contract_test.go`: `send -> share-json -> verify -> receipt` E2E 契約
 - `share_transport_test.go`: share text / share-json 契約
 - `verify_receipt_test.go`: receipt v1 契約
 - `trust_contract_test.go`: failure envelope 契約
