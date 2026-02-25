@@ -11,9 +11,11 @@
 ## まず確認する順番（問い合わせ / CI失敗）
 
 1. `ZT_ERROR_CODE=...` が出ているか確認
-2. JSON出力がある場合は `error_code` / `checks[]` / `quick_fixes[]` を確認
-3. `ZT_SEND_PACK_FAILED` の場合は `SECURE_PACK_ERROR_CODE=...` を確認
-4. supply-chain 系なら `zt setup --json` の `secure_pack_*` checks と `resolved.pin_*` を確認
+2. `zt policy status --json` で `set_consistency` / `freshness_state` / `sync_error_code` を確認
+3. `zt sync --json` で `error_class` / `error_code` / `pending_count` / `oldest_pending_age_seconds` を確認
+4. JSON出力がある場合は `quick_fix_bundle.runbook` を起点に修復コマンドを実行
+5. `ZT_SEND_PACK_FAILED` の場合は `SECURE_PACK_ERROR_CODE=...` を確認
+6. supply-chain 系なら `zt setup --json` の `secure_pack_*` checks と `resolved.pin_*` を確認
 
 ## 代表エラーコード一覧（`zt` 側 / Helpdesk・CI向け）
 
@@ -55,9 +57,9 @@
 | `error_class` | 代表 `error_code` | 意味 | 自動再試行 | 一次対応 |
 | --- | --- | --- | --- | --- |
 | `none` | `none` | 同期成功（または pending なし） | n/a | 通常運用 |
-| `retryable` | `http_503`, `transport_failed` | 5xx / 通信失敗 | 継続（指数バックオフ） | 監視継続。必要時のみ `zt sync --force --json` |
+| `retryable` | `http_503`, `transport_failed`, `sync_backlog_slo_breached` | 5xx / 通信失敗 / backlog SLO超過 | 継続（指数バックオフ） | 監視継続。必要時のみ `zt sync --force --json` |
 | `fail_closed` | `envelope.required`, `envelope.key_id_required`, `envelope.key_id_not_allowed` | 署名/鍵設定の契約不一致 | 抑制（`--force` 時のみ再送） | 設定修正後に `zt sync --force --json` |
-| `internal` | `internal_failed` | spool I/O などの内部障害 | 停止 | ローカル環境修復（権限/容量/lock） |
+| `internal` | `internal_failed`, `ingest_ack_mismatch` | spool I/O 障害 / CP ACK 契約不一致 | 停止 | ローカル環境修復、または CP ACK 契約修正 |
 
 補足:
 
@@ -70,6 +72,49 @@
 1. `zt sync --json` を実行し、`error_class` / `error_code` を確認
 2. `fail_closed` の場合は鍵設定（`ZT_EVENT_SIGNING_KEY_ID` / registry 側許可鍵）を修正
 3. 修正後に `zt sync --force --json` を実行し、`ok=true` を確認
+
+## v0.6.0MAX 一次対応フロー
+
+判定順序（固定）:
+
+1. `zt policy status --json --kind extension` / `--kind scan` を実行
+2. `set_consistency` が `skew_detected` なら [policy-set-skew-detected](#policy-set-skew-detected) を実施
+3. `freshness_state` が `critical` なら [policy-sync-slo-breached](#policy-sync-slo-breached) を実施
+4. `zt sync --json` を実行し、`pending_count` / `oldest_pending_age_seconds` / `error_code` を確認
+5. `error_code=sync_backlog_slo_breached` なら [sync-backlog-slo-breached](#sync-backlog-slo-breached) を実施
+6. `error_code=ingest_ack_mismatch` なら [ingest-ack-mismatch](#ingest-ack-mismatch) を実施
+
+### policy-set-skew-detected
+
+- 症状: `set_consistency=skew_detected`, `sync_error_code=policy_set_skew_detected`
+- 一次対応:
+  1. CP で extension/scan の publish セット（`policy_set_id`）を揃える
+  2. Gateway で `zt sync --force --json` を実行
+  3. 再度 `zt policy status --json` で `set_consistency=consistent` を確認
+
+### policy-sync-slo-breached
+
+- 症状: `freshness_state=critical`, `sync_error_code=policy_sync_slo_breached`
+- 一次対応:
+  1. Control Plane 到達性と keyset/bundle endpoint を確認
+  2. `zt sync --force --json` を実行
+  3. `last_sync_at` と `freshness_state=fresh|stale` への遷移を確認
+
+### sync-backlog-slo-breached
+
+- 症状: `zt sync --json` で `error_code=sync_backlog_slo_breached`
+- 一次対応:
+  1. `pending_count` と `oldest_pending_age_seconds` を監視
+  2. retryable 失敗（`http_5xx` / `transport_failed`）の継続原因を除去
+  3. `zt sync --force --json` で backlog の縮小を確認
+
+### ingest-ack-mismatch
+
+- 症状: `zt sync --json` で `error_code=ingest_ack_mismatch`
+- 一次対応:
+  1. CP `202` 応答が `endpoint` / `payload_sha256` / `accepted_at` を返すか確認
+  2. Gateway-CP 間で body 変換（proxy/filter）が入っていないか確認
+  3. 修正後に `zt sync --force --json` で再送成功を確認
 
 ## Policy Control Loop 一次復旧（v0.5f）
 

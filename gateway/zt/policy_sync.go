@@ -134,7 +134,10 @@ func runPolicySyncOnce(cfg policySyncConfig) (policySyncRunResult, error) {
 		_ = cfg.Store.writeMeta(kind, meta)
 		return policySyncRunResult{Kind: kind, ErrorCode: meta.LastError}, activeErr
 	}
-	if activeExists && strings.TrimSpace(active.ManifestID) != "" && active.ManifestID == latest.Bundle.ManifestID {
+	if activeExists &&
+		strings.TrimSpace(active.ManifestID) != "" &&
+		active.ManifestID == latest.Bundle.ManifestID &&
+		policyBundleSyncMetadataEqual(active, latest.Bundle) {
 		meta.LastError = policySyncErrorCodeNone
 		meta.LastSuccess = now.Format(time.RFC3339)
 		if writeErr := cfg.Store.writeMeta(kind, meta); writeErr != nil {
@@ -262,4 +265,12 @@ func normalizePolicySyncErrorCode(err error) string {
 		return "policy_sync_failed"
 	}
 	return msg
+}
+
+func policyBundleSyncMetadataEqual(a, b signedPolicyBundle) bool {
+	return strings.TrimSpace(a.PolicySetID) == strings.TrimSpace(b.PolicySetID) &&
+		a.FreshnessSLOSec == b.FreshnessSLOSec &&
+		strings.TrimSpace(a.RolloutID) == strings.TrimSpace(b.RolloutID) &&
+		strings.TrimSpace(a.RolloutChannel) == strings.TrimSpace(b.RolloutChannel) &&
+		strings.TrimSpace(a.RolloutRule) == strings.TrimSpace(b.RolloutRule)
 }

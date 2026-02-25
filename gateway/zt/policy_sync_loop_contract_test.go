@@ -170,6 +170,94 @@ func TestPolicySyncLoopContract_SameManifestReFetchKeepsActiveUnchanged(t *testi
 	}
 }
 
+func TestPolicySyncLoopContract_SameManifestMetadataChangedReapplies(t *testing.T) {
+	priv, pub := policyBundleKeyPairContract(215)
+	now := time.Date(2026, 2, 25, 11, 30, 0, 0, time.UTC)
+	bundle := signPolicyBundleContract(t, signedPolicyBundle{
+		ManifestID:        "pmf_extension_internal_20260225_meta1234meta1234",
+		Profile:           trustProfileInternal,
+		Version:           "2026.02.25-113000z",
+		SHA256:            sha256HexBytes([]byte("scan_only_extensions=[\".txt\"]\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "scan_only_extensions=[\".txt\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
+		PolicySetID:       "set-a",
+		FreshnessSLOSec:   86400,
+	}, priv)
+
+	useSetB := atomic.Bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/policies/keyset":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schema_version": "zt-policy-keyset-v1",
+				"generated_at":   now.Format(time.RFC3339),
+				"keys": []any{map[string]any{
+					"key_id":         "policy-key-v1",
+					"alg":            "Ed25519",
+					"public_key_b64": base64.StdEncoding.EncodeToString(pub),
+					"status":         "active",
+				}},
+			})
+		case "/v1/policies/extension/latest":
+			out := bundle
+			if useSetB.Load() {
+				out.PolicySetID = "set-b"
+				out.FreshnessSLOSec = 21600
+				out = signPolicyBundleContract(t, out, priv)
+				w.Header().Set("ETag", "\"sha256:meta-set-b\"")
+			} else {
+				w.Header().Set("ETag", "\"sha256:meta-set-a\"")
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	store := &policyActivationStore{stateDir: t.TempDir()}
+	cfg := policySyncConfig{
+		BaseURL:  srv.URL,
+		Profile:  trustProfileInternal,
+		Kind:     "extension",
+		Store:    store,
+		VerifyAt: now,
+	}
+	if _, err := runPolicySyncOnce(cfg); err != nil {
+		t.Fatalf("runPolicySyncOnce(first): %v", err)
+	}
+	activeFirst, err := store.readActive("extension")
+	if err != nil {
+		t.Fatalf("readActive(first): %v", err)
+	}
+	if activeFirst.PolicySetID != "set-a" {
+		t.Fatalf("policy_set_id(first) = %q, want set-a", activeFirst.PolicySetID)
+	}
+
+	useSetB.Store(true)
+	second, err := runPolicySyncOnce(cfg)
+	if err != nil {
+		t.Fatalf("runPolicySyncOnce(second): %v", err)
+	}
+	if second.NotModified {
+		t.Fatalf("second.NotModified = true, want false")
+	}
+	activeSecond, err := store.readActive("extension")
+	if err != nil {
+		t.Fatalf("readActive(second): %v", err)
+	}
+	if activeSecond.PolicySetID != "set-b" {
+		t.Fatalf("policy_set_id(second) = %q, want set-b", activeSecond.PolicySetID)
+	}
+	if activeSecond.FreshnessSLOSec != 21600 {
+		t.Fatalf("freshness_slo_seconds(second) = %d, want 21600", activeSecond.FreshnessSLOSec)
+	}
+}
+
 func TestPolicySyncLoopContract_SyncFailureKeepsActivePolicy(t *testing.T) {
 	priv, pub := policyBundleKeyPairContract(221)
 	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,8 +74,9 @@ func TestPolicyRotateFetchDecisionSyncAuditReceipt_E2EContract(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(bundle)
 			return
 		case "/v1/events/verify":
+			rawBody, _ := io.ReadAll(r.Body)
 			var payload map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if err := json.Unmarshal(rawBody, &payload); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -90,7 +92,12 @@ func TestPolicyRotateFetchDecisionSyncAuditReceipt_E2EContract(t *testing.T) {
 				}))
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"status":"accepted"}`))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "accepted",
+				"endpoint":       r.URL.Path,
+				"payload_sha256": canonicalEventPayloadSHA(rawBody),
+				"accepted_at":    time.Now().UTC().Format(time.RFC3339),
+			})
 			return
 		default:
 			http.NotFound(w, r)

@@ -107,6 +107,9 @@ func (s *server) handleEventIngest(kind string) http.HandlerFunc {
 			"ingest_id":      responseIngestID,
 			"duplicate":      duplicate,
 			"duplicate_rule": "event_id+payload_sha256",
+			"endpoint":       r.URL.Path,
+			"payload_sha256": payloadSHA,
+			"accepted_at":    now.Format(time.RFC3339),
 		})
 	}
 }
@@ -155,14 +158,10 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
 		}
 		contentSHA := sha256Hex(b)
-		etag := fmt.Sprintf("\"sha256:%s\"", contentSHA)
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
-		if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == etag {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		bundle, err := s.policySigner.Sign(policyBundle{
+		minGateway := minimumGatewayVersion()
+		policySet := policySetID(s.policySigner)
+		freshnessSLOSec := policyFreshnessSLOSeconds(profile)
+		baseBundle := policyBundle{
 			ManifestID:        policyManifestID(fileName, profile, version, contentSHA),
 			Profile:           profile,
 			Version:           version,
@@ -171,14 +170,12 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			ExpiresAt:         policyExpiresAtRFC3339(info, s.policySigner.TTL),
 			KeyID:             s.policySigner.KeyID,
 			ContentTOML:       string(b),
-			MinGatewayVersion: minimumGatewayVersion(),
+			MinGatewayVersion: minGateway,
 			DuplicateRule:     "manifest_id+profile+sha256",
-		})
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})
-			return
+			PolicySetID:       policySet,
+			FreshnessSLOSec:   freshnessSLOSec,
 		}
-		rolloutID := policyRolloutID(bundle)
+		rolloutID := policyRolloutID(baseBundle)
 		canaryPercent, rolloutErr := policyCanaryPercent()
 		if rolloutErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_rollout_config_invalid"})
@@ -188,9 +185,34 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 		if channel == "canary" && rolloutCanaryEligible(gatewayID, rolloutID, canaryPercent) {
 			resolvedChannel = "canary"
 		}
+		rolloutRule := fmt.Sprintf("sha256(gateway_id+rollout_id)%%100<%d", canaryPercent)
+		etagPayload, _ := json.Marshal(map[string]any{
+			"manifest_id":           baseBundle.ManifestID,
+			"sha256":                contentSHA,
+			"version":               version,
+			"min_gateway_version":   minGateway,
+			"policy_set_id":         policySet,
+			"freshness_slo_seconds": freshnessSLOSec,
+			"rollout_id":            rolloutID,
+			"rollout_channel":       resolvedChannel,
+			"rollout_rule":          rolloutRule,
+			"key_id":                s.policySigner.KeyID,
+		})
+		etag := fmt.Sprintf("\"sha256:%s\"", sha256Hex(etagPayload))
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+		if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		bundle, err := s.policySigner.Sign(baseBundle)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})
+			return
+		}
 		bundle.RolloutID = rolloutID
 		bundle.RolloutChannel = resolvedChannel
-		bundle.RolloutRule = fmt.Sprintf("sha256(gateway_id+rollout_id)%%100<%d", canaryPercent)
+		bundle.RolloutRule = rolloutRule
 		writeJSON(w, http.StatusOK, bundle)
 	}
 }
@@ -228,6 +250,9 @@ func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
 	etagBody := map[string]any{
 		"schema_version": "zt-policy-keyset-v1",
 		"keys":           []any{key},
+		"rotation_id":    policyKeyRotationID(s.policySigner),
+		"active_key_id":  policyActiveKeyID(s.policySigner),
+		"next_key_id":    policyNextKeyID(s.policySigner),
 	}
 	canonical, _ := json.Marshal(etagBody)
 	etag := fmt.Sprintf("\"sha256:%s\"", sha256Hex(canonical))
@@ -245,6 +270,11 @@ func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
 		"schema_version": "zt-policy-keyset-v1",
 		"generated_at":   generatedAt,
 		"keys":           []any{key},
+		"rotation_id":    policyKeyRotationID(s.policySigner),
+		"active_key_id":  policyActiveKeyID(s.policySigner),
+	}
+	if nextKeyID := policyNextKeyID(s.policySigner); nextKeyID != "" {
+		resp["next_key_id"] = nextKeyID
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

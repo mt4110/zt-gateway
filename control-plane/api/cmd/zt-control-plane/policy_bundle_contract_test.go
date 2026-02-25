@@ -45,8 +45,12 @@ func TestPolicyBundleSignatureContract_LatestEndpointReturnsSignedBundle(t *test
 	if bundle.SHA256 != sha256Hex([]byte(bundle.ContentTOML)) {
 		t.Fatalf("sha256 mismatch in response")
 	}
-	if rr.Header().Get("ETag") != "\"sha256:"+bundle.SHA256+"\"" {
-		t.Fatalf("ETag = %q, want sha256 etag", rr.Header().Get("ETag"))
+	etag := rr.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("ETag is empty")
+	}
+	if !strings.HasPrefix(etag, "\"sha256:") || !strings.HasSuffix(etag, "\"") {
+		t.Fatalf("ETag = %q, want sha256 etag format", etag)
 	}
 	if !verifyPolicyBundleSignatureContract(t, bundle, signer.Priv.Public().(ed25519.PublicKey)) {
 		t.Fatalf("signature verification failed")
@@ -380,5 +384,11 @@ func assertPolicyBundleRequiredFieldsContract(t *testing.T, bundle policyBundle)
 	}
 	if bundle.DuplicateRule == "" {
 		t.Fatalf("duplicate_rule is empty")
+	}
+	if strings.TrimSpace(bundle.PolicySetID) == "" {
+		t.Fatalf("policy_set_id is empty")
+	}
+	if bundle.FreshnessSLOSec <= 0 {
+		t.Fatalf("freshness_slo_seconds = %d, want > 0", bundle.FreshnessSLOSec)
 	}
 }

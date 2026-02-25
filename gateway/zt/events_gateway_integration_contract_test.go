@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -213,6 +214,7 @@ func TestGatewayEventSyncContract_FailClosedCanResendWithForceAfterRecovery(t *t
 	var postCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		postCount.Add(1)
+		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		if failClosed.Load() {
 			w.WriteHeader(http.StatusBadRequest)
@@ -220,7 +222,12 @@ func TestGatewayEventSyncContract_FailClosedCanResendWithForceAfterRecovery(t *t
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"status":"accepted"}`))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         "accepted",
+			"endpoint":       r.URL.Path,
+			"payload_sha256": canonicalEventPayloadSHA(body),
+			"accepted_at":    time.Now().UTC().Format(time.RFC3339),
+		})
 	}))
 	defer srv.Close()
 

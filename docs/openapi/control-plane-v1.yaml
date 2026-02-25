@@ -564,6 +564,9 @@ components:
         status: { type: string, example: accepted }
         event_id: { type: string }
         ingest_id: { type: string }
+        endpoint: { type: string, example: /v1/events/scan }
+        payload_sha256: { type: string }
+        accepted_at: { type: string, format: date-time }
         duplicate:
           type: boolean
           description: >
@@ -572,7 +575,7 @@ components:
         duplicate_rule:
           type: string
           example: event_id+payload_sha256
-      required: [status, ingest_id, duplicate]
+      required: [status, ingest_id, duplicate, endpoint, payload_sha256, accepted_at]
     EventBase:
       type: object
       properties:
@@ -640,6 +643,8 @@ components:
         content_toml: { type: string }
         min_gateway_version: { type: string }
         duplicate_rule: { type: string, example: manifest_id+profile+sha256 }
+        policy_set_id: { type: string }
+        freshness_slo_seconds: { type: integer }
         rollout_id: { type: string }
         rollout_channel: { type: string, enum: [stable, canary] }
         rollout_rule: { type: string }
@@ -659,11 +664,14 @@ components:
       properties:
         schema_version: { type: string, example: zt-policy-keyset-v1 }
         generated_at: { type: string, format: date-time }
+        rotation_id: { type: string }
+        active_key_id: { type: string }
+        next_key_id: { type: string }
         keys:
           type: array
           items:
             $ref: '#/components/schemas/PolicyKeysetKey'
-      required: [schema_version, keys]
+      required: [schema_version, keys, rotation_id, active_key_id]
     SignedEnvelope:
       type: object
       properties:

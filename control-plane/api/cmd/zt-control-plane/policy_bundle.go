@@ -48,6 +48,8 @@ type policyBundle struct {
 	ContentTOML       string `json:"content_toml"`
 	MinGatewayVersion string `json:"min_gateway_version"`
 	DuplicateRule     string `json:"duplicate_rule"`
+	PolicySetID       string `json:"policy_set_id,omitempty"`
+	FreshnessSLOSec   int64  `json:"freshness_slo_seconds,omitempty"`
 	RolloutID         string `json:"rollout_id,omitempty"`
 	RolloutChannel    string `json:"rollout_channel,omitempty"`
 	RolloutRule       string `json:"rollout_rule,omitempty"`
@@ -408,6 +410,61 @@ func policyRolloutID(bundle policyBundle) string {
 		return v
 	}
 	return strings.TrimSpace(bundle.ManifestID)
+}
+
+func policySetID(signer *policyBundleSigner) string {
+	if v := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SET_ID")); v != "" {
+		return v
+	}
+	if rolloutID := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_ROLLOUT_ID")); rolloutID != "" {
+		return rolloutID
+	}
+	if signer != nil && strings.TrimSpace(signer.KeyID) != "" {
+		return "set_" + sanitizeManifestToken(signer.KeyID)
+	}
+	return "set_default"
+}
+
+func policyFreshnessSLOSeconds(profile string) int64 {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "confidential", "regulated":
+		return int64((6 * time.Hour) / time.Second)
+	default:
+		return int64((24 * time.Hour) / time.Second)
+	}
+}
+
+func policyKeyRotationID(signer *policyBundleSigner) string {
+	if v := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_ROTATION_ID")); v != "" {
+		return v
+	}
+	if signer != nil && strings.TrimSpace(signer.KeysetCreated) != "" {
+		return "rotation_" + sanitizeManifestToken(signer.KeysetCreated)
+	}
+	return "rotation_default"
+}
+
+func policyActiveKeyID(signer *policyBundleSigner) string {
+	if v := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_ACTIVE_KEY_ID")); v != "" {
+		return v
+	}
+	if signer == nil {
+		return ""
+	}
+	return strings.TrimSpace(signer.KeyID)
+}
+
+func policyNextKeyID(signer *policyBundleSigner) string {
+	if v := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_NEXT_KEY_ID")); v != "" {
+		return v
+	}
+	if signer == nil {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(signer.KeyStatus), "next") {
+		return strings.TrimSpace(signer.KeyID)
+	}
+	return ""
 }
 
 func policyCanaryPercent() (int, error) {
