@@ -52,7 +52,28 @@
   - `provenance`
   - `tooling`
 
-### 2.5 Failure Envelope
+### 2.5 `zt config doctor --json` 契約
+
+- required fields:
+  - `ok`
+  - `schema_version`
+  - `generated_at`
+  - `command`
+  - `argv`
+  - `exit_code`
+  - `version`
+  - `repo_root`
+  - `config_source`
+  - `failures`
+  - `warnings`
+  - `resolved`
+  - `checks`
+- 最小保証:
+  - success: `ok=true`, `exit_code=0`, `failures=0`, 主要 check が `ok`
+  - warn: `ok=true`, `exit_code=0`, `warnings>=1`（例: control-plane未設定）
+  - fail: `ok=false`, `exit_code=1`, `error_code=ZT_CONFIG_DOCTOR_FAILED`, `failures>=1`
+
+### 2.6 Failure Envelope
 
 最低契約:
 
@@ -74,6 +95,7 @@
 `go test ./gateway/zt` で以下契約テストが通ること:
 
 - `cli_contract_test.go`: コマンド usage/ヘルプ契約
+- `config_doctor_test.go`: `zt config doctor --json` required fields / fail-warn-success 最小保証
 - `share_transport_test.go`: share text / share-json 契約
 - `verify_receipt_test.go`: receipt v1 契約
 - `trust_contract_test.go`: failure envelope 契約
