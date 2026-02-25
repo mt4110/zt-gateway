@@ -32,6 +32,7 @@
 - Fail-closed extension policy (`DENY / SCAN_ONLY / SCAN_REBUILD`)
 - Size limit enforcement (`max_size_mb`)
 - Optional strict scanner availability enforcement
+- Audit trail tamper-detection baseline (`events.jsonl` hash-chain + optional Ed25519 record signatures + verification contracts)
 
 ## [0.1.0] - YYYY-MM-DD
 

@@ -25,6 +25,7 @@ type eventSpool struct {
 	cfg      controlPlaneConfig
 	client   *http.Client
 	signer   *eventEnvelopeSigner
+	auditSig *auditRecordSigner
 	autoSync bool
 }
 
@@ -78,12 +79,19 @@ func newEventSpool(repoRoot string) *eventSpool {
 			fmt.Fprintf(os.Stderr, "[Events] WARN invalid event signing key: %v\n", err)
 		}
 	}
+	auditSigner, auditSignerErr := loadAuditRecordSignerFromEnv()
+	if auditSignerErr != nil {
+		if !suppressStartupDiagnostics {
+			fmt.Fprintf(os.Stderr, "[Events] WARN invalid audit signing key: %v\n", auditSignerErr)
+		}
+	}
 	return &eventSpool{
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
 		signer:   signer,
+		auditSig: auditSigner,
 		autoSync: true,
 	}
 }

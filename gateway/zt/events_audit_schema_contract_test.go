@@ -11,12 +11,18 @@ import (
 )
 
 type auditEventRecordContract struct {
-	EventID       string `json:"event_id"`
-	EventType     string `json:"event_type"`
-	Timestamp     string `json:"timestamp"`
-	Result        string `json:"result"`
-	Endpoint      string `json:"endpoint"`
-	PayloadSHA256 string `json:"payload_sha256"`
+	EventID          string `json:"event_id"`
+	EventType        string `json:"event_type"`
+	Timestamp        string `json:"timestamp"`
+	Result           string `json:"result"`
+	Endpoint         string `json:"endpoint"`
+	PayloadSHA256    string `json:"payload_sha256"`
+	ChainVersion     string `json:"chain_version"`
+	PrevRecordSHA256 string `json:"prev_record_sha256"`
+	RecordSHA256     string `json:"record_sha256"`
+	SignatureAlg     string `json:"signature_alg"`
+	SignatureKeyID   string `json:"signature_key_id"`
+	Signature        string `json:"signature"`
 }
 
 func TestAuditEventsJSONL_SchemaContract(t *testing.T) {
@@ -61,6 +67,12 @@ func TestAuditEventsJSONL_SchemaContract(t *testing.T) {
 	wantPayloadSHA := sha256HexBytes(payloadJSON)
 	if record.PayloadSHA256 != wantPayloadSHA {
 		t.Fatalf("payload_sha256 = %q, want %q", record.PayloadSHA256, wantPayloadSHA)
+	}
+	if record.ChainVersion != "v1" {
+		t.Fatalf("chain_version = %q, want v1", record.ChainVersion)
+	}
+	if strings.TrimSpace(record.RecordSHA256) == "" {
+		t.Fatalf("record_sha256 is empty")
 	}
 }
 
@@ -129,6 +141,8 @@ func assertAuditRequiredFieldsContract(t *testing.T, record auditEventRecordCont
 		{name: "result", value: record.Result},
 		{name: "endpoint", value: record.Endpoint},
 		{name: "payload_sha256", value: record.PayloadSHA256},
+		{name: "chain_version", value: record.ChainVersion},
+		{name: "record_sha256", value: record.RecordSHA256},
 	}
 	for _, field := range required {
 		if strings.TrimSpace(field.value) == "" {

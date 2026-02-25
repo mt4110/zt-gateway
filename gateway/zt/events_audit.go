@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -10,18 +14,34 @@ import (
 )
 
 type auditEventRecord struct {
-	EventID       string `json:"event_id"`
-	EventType     string `json:"event_type"`
-	Timestamp     string `json:"timestamp"`
-	Result        string `json:"result"`
-	Endpoint      string `json:"endpoint"`
-	PayloadSHA256 string `json:"payload_sha256"`
+	EventID          string `json:"event_id"`
+	EventType        string `json:"event_type"`
+	Timestamp        string `json:"timestamp"`
+	Result           string `json:"result"`
+	Endpoint         string `json:"endpoint"`
+	PayloadSHA256    string `json:"payload_sha256"`
+	ChainVersion     string `json:"chain_version"`
+	PrevRecordSHA256 string `json:"prev_record_sha256,omitempty"`
+	RecordSHA256     string `json:"record_sha256"`
+	SignatureAlg     string `json:"signature_alg,omitempty"`
+	SignatureKeyID   string `json:"signature_key_id,omitempty"`
+	Signature        string `json:"signature,omitempty"`
 }
 
 type auditPayloadFields struct {
 	EventID string
 	Result  string
 	Command string
+}
+
+type auditRecordSigner struct {
+	KeyID string
+	Priv  ed25519.PrivateKey
+}
+
+type auditVerifyOptions struct {
+	RequireSignature bool
+	PublicKey        ed25519.PublicKey
 }
 
 func (s *eventSpool) auditPath() string { return filepath.Join(s.cfg.SpoolDir, "events.jsonl") }
@@ -34,14 +54,23 @@ func (s *eventSpool) appendAuditEvent(endpoint string, payload any) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
-	record := newAuditEventRecord(endpoint, payloadJSON, now)
 	return s.withFileLock(5*time.Second, func() error {
+		prevHash, err := readLastAuditRecordHash(s.auditPath())
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		record := newAuditEventRecord(endpoint, payloadJSON, now, prevHash)
+		if s.auditSig != nil {
+			if err := s.auditSig.sign(&record); err != nil {
+				return err
+			}
+		}
 		return appendJSONLine(s.auditPath(), record)
 	})
 }
 
-func newAuditEventRecord(endpoint string, payloadJSON []byte, now time.Time) auditEventRecord {
+func newAuditEventRecord(endpoint string, payloadJSON []byte, now time.Time, prevHash string) auditEventRecord {
 	fields := parseAuditPayloadFields(payloadJSON)
 	eventID := strings.TrimSpace(fields.EventID)
 	if eventID == "" {
@@ -52,14 +81,199 @@ func newAuditEventRecord(endpoint string, payloadJSON []byte, now time.Time) aud
 		result = "recorded"
 	}
 	eventType := resolveAuditEventType(endpoint, fields.Command)
-	return auditEventRecord{
+	record := auditEventRecord{
 		EventID:       eventID,
 		EventType:     eventType,
 		Timestamp:     now.Format(time.RFC3339Nano),
 		Result:        result,
 		Endpoint:      strings.TrimSpace(endpoint),
 		PayloadSHA256: sha256HexBytes(payloadJSON),
+		ChainVersion:  "v1",
 	}
+	record.PrevRecordSHA256 = strings.TrimSpace(prevHash)
+	record.RecordSHA256 = calculateAuditRecordSHA256(record)
+	return record
+}
+
+func calculateAuditRecordSHA256(record auditEventRecord) string {
+	canonical := strings.Join([]string{
+		"chain_version=" + strings.TrimSpace(record.ChainVersion),
+		"event_id=" + strings.TrimSpace(record.EventID),
+		"event_type=" + strings.TrimSpace(record.EventType),
+		"timestamp=" + strings.TrimSpace(record.Timestamp),
+		"result=" + strings.TrimSpace(record.Result),
+		"endpoint=" + strings.TrimSpace(record.Endpoint),
+		"payload_sha256=" + strings.TrimSpace(record.PayloadSHA256),
+		"prev_record_sha256=" + strings.TrimSpace(record.PrevRecordSHA256),
+	}, "\n")
+	return sha256HexBytes([]byte(canonical))
+}
+
+func readLastAuditRecordHash(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	defer f.Close()
+
+	var lastLine []byte
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lastLine = []byte(line)
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if len(lastLine) == 0 {
+		return "", nil
+	}
+	var rec auditEventRecord
+	if err := json.Unmarshal(lastLine, &rec); err != nil {
+		return "", fmt.Errorf("audit log last line is malformed JSON: %w", err)
+	}
+	if hash := strings.TrimSpace(rec.RecordSHA256); hash != "" {
+		return hash, nil
+	}
+	return calculateAuditRecordSHA256(rec), nil
+}
+
+func loadAuditRecordSignerFromEnv() (*auditRecordSigner, error) {
+	raw := strings.TrimSpace(os.Getenv("ZT_AUDIT_SIGNING_ED25519_PRIV_B64"))
+	if raw == "" {
+		return nil, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, err
+	}
+	switch len(b) {
+	case ed25519.SeedSize:
+		b = ed25519.NewKeyFromSeed(b)
+	case ed25519.PrivateKeySize:
+	default:
+		return nil, fmt.Errorf("expected %d-byte seed or %d-byte private key, got %d", ed25519.SeedSize, ed25519.PrivateKeySize, len(b))
+	}
+	keyID := strings.TrimSpace(os.Getenv("ZT_AUDIT_SIGNING_KEY_ID"))
+	return &auditRecordSigner{KeyID: keyID, Priv: ed25519.PrivateKey(b)}, nil
+}
+
+func (s *auditRecordSigner) sign(record *auditEventRecord) error {
+	if s == nil || record == nil {
+		return nil
+	}
+	hash := strings.TrimSpace(record.RecordSHA256)
+	if hash == "" {
+		return fmt.Errorf("record_sha256 is empty")
+	}
+	record.SignatureAlg = "Ed25519"
+	record.SignatureKeyID = s.KeyID
+	record.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(s.Priv, []byte(hash)))
+	return nil
+}
+
+func loadAuditVerifyPublicKeyFromEnv() (ed25519.PublicKey, error) {
+	pubRaw := strings.TrimSpace(os.Getenv("ZT_AUDIT_SIGNING_ED25519_PUB_B64"))
+	if pubRaw != "" {
+		b, err := base64.StdEncoding.DecodeString(pubRaw)
+		if err != nil {
+			return nil, err
+		}
+		if len(b) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("expected %d-byte audit public key, got %d", ed25519.PublicKeySize, len(b))
+		}
+		return ed25519.PublicKey(b), nil
+	}
+
+	privRaw := strings.TrimSpace(os.Getenv("ZT_AUDIT_SIGNING_ED25519_PRIV_B64"))
+	if privRaw == "" {
+		return nil, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(privRaw)
+	if err != nil {
+		return nil, err
+	}
+	switch len(b) {
+	case ed25519.SeedSize:
+		return ed25519.NewKeyFromSeed(b).Public().(ed25519.PublicKey), nil
+	case ed25519.PrivateKeySize:
+		return ed25519.PrivateKey(b).Public().(ed25519.PublicKey), nil
+	default:
+		return nil, fmt.Errorf("expected %d-byte seed or %d-byte private key, got %d", ed25519.SeedSize, ed25519.PrivateKeySize, len(b))
+	}
+}
+
+func verifyAuditEventsFile(path string, opts auditVerifyOptions) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	expectedPrev := ""
+	lineNo := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lineNo++
+		var rec auditEventRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			return fmt.Errorf("line %d: invalid audit JSON: %w", lineNo, err)
+		}
+		if strings.TrimSpace(rec.ChainVersion) == "" {
+			return fmt.Errorf("line %d: chain_version is empty", lineNo)
+		}
+		if strings.TrimSpace(rec.RecordSHA256) == "" {
+			return fmt.Errorf("line %d: record_sha256 is empty", lineNo)
+		}
+		if gotPrev := strings.TrimSpace(rec.PrevRecordSHA256); gotPrev != expectedPrev {
+			return fmt.Errorf("line %d: prev_record_sha256 mismatch: got=%q want=%q", lineNo, gotPrev, expectedPrev)
+		}
+		wantHash := calculateAuditRecordSHA256(rec)
+		if strings.TrimSpace(rec.RecordSHA256) != wantHash {
+			return fmt.Errorf("line %d: record_sha256 mismatch", lineNo)
+		}
+		if opts.RequireSignature || strings.TrimSpace(rec.Signature) != "" {
+			if strings.TrimSpace(rec.SignatureAlg) != "Ed25519" {
+				return fmt.Errorf("line %d: unsupported signature_alg %q", lineNo, rec.SignatureAlg)
+			}
+			if len(opts.PublicKey) != ed25519.PublicKeySize {
+				return fmt.Errorf("line %d: audit verify public key is not configured", lineNo)
+			}
+			sig, err := base64.StdEncoding.DecodeString(rec.Signature)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid signature encoding: %w", lineNo, err)
+			}
+			if !ed25519.Verify(opts.PublicKey, []byte(rec.RecordSHA256), sig) {
+				return fmt.Errorf("line %d: signature verification failed", lineNo)
+			}
+		}
+		expectedPrev = rec.RecordSHA256
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func verifyAuditEventsFileFromEnv(path string) error {
+	pub, err := loadAuditVerifyPublicKeyFromEnv()
+	if err != nil {
+		return err
+	}
+	return verifyAuditEventsFile(path, auditVerifyOptions{
+		RequireSignature: envBool("ZT_AUDIT_VERIFY_REQUIRE_SIGNATURE"),
+		PublicKey:        pub,
+	})
 }
 
 func parseAuditPayloadFields(payloadJSON []byte) auditPayloadFields {

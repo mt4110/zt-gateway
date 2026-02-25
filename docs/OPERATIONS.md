@@ -130,6 +130,19 @@ jq -r '.event_type' ./.zt-spool/events.jsonl | sort | uniq -c
 - `scripts/ci/check-zt-contract-gate.sh`  
   上記監査契約テストを CI 実行対象として明示
 
+## 契約テストと担保範囲（v0.5-B 追加: 監査改ざん検知）
+
+- `TestAuditEventsJSONL_ChainContract`  
+  `prev_record_sha256` / `record_sha256` の連結ハッシュ契約を担保
+- `TestAuditEventsJSONL_SignatureContract`  
+  `ZT_AUDIT_SIGNING_ED25519_PRIV_B64` 有効時の監査レコード署名契約を担保
+- `TestShareJSONToVerifyToReceipt_AuditVerifyE2EContract`  
+  `send -> verify` 導線で監査ログ全体のチェーン+署名検証が通る E2E 契約を担保
+- `TestAuditVerifyE2EContract_DetectsTamper`  
+  監査ログ改ざん時に検証失敗となる契約を担保
+- `scripts/ci/check-zt-contract-gate.sh`  
+  v0.5-B 契約テストを CI 実行対象として明示
+
 ## GitHub Actions Variable 配布（`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS`）
 
 fingerprint は秘密値ではない前提のため、GitHub Actions `Variables` を推奨します（`Secrets` は fallback）。
