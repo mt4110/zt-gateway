@@ -13,6 +13,7 @@
 ## 背景
 
 - `tools.lock` は `gpg` / `tar` の **version + sha256 pin** を検証する
+- pin は実行バイナリ依存のため、実質的に OS/配布パッケージ/CPUアーキテクチャ差分の影響を受ける
 - そのため、`gpg` / `tar` 実バイナリが CI とローカル（例: Homebrew `gpg`, BSD tar）で異なると fail-closed で停止する
 - これは設計どおりの安全側挙動であり、pin 検証を無効化して解決しない
 

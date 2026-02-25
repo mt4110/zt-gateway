@@ -97,6 +97,7 @@ bash ./scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh --client local-smo
 この wrapper は以下を固定化します。
 
 - `ubuntu:24.04` コンテナで実行
+- `linux/amd64` プラットフォームで実行（CI runner 相当）
 - `gpg/tar` と `tools.lock` pin の一致確認
 - `nix` + `nixbld` ビルドユーザー設定
 - `go` ツールチェーン（`nix shell nixpkgs#go`）を使った `zt send` adapter 実行

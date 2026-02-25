@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh [--client <name>] [--diagnose-only] [--image <ubuntu-image>]
+Usage: scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh [--client <name>] [--diagnose-only] [--image <ubuntu-image>] [--platform <docker-platform>]
 
 Run secure-pack local smoketest in Ubuntu/Linux (Docker), aligned with CI-canonical tools.lock pins.
 
@@ -11,6 +11,7 @@ Options:
   --client <name>    Client name (default: local-smoketest)
   --diagnose-only    Run pin diagnosis only
   --image <name>     Docker image (default: ubuntu:24.04)
+  --platform <name>  Docker platform (default: linux/amd64; CI-equivalent)
   -h, --help         Show this help
 EOF
 }
@@ -21,6 +22,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLIENT_NAME="local-smoketest"
 DIAGNOSE_ONLY="0"
 IMAGE="ubuntu:24.04"
+PLATFORM="linux/amd64"
 NIX_STORE_VOLUME="zt_gateway_nix_store"
 
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,14 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --platform)
+      PLATFORM="${2:-}"
+      if [[ -z "${PLATFORM}" ]]; then
+        echo "[FAIL] --platform requires a value" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -63,6 +73,7 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 docker run --rm \
+  --platform "${PLATFORM}" \
   -v "${NIX_STORE_VOLUME}:/nix" \
   -v "${REPO_ROOT}:/src:ro" \
   "${IMAGE}" \

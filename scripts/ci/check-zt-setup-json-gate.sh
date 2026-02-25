@@ -27,11 +27,20 @@ EOF
 fpr="$(tr -d '\r\n' < "${fixture_dir}/FINGERPRINT.txt")"
 json_out="${tmp_repo}/zt-setup.json"
 zt_bin="${tmp_repo}/zt-bin"
+zt_bin_override="${ZT_BIN:-}"
 
-(
-  cd "${repo_root}"
-  go build -o "${zt_bin}" ./gateway/zt
-)
+if [[ -n "${zt_bin_override}" ]]; then
+  if [[ ! -x "${zt_bin_override}" ]]; then
+    echo "ZT_BIN is set but not executable: ${zt_bin_override}" >&2
+    exit 1
+  fi
+  zt_bin="${zt_bin_override}"
+else
+  (
+    cd "${repo_root}"
+    go build -o "${zt_bin}" ./gateway/zt
+  )
+fi
 
 (
   cd "${tmp_repo}"

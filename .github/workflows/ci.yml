@@ -22,12 +22,15 @@ jobs:
       run: nix build .#zt
 
     - name: Supply-Chain Setup JSON Gate (fixture)
+      env:
+        ZT_BIN: ${{ github.workspace }}/result/bin/zt
       run: |
         chmod +x scripts/ci/check-zt-setup-json-gate.sh
         ./scripts/ci/check-zt-setup-json-gate.sh
 
     - name: Supply-Chain Setup JSON Gate (actual repo; fail-closed when artifacts exist)
       env:
+        ZT_BIN: ${{ github.workspace }}/result/bin/zt
         ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS: ${{ vars.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS != '' && vars.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS || secrets.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS }}
       run: |
         chmod +x scripts/ci/check-zt-setup-json-actual-gate.sh

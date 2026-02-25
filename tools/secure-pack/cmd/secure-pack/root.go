@@ -29,7 +29,7 @@ func Execute() {
 		if code := workflows.ErrorCode(err); code != "" {
 			fmt.Fprintf(os.Stderr, "SECURE_PACK_ERROR_CODE=%s\n", code)
 		}
-		fmt.Println(err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -44,7 +44,7 @@ func runInteractive() {
 	cfg := config.NewConfig(cwd)
 	p := tea.NewProgram(ui.InitialModel(cfg))
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
