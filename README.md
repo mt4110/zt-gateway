@@ -99,6 +99,7 @@ go run ./gateway/zt --help-advanced
 - secure-pack のローカル smoke 手順: `docs/SECURE_PACK_SMOKETEST.md`
 - `tools.lock` pin mismatch（macOS/Homebrew 差分）運用方針: `docs/SECURE_PACK_LOCAL_EXECUTION_POLICY.md`
 - Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
+- CLI I/O・表示契約（v0.4 固定）: `docs/contracts/CLI_IO_DISPLAY_CONTRACT_v0.4.md`
 
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.3.x)
 
