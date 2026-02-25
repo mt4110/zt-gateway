@@ -228,12 +228,27 @@
 - ポリシー配布手順 (canary -> default)
 - 鍵ローテーションrunbookとの整合確認
 
-## 8. 未決事項 (実装開始前に凍結)
+## 8. 仕様凍結事項 (2026-02-26)
 
-1. Receipt の `receipt_id` 生成方式 (UUIDか内容ハッシュか)
+1. Receipt の `receipt_id` 生成方式
+   - 内容ハッシュ方式に凍結する
+   - 定義: `sha256(artifact_sha256 + "|" + verified_at_rfc3339_utc)` の先頭16byte（32hex）
+   - 理由: UUIDより再現性・監査整合性の説明が容易で、衝突耐性も実運用要件を満たす
 2. 監査ログの保持期間とローテーション方式
+   - v1.0 では CLI 本体に自動削除・自動ローテーションを実装しない（append-only を優先）
+   - 保持/ローテーションは運用側で実施する（CI/host logrotate 等）
+   - 推奨運用値: 90日保持、日次ローテーション、圧縮保管
 3. Trust Profiles の初期ポリシー閾値
+   - `public`: `required_scanners=[]`, `require_clamav_db=false`, `max_size_mb=100`, strict default off
+   - `internal`: `required_scanners=[ClamAV,YARA]`, `require_clamav_db=true`, `max_size_mb=50`, strict default on
+   - `confidential`: `required_scanners=[ClamAV,YARA]`, `require_clamav_db=true`, `max_size_mb=25`, strict forced on
+   - `regulated`: `required_scanners=[ClamAV,YARA]`, `require_clamav_db=true`, `max_size_mb=10`, strict forced on
 4. 互換性修復コマンドのOS別優先順位
+   - root pin 系: pin修正 -> actual gate 再実行
+   - tools mismatch 系:
+     - 共通: local diagnose (`run-secure-pack-smoketest.sh --diagnose-only`) を最優先
+     - `darwin/*`: 次に Ubuntu 互換 diagnose（Docker）を優先
+     - 最終手段: `generate-secure-pack-tools-lock.sh --root-key ...` で意図的更新時のみ再生成
 
 ## 9. 次スレ開始テンプレート
 

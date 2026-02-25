@@ -38,6 +38,11 @@ export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
 export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
 ```
 
+CIでの zero-trust 寄り運用（推奨）:
+
+- `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を保護変数として配布
+- `scripts/ci/check-zt-setup-json-actual-gate.sh` が `ROOT_PUBKEY.asc` の fingerprint 一致を検証後、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
+
 複数 fingerprint を許容する例（鍵ローテーション時）:
 
 ```bash

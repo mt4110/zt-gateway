@@ -24,6 +24,8 @@
 - `zt send --share-json` now includes `channel_templates` (`version` / `slack_text` / `email_subject` / `email_body`) for Cloud-Agnostic Wrapper handoff
 - v0.8.0 architecture baseline docs (`docs/architecture/V0.8.0_DESIGN.md`, `docs/architecture/V0.8.0_IMPLEMENTATION_TICKETS.md`)
 - v0.9.0 architecture baseline docs (`docs/architecture/V0.9.0_DESIGN.md`, `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`)
+- expected-pin bootstrap for `check-zt-setup-json-actual-gate.sh` (`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED`)
+- v1 blueprint freeze decisions for receipt ID / audit retention / trust profile thresholds / OS fix priority
 
 ### Changed
 

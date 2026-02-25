@@ -10,6 +10,31 @@ required_files=(
   "${tools_dir}/ROOT_PUBKEY.asc"
 )
 
+normalize_fpr() {
+  printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]' | tr -cd '0-9A-F'
+}
+
+resolve_root_fpr_from_key() {
+  gpg --show-keys --with-colons "${tools_dir}/ROOT_PUBKEY.asc" | awk -F: '/^fpr:/ {print $10; exit}'
+}
+
+contains_fpr() {
+  local needle normalized
+  needle="$(normalize_fpr "${1:-}")"
+  if [[ -z "${needle}" ]]; then
+    return 1
+  fi
+  local raw="${2:-}"
+  raw="$(printf '%s' "${raw}" | tr ',\n\r\t' '    ')"
+  for token in ${raw}; do
+    normalized="$(normalize_fpr "${token}")"
+    if [[ "${normalized}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 missing=()
 for f in "${required_files[@]}"; do
   if [[ ! -f "${f}" ]]; then
@@ -23,8 +48,42 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 if [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]]; then
-  echo "zt setup --json actual repo gate failed: ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS is required when tools/secure-pack supply-chain files exist" >&2
-  exit 1
+  expected_pins="${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED:-}"
+  if [[ -n "${expected_pins}" ]]; then
+    if ! command -v gpg >/dev/null 2>&1; then
+      echo "zt setup --json actual repo gate failed: gpg is required to resolve ROOT_PUBKEY.asc fingerprint for expected-pin bootstrap" >&2
+      exit 1
+    fi
+    resolved_fpr="$(resolve_root_fpr_from_key)"
+    if [[ -z "${resolved_fpr}" ]]; then
+      echo "zt setup --json actual repo gate failed: could not resolve fingerprint from ROOT_PUBKEY.asc" >&2
+      exit 1
+    fi
+    if ! contains_fpr "${resolved_fpr}" "${expected_pins}"; then
+      echo "zt setup --json actual repo gate failed: ROOT_PUBKEY.asc fingerprint does not match ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED" >&2
+      echo "resolved_fingerprint=$(normalize_fpr "${resolved_fpr}")" >&2
+      echo "expected_pins=${expected_pins}" >&2
+      exit 1
+    fi
+    export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${expected_pins}"
+    echo "[actual-gate] pin bootstrap source=ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED (matched ROOT_PUBKEY.asc)"
+  elif [[ "${ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP:-0}" == "1" ]]; then
+    if ! command -v gpg >/dev/null 2>&1; then
+      echo "zt setup --json actual repo gate failed: gpg is required when ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP=1" >&2
+      exit 1
+    fi
+    resolved_fpr="$(resolve_root_fpr_from_key)"
+    if [[ -z "${resolved_fpr}" ]]; then
+      echo "zt setup --json actual repo gate failed: could not resolve fingerprint from ROOT_PUBKEY.asc" >&2
+      exit 1
+    fi
+    export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="$(normalize_fpr "${resolved_fpr}")"
+    echo "[actual-gate] WARN local pin bootstrap enabled (ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP=1). Prefer expected-pin bootstrap for zero-trust CI."
+  else
+    echo "zt setup --json actual repo gate failed: ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS is required when tools/secure-pack supply-chain files exist" >&2
+    echo "Hint: set ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED in CI and let this gate verify+bootstrap it, or export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS directly." >&2
+    exit 1
+  fi
 fi
 
 tmp_dir="$(mktemp -d)"
