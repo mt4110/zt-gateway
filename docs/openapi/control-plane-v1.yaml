@@ -35,6 +35,8 @@ paths:
       description: >
         Accepts a signed envelope (`zt-event-envelope-v1`) or raw JSON event payload.
         If the server is configured with event signature verification, envelopes are required.
+        Idempotency rule: events are treated as duplicates when both `event_id` and canonical
+        `payload_sha256` match an already accepted record for the same ingest endpoint.
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
       requestBody:
@@ -58,6 +60,8 @@ paths:
       summary: Ingest artifact creation event
       description: >
         Accepts a signed envelope (`zt-event-envelope-v1`) or raw JSON event payload.
+        Idempotency rule: events are treated as duplicates when both `event_id` and canonical
+        `payload_sha256` match an already accepted record for the same ingest endpoint.
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
       requestBody:
@@ -81,6 +85,8 @@ paths:
       summary: Ingest verification event
       description: >
         Accepts a signed envelope (`zt-event-envelope-v1`) or raw JSON event payload.
+        Idempotency rule: events are treated as duplicates when both `event_id` and canonical
+        `payload_sha256` match an already accepted record for the same ingest endpoint.
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
       requestBody:
@@ -512,7 +518,15 @@ components:
         status: { type: string, example: accepted }
         event_id: { type: string }
         ingest_id: { type: string }
-      required: [status, ingest_id]
+        duplicate:
+          type: boolean
+          description: >
+            true when the same endpoint already accepted an event with matching
+            `event_id` and canonical `payload_sha256`.
+        duplicate_rule:
+          type: string
+          example: event_id+payload_sha256
+      required: [status, ingest_id, duplicate]
     EventBase:
       type: object
       properties:

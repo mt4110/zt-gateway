@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -47,17 +48,31 @@ func (s *server) handleEventIngest(kind string) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+		eventID, _ := payload["event_id"].(string)
+		eventID = strings.TrimSpace(eventID)
+		if eventID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "event_id_required"})
+			return
+		}
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload_json_encode_failed"})
+			return
+		}
+		payloadSHA := sha256Hex(payloadJSON)
 
 		now := time.Now().UTC()
 		ingestID := newID("ing")
 		record := map[string]any{
-			"ingest_id":      ingestID,
-			"kind":           kind,
-			"received_at":    now.Format(time.RFC3339Nano),
-			"remote_addr":    r.RemoteAddr,
-			"user_agent":     r.UserAgent(),
-			"payload":        payload,
-			"payload_sha256": sha256Hex(body),
+			"ingest_id":       ingestID,
+			"kind":            kind,
+			"event_id":        eventID,
+			"received_at":     now.Format(time.RFC3339Nano),
+			"remote_addr":     r.RemoteAddr,
+			"user_agent":      r.UserAgent(),
+			"raw_body_sha256": sha256Hex(body),
+			"payload":         payload,
+			"payload_sha256":  payloadSHA,
 			"envelope": map[string]any{
 				"present":          envMeta.Present,
 				"verified":         envMeta.Verified,
@@ -68,21 +83,28 @@ func (s *server) handleEventIngest(kind string) http.HandlerFunc {
 				"endpoint":         envMeta.Endpoint,
 			},
 		}
-		if err := s.appendJSONL(filepath.Join(s.dataDir, "events", kind+".jsonl"), record); err != nil {
+		eventsPath := filepath.Join(s.dataDir, "events", kind+".jsonl")
+		duplicate, duplicateIngestID, err := s.appendEventJSONLWithDedupe(eventsPath, record, eventID, payloadSHA)
+		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "persist_failed"})
 			return
 		}
-		if s.db != nil {
+		if s.db != nil && !duplicate {
 			if err := s.insertEventRecord(r.Context(), ingestID, kind, now, r, payload, body, envJSON, envMeta); err != nil {
 				log.Printf("WARN postgres dual-write failed (kind=%s ingest_id=%s): %v", kind, ingestID, err)
 			}
 		}
+		responseIngestID := ingestID
+		if duplicate && duplicateIngestID != "" {
+			responseIngestID = duplicateIngestID
+		}
 
-		eventID, _ := payload["event_id"].(string)
 		writeJSON(w, http.StatusAccepted, map[string]any{
-			"status":    "accepted",
-			"event_id":  eventID,
-			"ingest_id": ingestID,
+			"status":         "accepted",
+			"event_id":       eventID,
+			"ingest_id":      responseIngestID,
+			"duplicate":      duplicate,
+			"duplicate_rule": "event_id+payload_sha256",
 		})
 	}
 }
