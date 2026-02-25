@@ -26,6 +26,11 @@ jobs:
         chmod +x scripts/ci/check-zt-contract-gate.sh
         ./scripts/ci/check-zt-contract-gate.sh
 
+    - name: v0.8.0 Core Gate
+      run: |
+        chmod +x scripts/ci/check-v080-core-gate.sh
+        ./scripts/ci/check-v080-core-gate.sh
+
     - name: Control Plane Contract Gate
       run: |
         chmod +x scripts/ci/check-control-plane-contract-gate.sh

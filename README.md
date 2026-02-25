@@ -101,7 +101,7 @@ go run ./gateway/zt --help-advanced
 - Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
 - CLI I/O・表示契約（v0.4 固定）: `docs/contracts/CLI_IO_DISPLAY_CONTRACT_v0.4.md`
 
-## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.3.x)
+## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.8.0 additive)
 
 `zt send` の `--share-json` は、受信側に渡す検証コマンド共有用の payload を **JSON 1オブジェクト** で出力します。
 
@@ -140,6 +140,10 @@ jq -r '.command' /tmp/zt-share.json
 - `format` (string): `ja` または `en`（`--share-format auto` 指定時も解決後の値）
 - `command` (string): 受信側で実行する `zt verify ...` コマンド
 - `text` (string): 人間向け共有文（ローカライズ済み、末尾改行を含む）
+- `receipt_hint` (object): 受信側で JSON レシートを残すための補助情報
+  - `version` (string): 現在は固定値 `v1`
+  - `path` (string): 推奨レシート出力パス（相対）
+  - `command` (string): `--receipt-out` 付きの検証コマンド
 
 JSON 例（英語）:
 
@@ -148,7 +152,12 @@ JSON 例（英語）:
   "kind": "receiver_verify_hint",
   "format": "en",
   "command": "zt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'",
-  "text": "Please run the following command on the receiver side to verify the file.\nzt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'\n"
+  "text": "Please run the following command on the receiver side to verify the file.\nzt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'\n",
+  "receipt_hint": {
+    "version": "v1",
+    "path": "./receipt_bundle_clientA_20260224T120000Z.json",
+    "command": "zt verify --receipt-out './receipt_bundle_clientA_20260224T120000Z.json' -- './bundle_clientA_20260224T120000Z.spkg.tgz'"
+  }
 }
 ```
 
@@ -159,13 +168,19 @@ JSON 例（日本語）:
   "kind": "receiver_verify_hint",
   "format": "ja",
   "command": "zt verify -- './bundle_xxx.spkg.tgz'",
-  "text": "受信側で次のコマンドを実行して検証してください。\nzt verify -- './bundle_xxx.spkg.tgz'\n"
+  "text": "受信側で次のコマンドを実行して検証してください。\nzt verify -- './bundle_xxx.spkg.tgz'\n",
+  "receipt_hint": {
+    "version": "v1",
+    "path": "./receipt_bundle_xxx.json",
+    "command": "zt verify --receipt-out './receipt_bundle_xxx.json' -- './bundle_xxx.spkg.tgz'"
+  }
 }
 ```
 
 ### 互換性ルール（CI/Slack 実装向け）
 
-- `v0.3.x` では上記4フィールドを維持します
+- `v0.3.x` の4フィールド（`kind`/`format`/`command`/`text`）は維持します
+- `v0.8.0` で `receipt_hint` を追加しました（additive、既存4フィールドは不変）
 - 将来の拡張では **フィールド追加を優先** し、既存フィールドの意味変更は避けます
 - 連携側は未知フィールドを無視し、`kind` を見て分岐してください
 - 機械処理は `command` を優先し、人間向け表示は `text` を使ってください
@@ -260,10 +275,13 @@ flowchart LR
 - v0.7.0 では `zt policy status --json --kind all` を導入し、`overall_set_consistency` / `overall_freshness_state` / `critical_kinds` を一括判定できるようにする
 - v0.7.0 では `zt sync --json` に `backlog_slo_seconds` / `backlog_breached` / `backlog_breached_since` を追加し、SLO breach 判定を再現可能にする
 - v0.7.0 では `quick_fix_bundle.runbook_anchor` を追加し、`error_code -> runbook anchor` を固定する
+- v0.8.0 では `zt send --share-json` に `receipt_hint` を追加し、受信側 `zt verify --receipt-out ...` 導線を機械可読で配布できるようにする
 - 次段の配布運用設計（v0.5g）は `docs/architecture/POLICY_CONTROL_LOOP_V0.5G_DESIGN.md` を正本として管理する
 - v0.6.0MAX 設計正本は `docs/architecture/V0.6.0MAX_DESIGN.md`
 - v0.7.0 設計正本は `docs/architecture/V0.7.0_DESIGN.md`
 - v0.7.0 実装チケット分割は `docs/architecture/V0.7.0_IMPLEMENTATION_TICKETS.md`
+- v0.8.0 設計正本は `docs/architecture/V0.8.0_DESIGN.md`
+- v0.8.0 実装チケット分割は `docs/architecture/V0.8.0_IMPLEMENTATION_TICKETS.md`
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 

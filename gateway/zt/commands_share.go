@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -48,11 +47,8 @@ func printReceiverShareText(artifactPath, format string) {
 }
 
 func receiverVerifyCommand(artifactPath string) string {
-	base := filepath.Base(strings.TrimSpace(artifactPath))
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return ""
-	}
-	if !stringsHasSuffixFold(base, ".spkg.tgz") {
+	base := resolveReceiverPacketBase(artifactPath)
+	if base == "" {
 		return ""
 	}
 	// Always quote the path so copied examples keep working with spaces and symbols.

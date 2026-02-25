@@ -91,9 +91,9 @@ func TestRenderReceiverShareTextEnglish(t *testing.T) {
 }
 
 func TestRenderReceiverShareJSON_Contract(t *testing.T) {
-	msg := receiverShareMessage{
-		Command: "zt verify -- './bundle.spkg.tgz'",
-		Format:  "en",
+	msg, ok := buildReceiverShareMessage("bundle.spkg.tgz", "en")
+	if !ok {
+		t.Fatalf("buildReceiverShareMessage returned ok=false")
 	}
 	raw := renderReceiverShareJSON(msg)
 	if !strings.HasSuffix(raw, "\n") {
@@ -103,8 +103,8 @@ func TestRenderReceiverShareJSON_Contract(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &got); err != nil {
 		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
-	if len(got) != 4 {
-		t.Fatalf("top-level keys = %d, want 4", len(got))
+	if len(got) != 5 {
+		t.Fatalf("top-level keys = %d, want 5", len(got))
 	}
 	if got["kind"] != "receiver_verify_hint" {
 		t.Fatalf("kind = %v", got["kind"])
@@ -118,6 +118,23 @@ func TestRenderReceiverShareJSON_Contract(t *testing.T) {
 	wantText := "Please run the following command on the receiver side to verify the file.\n" + msg.Command + "\n"
 	if got["text"] != wantText {
 		t.Fatalf("text = %q, want %q", got["text"], wantText)
+	}
+	receiptHint, ok := got["receipt_hint"].(map[string]any)
+	if !ok {
+		t.Fatalf("receipt_hint missing or invalid: %#v", got["receipt_hint"])
+	}
+	if receiptHint["version"] != "v1" {
+		t.Fatalf("receipt_hint.version = %v, want v1", receiptHint["version"])
+	}
+	if receiptHint["path"] != "./receipt_bundle.json" {
+		t.Fatalf("receipt_hint.path = %v, want ./receipt_bundle.json", receiptHint["path"])
+	}
+	command, ok := receiptHint["command"].(string)
+	if !ok {
+		t.Fatalf("receipt_hint.command type = %T", receiptHint["command"])
+	}
+	if !strings.Contains(command, "--receipt-out") {
+		t.Fatalf("receipt_hint.command missing --receipt-out: %v", receiptHint["command"])
 	}
 }
 
@@ -138,9 +155,9 @@ func TestStdoutShareTransport_TextContract(t *testing.T) {
 
 func TestStdoutShareTransport_JSONContract(t *testing.T) {
 	var out bytes.Buffer
-	msg := receiverShareMessage{
-		Command: "zt verify -- './bundle.spkg.tgz'",
-		Format:  "ja",
+	msg, ok := buildReceiverShareMessage("bundle.spkg.tgz", "ja")
+	if !ok {
+		t.Fatalf("buildReceiverShareMessage returned ok=false")
 	}
 	if err := (stdoutShareTransport{w: &out, jsonMode: true}).Deliver(msg); err != nil {
 		t.Fatalf("Deliver returned error: %v", err)
@@ -155,6 +172,9 @@ func TestStdoutShareTransport_JSONContract(t *testing.T) {
 	}
 	if payload["kind"] != "receiver_verify_hint" {
 		t.Fatalf("kind = %v", payload["kind"])
+	}
+	if _, ok := payload["receipt_hint"].(map[string]any); !ok {
+		t.Fatalf("receipt_hint missing: %#v", payload["receipt_hint"])
 	}
 }
 
@@ -184,9 +204,9 @@ func TestFileShareTransportWritesLocalizedText(t *testing.T) {
 func TestFileShareTransportWritesJSON(t *testing.T) {
 	tmp := t.TempDir()
 	outPath := filepath.Join(tmp, "share.json")
-	msg := receiverShareMessage{
-		Command: "zt verify -- './bundle.spkg.tgz'",
-		Format:  "en",
+	msg, ok := buildReceiverShareMessage("bundle.spkg.tgz", "en")
+	if !ok {
+		t.Fatalf("buildReceiverShareMessage returned ok=false")
 	}
 	if err := (fileShareTransport{path: outPath, jsonMode: true}).Deliver(msg); err != nil {
 		t.Fatalf("Deliver returned error: %v", err)
@@ -201,6 +221,9 @@ func TestFileShareTransportWritesJSON(t *testing.T) {
 	}
 	if !strings.Contains(s, `"command":"zt verify -- './bundle.spkg.tgz'"`) {
 		t.Fatalf("missing JSON command: %q", s)
+	}
+	if !strings.Contains(s, `"receipt_hint":{"version":"v1","path":"./receipt_bundle.json","command":"zt verify --receipt-out './receipt_bundle.json' -- './bundle.spkg.tgz'"`) {
+		t.Fatalf("missing receipt_hint: %q", s)
 	}
 }
 

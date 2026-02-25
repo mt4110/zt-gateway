@@ -20,6 +20,8 @@
 - `zt` extension policy file (`policy/extension_policy.toml`)
 - `zt send --strict`
 - local GPG smoke test setup script for packet verification
+- `zt send --share-json` now includes `receipt_hint` (`version` / `path` / `command`) for receiver-side `--receipt-out` guidance
+- v0.8.0 architecture baseline docs (`docs/architecture/V0.8.0_DESIGN.md`, `docs/architecture/V0.8.0_IMPLEMENTATION_TICKETS.md`)
 
 ### Changed
 

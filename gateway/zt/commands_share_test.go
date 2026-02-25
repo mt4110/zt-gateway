@@ -30,6 +30,28 @@ func TestReceiverVerifyCommandRejectsNonPacketPath(t *testing.T) {
 	}
 }
 
+func TestReceiverSuggestedReceiptPathContract(t *testing.T) {
+	got := receiverSuggestedReceiptPath(" out dir/O'Brien file.spkg.tgz ")
+	want := "./receipt_O_Brien_file.json"
+	if got != want {
+		t.Fatalf("receiverSuggestedReceiptPath() = %q, want %q", got, want)
+	}
+}
+
+func TestReceiverVerifyCommandWithReceiptContract(t *testing.T) {
+	got := receiverVerifyCommandWithReceipt(" out dir/O'Brien file.spkg.tgz ")
+	want := "zt verify --receipt-out './receipt_O_Brien_file.json' -- './O'\"'\"'Brien file.spkg.tgz'"
+	if got != want {
+		t.Fatalf("receiverVerifyCommandWithReceipt() = %q, want %q", got, want)
+	}
+}
+
+func TestReceiverVerifyCommandWithReceiptRejectsNonPacketPath(t *testing.T) {
+	if got := receiverVerifyCommandWithReceipt("artifact.zp"); got != "" {
+		t.Fatalf("receiverVerifyCommandWithReceipt(non-packet) = %q, want empty", got)
+	}
+}
+
 func TestResolveShareFormatAutoLocale(t *testing.T) {
 	t.Setenv("LC_ALL", "ja_JP.UTF-8")
 	t.Setenv("LC_MESSAGES", "")
