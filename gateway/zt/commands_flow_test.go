@@ -37,6 +37,26 @@ func TestResolveSendScanStrict_ExplicitStrictMessage(t *testing.T) {
 	}
 }
 
+func TestResolveSendScanStrict_PublicProfileDefaultsToDegraded(t *testing.T) {
+	strict, msg := resolveSendScanStrict(sendOptions{Profile: trustProfilePublic}, false)
+	if strict {
+		t.Fatalf("strict = true, want false for public profile default")
+	}
+	if !strings.Contains(msg, "profile=public") {
+		t.Fatalf("msg = %q, want profile=public note", msg)
+	}
+}
+
+func TestResolveSendScanStrict_ConfidentialForcesStrict(t *testing.T) {
+	strict, msg := resolveSendScanStrict(sendOptions{Profile: trustProfileConfidential, AllowDegradedScan: true}, false)
+	if !strict {
+		t.Fatalf("strict = false, want true for confidential profile")
+	}
+	if !strings.Contains(msg, "profile=confidential") {
+		t.Fatalf("msg = %q, want profile=confidential note", msg)
+	}
+}
+
 func TestRunSendSecurePackPrecheck_MissingFilesBlocks(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoRoot, "tools", "secure-pack"), 0o755); err != nil {

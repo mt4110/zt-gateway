@@ -8,6 +8,8 @@ type AuditAction string
 
 const (
 	AuditActionBootstrapUpsert AuditAction = "bootstrap_upsert"
+	AuditActionAdminPost       AuditAction = "admin_post"
+	AuditActionAdminPut        AuditAction = "admin_put"
 	AuditActionAdminPatch      AuditAction = "admin_patch"
 	AuditActionAdminDisable    AuditAction = "admin_disable"
 	AuditActionAdminDelete     AuditAction = "admin_delete"
@@ -15,6 +17,8 @@ const (
 
 var auditActionList = []AuditAction{
 	AuditActionBootstrapUpsert,
+	AuditActionAdminPost,
+	AuditActionAdminPut,
 	AuditActionAdminPatch,
 	AuditActionAdminDisable,
 	AuditActionAdminDelete,

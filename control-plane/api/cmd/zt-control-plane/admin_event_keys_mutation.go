@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"zt-control-plane-api/internal/eventkeyspec"
 )
@@ -75,7 +76,7 @@ on conflict (key_id) do update set
 	}
 	if err := appendEventSigningKeyAudit(r.Context(), s.db, eventSigningKeyAuditRecord{
 		KeyID:        entry.KeyID,
-		Action:       strings.ToLower("admin_" + r.Method),
+		Action:       adminEventKeyUpsertAuditAction(r.Method),
 		TenantID:     entry.TenantID,
 		Enabled:      entry.Enabled,
 		Source:       "admin.api",
@@ -85,9 +86,20 @@ on conflict (key_id) do update set
 			"method": r.Method,
 		},
 	}); err != nil {
-		log.Printf("WARN event_signing_key_audit append failed (key_id=%s action=%s): %v", entry.KeyID, strings.ToLower("admin_"+r.Method), err)
+		log.Printf("WARN event_signing_key_audit append failed (key_id=%s action=%s): %v", entry.KeyID, adminEventKeyUpsertAuditAction(r.Method), err)
 	}
 	writeJSON(w, status, map[string]any{"item": publicEventKeyEntry(entry)})
+}
+
+func adminEventKeyUpsertAuditAction(method string) string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodPost:
+		return string(eventkeyspec.AuditActionAdminPost)
+	case http.MethodPut:
+		return string(eventkeyspec.AuditActionAdminPut)
+	default:
+		return strings.ToLower("admin_" + method)
+	}
 }
 
 func (s *server) handleAdminEventKeysDelete(w http.ResponseWriter, r *http.Request, keyIDInPath string) {
@@ -108,17 +120,54 @@ func (s *server) handleAdminEventKeysDelete(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_delete_mode"})
 		return
 	}
+	replacementKeyID := strings.TrimSpace(r.URL.Query().Get("replacement_key_id"))
+	if replacementKeyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "replacement_key_id_required"})
+		return
+	}
+	if replacementKeyID == keyIDInPath {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "replacement_key_id_must_differ"})
+		return
+	}
+
+	eval, err := s.evaluateEventKeyRotation(r.Context(), keyIDInPath, replacementKeyID, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "event_key_rotation_check_failed"})
+		return
+	}
+	if !eval.OldKeyExists {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "event_key_not_found", "key_id": keyIDInPath})
+		return
+	}
+	if !eval.ReplacementKeyEnabled {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":              "rotation_replacement_key_not_enabled",
+			"replacement_key_id": replacementKeyID,
+		})
+		return
+	}
+	if !eval.CoexistenceElapsed {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "rotation_coexistence_period_not_elapsed",
+		})
+		return
+	}
+	if !eval.SwitchQuietPassed {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "rotation_switch_not_complete",
+		})
+		return
+	}
+	if mode == "delete" && !eval.OldKeyDisabled {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "event_key_delete_requires_disabled"})
+		return
+	}
+	if mode == "delete" && !eval.DeleteHoldElapsed {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "event_key_delete_hold_not_elapsed"})
+		return
+	}
 
 	var res sql.Result
-	var err error
-	var preDelete eventKeyRegistryEntry
-	var havePreDelete bool
-	if mode == "delete" {
-		if e, ok, eerr := loadEventSigningKeyFromDB(r.Context(), s.db, keyIDInPath); eerr == nil && ok {
-			preDelete = e
-			havePreDelete = true
-		}
-	}
 	if mode == "delete" {
 		res, err = s.db.ExecContext(r.Context(), `delete from event_signing_keys where key_id = $1`, keyIDInPath)
 	} else {
@@ -156,18 +205,13 @@ where key_id = $1
 			}
 		}
 	} else {
-		enabled := false
-		var enabledPtr *bool = &enabled
-		tenant := ""
-		if havePreDelete {
-			enabledPtr = preDelete.Enabled
-			tenant = preDelete.TenantID
-		}
+		enabled := eval.OldKey.Enabled
+		tenant := eval.OldKey.TenantID
 		if err := appendEventSigningKeyAudit(r.Context(), s.db, eventSigningKeyAuditRecord{
 			KeyID:        keyIDInPath,
 			Action:       string(eventkeyspec.AuditActionAdminDelete),
 			TenantID:     tenant,
-			Enabled:      enabledPtr,
+			Enabled:      &enabled,
 			Source:       "admin.api.delete",
 			UpdatedBy:    updatedBy,
 			UpdateReason: reason,

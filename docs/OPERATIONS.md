@@ -47,6 +47,49 @@
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_HASH_MISMATCH`
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_VERSION_MISMATCH`
 
+## Control Plane event sync（v0.5e 運用固定）
+
+`zt sync --json` は `error_class` / `error_code` を固定出力します。  
+現場一次対応は下表だけ見れば判断できるようにします。
+
+| `error_class` | 代表 `error_code` | 意味 | 自動再試行 | 一次対応 |
+| --- | --- | --- | --- | --- |
+| `none` | `none` | 同期成功（または pending なし） | n/a | 通常運用 |
+| `retryable` | `http_503`, `transport_failed` | 5xx / 通信失敗 | 継続（指数バックオフ） | 監視継続。必要時のみ `zt sync --force --json` |
+| `fail_closed` | `envelope.required`, `envelope.key_id_required`, `envelope.key_id_not_allowed` | 署名/鍵設定の契約不一致 | 抑制（`--force` 時のみ再送） | 設定修正後に `zt sync --force --json` |
+| `internal` | `internal_failed` | spool I/O などの内部障害 | 停止 | ローカル環境修復（権限/容量/lock） |
+
+補足:
+
+- `ZT_EVENT_SIGNING_KEY_ID` 未設定でも envelope 署名自体は可能ですが、event key registry 有効時は `envelope.key_id_required` で reject されます
+- `pending.jsonl` には `first_failed_at` / `last_failed_at` / `error_class` が保存されます
+- `fail_closed` は busy loop を避けるため、`--force` なしの自動再試行を行いません
+
+標準手順（sync fail-closed 対応）:
+
+1. `zt sync --json` を実行し、`error_class` / `error_code` を確認
+2. `fail_closed` の場合は鍵設定（`ZT_EVENT_SIGNING_KEY_ID` / registry 側許可鍵）を修正
+3. 修正後に `zt sync --force --json` を実行し、`ok=true` を確認
+
+## Policy Control Loop 一次復旧（v0.5f）
+
+現場での一次対応を `policy_decision` / `error_code` だけで判断できるように固定します。
+
+| 症状 | 代表 `policy_decision.error_code` | 判定 | 一次対応 |
+| --- | --- | --- | --- |
+| policy 署名不正 / 鍵不一致 | `policy_verify_failed` | fail-closed | `GET /v1/policies/keyset` の active key と Gateway 信頼鍵を確認し、policy を再取得して再適用 |
+| policy 期限切れ（confidential/regulated） | `policy_stale` | fail-closed | CP 側で新 policy を publish し、Gateway で fetch/activate。復旧前の送信は停止 |
+| policy 期限切れ（internal/public・grace内） | `policy_stale` | degraded | 期限内に更新。grace 超過で fail-closed へ遷移するため前倒しで更新 |
+| staged policy 破損 | `policy_activation_verify_failed` | fail-closed | `active` は不変。`last_known_good` へ rollback 済みか確認し、破損 bundle を再配布 |
+
+最短確認コマンド:
+
+```bash
+bash ./scripts/ci/check-policy-contract-gate.sh
+zt setup --json
+zt sync --force --json
+```
+
 ## `zt setup --json` で見るポイント（supply-chain）
 
 優先チェック:
@@ -57,9 +100,17 @@
 
 補助フィールド（`resolved`）:
 
+- `profile`
 - `actual_root_fingerprint`
 - `pin_source` (`env` / `built-in` / `env+built-in` / `none` / `invalid`)
 - `pin_match_count`
+
+互換性リゾルバ（`compatibility`）:
+
+- `status` (`ok` / `warn`)
+- `category`（例: `root_pin_mismatch`, `tool_version_mismatch`）
+- `environment.os` / `environment.package_source` / `environment.pin_source`
+- `fix_candidates[]`（優先順の修復コマンド候補）
 
 ## CI ゲート（標準）
 
@@ -67,6 +118,7 @@ fixtureゲート（ロジック回帰検知）:
 
 - `scripts/ci/check-zt-setup-json-gate.sh`
 - 固定署名fixtureで `zt setup --json` を実行し、supply-chain 3項目の `ok` を検証
+- policy 契約は `scripts/ci/check-policy-contract-gate.sh` で独立実行（bundle署名 / keyset / activation / decision / policy e2e）
 
 actual repo ゲート（実artifact直検査）:
 
@@ -82,6 +134,58 @@ actual repo ゲート（実artifact直検査）:
 - `tools.lock` の `tar_sha256` / `tar_version` は OS 依存です
 - macOS は通常 `bsdtar`、GitHub Actions `ubuntu-latest` は通常 GNU tar のため、macOS で生成した `tools.lock` は CI actual repo ゲートで失敗する可能性があります
 - CI green を狙う場合は、Ubuntu/Linux 環境で `tools.lock` を生成・署名してください
+
+## 監査証跡MVP（v0.5-A）運用確認
+
+監査ログは append-only の JSONL として `events.jsonl` に記録されます。
+
+- 既定パス: `<repo>/.zt-spool/events.jsonl`
+- 変更時: `ZT_EVENT_SPOOL_DIR` を使っている場合は `<ZT_EVENT_SPOOL_DIR>/events.jsonl`
+
+最小必須フィールド（契約）:
+
+- `event_id`
+- `event_type`
+- `timestamp`
+- `result`
+- `endpoint`
+- `payload_sha256`
+
+ローカル確認例:
+
+```bash
+tail -n 20 ./.zt-spool/events.jsonl | jq .
+```
+
+`send -> verify` 監査確認例:
+
+```bash
+jq -r '.event_type' ./.zt-spool/events.jsonl | sort | uniq -c
+```
+
+## 契約テストと担保範囲（v0.5-A 追加）
+
+- `TestAuditEventsJSONL_SchemaContract`  
+  `events.jsonl` の required fields と `payload_sha256` 算出契約を担保
+- `TestAuditEventsJSONL_ResultFallbackContract`  
+  `result` 欠落時のフォールバック（`recorded`）契約を担保
+- `TestShareJSONToVerifyToReceipt_AuditE2EContract`  
+  既存 `send -> verify` 導線で監査ログに `send` / `verify` が各1件出るE2E契約を担保
+- `scripts/ci/check-zt-contract-gate.sh`  
+  上記監査契約テストを CI 実行対象として明示
+
+## 契約テストと担保範囲（v0.5-B 追加: 監査改ざん検知）
+
+- `TestAuditEventsJSONL_ChainContract`  
+  `prev_record_sha256` / `record_sha256` の連結ハッシュ契約を担保
+- `TestAuditEventsJSONL_SignatureContract`  
+  `ZT_AUDIT_SIGNING_ED25519_PRIV_B64` 有効時の監査レコード署名契約を担保
+- `TestShareJSONToVerifyToReceipt_AuditVerifyE2EContract`  
+  `send -> verify` 導線で監査ログ全体のチェーン+署名検証が通る E2E 契約を担保
+- `TestAuditVerifyE2EContract_DetectsTamper`  
+  監査ログ改ざん時に検証失敗となる契約を担保
+- `scripts/ci/check-zt-contract-gate.sh`  
+  v0.5-B 契約テストを CI 実行対象として明示
 
 ## GitHub Actions Variable 配布（`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS`）
 
@@ -180,6 +284,7 @@ bash ./scripts/dev/generate-secure-pack-tools-lock.sh \
 
 - root key をローテーションしない場合でも、`ROOT_PUBKEY.asc` は同時に再出力して整合性を固定する運用を推奨
 - root key をローテーションする場合は `docs/SECURE_PACK_KEY_ROTATION_RUNBOOK.md` の併記期間/切替手順に従う
+- control-plane の event envelope 署名鍵（`/v1/admin/event-keys`）をローテーションする場合は `docs/EVENT_KEY_ROTATION_RUNBOOK.md` に従う（併存72h / 切替完了24h静穏 / delete保留7日）
 
 ## commit/push 前の最終チェック（運用標準）
 

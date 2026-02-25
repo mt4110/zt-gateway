@@ -91,6 +91,7 @@ Notes:
   - `ZT_CP_EVENT_VERIFY_PUBKEY_B64=...`
 - If `ZT_CP_EVENT_KEY_REGISTRY_FILE` exists and has entries, `key_id` is required and checked (`tenant_id` も取り込みます)
 - When Postgres is enabled, the TOML registry is used as a **bootstrap source** and imported into `event_signing_keys`
+- 鍵ローテーション運用（併存期間/disable/delete 条件）は `docs/EVENT_KEY_ROTATION_RUNBOOK.md` を参照
 
 ## 4. Emit Events from `zt`
 

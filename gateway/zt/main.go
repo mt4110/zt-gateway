@@ -15,6 +15,7 @@ type ScanResult struct {
 type sendOptions struct {
 	InputFile         string
 	Client            string
+	Profile           string
 	AllowDegradedScan bool
 	Strict            bool
 	ForcePublic       bool
@@ -38,14 +39,17 @@ type scanOptions struct {
 
 type syncOptions struct {
 	Force bool
+	JSON  bool
 }
 
 type setupOptions struct {
-	JSON bool
+	JSON    bool
+	Profile string
 }
 
 type verifyOptions struct {
 	ArtifactPath string
+	ReceiptOut   string
 	SyncNow      bool
 	NoAutoSync   bool
 }
@@ -159,13 +163,23 @@ func main() {
 			os.Exit(1)
 		}
 		runVerify(adapters, opts)
+	case "audit":
+		code := runAuditCommand(repoRoot, os.Args[2:])
+		if code != 0 {
+			os.Exit(code)
+		}
 	case "sync":
 		opts, err := parseSyncArgs(os.Args[2:])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		runSyncEvents(opts.Force)
+		runSyncEventsWithOptions(opts)
+	case "policy":
+		if err := runPolicyCommand(repoRoot, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "config":
 		if err := runConfigCommand(repoRoot, os.Args[2:]); err != nil {
 			if !isConfigDoctorJSONMode(os.Args[1:]) {

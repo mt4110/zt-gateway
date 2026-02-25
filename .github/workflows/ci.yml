@@ -21,12 +21,27 @@ jobs:
     - name: Build
       run: nix build .#zt
 
+    - name: ZT Contract Gate
+      run: |
+        chmod +x scripts/ci/check-zt-contract-gate.sh
+        ./scripts/ci/check-zt-contract-gate.sh
+
+    - name: Control Plane Contract Gate
+      run: |
+        chmod +x scripts/ci/check-control-plane-contract-gate.sh
+        ./scripts/ci/check-control-plane-contract-gate.sh
+
     - name: Supply-Chain Setup JSON Gate (fixture)
       env:
         ZT_BIN: ${{ github.workspace }}/result/bin/zt
       run: |
         chmod +x scripts/ci/check-zt-setup-json-gate.sh
         ./scripts/ci/check-zt-setup-json-gate.sh
+
+    - name: Policy Rollout Gate
+      run: |
+        chmod +x scripts/ci/check-policy-rollout-gate.sh
+        ./scripts/ci/check-policy-rollout-gate.sh
 
     - name: Supply-Chain Setup JSON Gate (actual repo; fail-closed when artifacts exist)
       env:

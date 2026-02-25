@@ -11,6 +11,19 @@ import (
 
 func runSetup(repoRoot string, opts setupOptions) error {
 	jsonOut := opts.JSON
+	profileName, err := validateTrustProfile(opts.Profile)
+	if err != nil {
+		return err
+	}
+	profileSelection, profileErr := resolveTrustProfilePolicySelection(repoRoot, profileName)
+	if profileErr != nil {
+		profileSelection = trustProfilePolicySelection{
+			Name:                profileName,
+			Source:              "unresolved",
+			ExtensionPolicyPath: filepath.Join(repoRoot, "policy", "extension_policy.toml"),
+			ScanPolicyPath:      filepath.Join(repoRoot, "policy", "scan_policy.toml"),
+		}
+	}
 	if !jsonOut {
 		fmt.Println("[SETUP] zt quick setup check")
 		fmt.Println("This checks local config, signing key env, required tools, and control-plane reachability.")
@@ -66,6 +79,31 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		APIKeySet:       cpAPIKey != "",
 		APIKeySource:    cpAPIKeySrc,
 		SpoolDir:        spoolDir,
+		Profile:         profileSelection.Name,
+		ProfileSource:   profileSelection.Source,
+	}
+	policyHealth, policyHealthErr := inspectPolicyLoopHealth(repoRoot, "extension")
+	if policyHealthErr == nil {
+		result.Resolved.PolicyLastSyncAt = policyHealth.LastSyncAt
+		result.Resolved.PolicyNextSyncAt = policyHealth.NextSyncAt
+		result.Resolved.PolicySyncError = policyHealth.SyncError
+	}
+	if profileErr != nil {
+		addCheck("trust_profile", "fail", profileErr.Error())
+		quickFixes = append(quickFixes,
+			fmt.Sprintf("Create `%s` and `%s` for profile `%s`, or rerun with `--profile %s`.",
+				profileSelection.ExtensionPolicyPath,
+				profileSelection.ScanPolicyPath,
+				profileName,
+				trustProfileInternal))
+		if !jsonOut {
+			fmt.Printf("[FAIL] trust profile resolution failed: %v\n", profileErr)
+		}
+	} else {
+		addCheck("trust_profile", "ok", fmt.Sprintf("resolved=%s source=%s", profileSelection.Name, profileSelection.Source))
+		if !jsonOut {
+			fmt.Printf("[OK]   trust profile resolved (%s via %s)\n", profileSelection.Name, profileSelection.Source)
+		}
 	}
 	if pinInfo := collectSetupRootPinJSONInfo(repoRoot); pinInfo != nil {
 		result.Resolved.ActualRootFingerprint = pinInfo.ActualRootFingerprint
@@ -132,11 +170,11 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		if !jsonOut {
 			fmt.Println("[WARN] event signing key env not configured (ZT_EVENT_SIGNING_ED25519_PRIV_B64)")
 		}
-		quickFixes = append(quickFixes, "Set `ZT_EVENT_SIGNING_ED25519_PRIV_B64` (and optional `ZT_EVENT_SIGNING_KEY_ID`) to sign events sent to Control Plane.")
+		quickFixes = append(quickFixes, "Set `ZT_EVENT_SIGNING_ED25519_PRIV_B64` (and set `ZT_EVENT_SIGNING_KEY_ID` when Control Plane event key registry is enabled) to sign events sent to Control Plane.")
 	} else {
 		keyID := signer.KeyID
 		if keyID == "" {
-			keyID = "(empty)"
+			keyID = "(empty: legacy-single-key mode; CP registry may reject with envelope.key_id_required)"
 		}
 		addCheck("event_signing_key_env", "ok", "loaded key_id="+keyID)
 		if !jsonOut {
@@ -178,7 +216,7 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	checkTool("freshclam", false, "needed when using --update for ClamAV definitions")
 	checkTool("yara", false, "recommended for rule-based scanning")
 
-	preflight := collectSetupPreflightChecks(repoRoot)
+	preflight := collectSetupPreflightChecksWithPolicy(repoRoot, profileSelection)
 	for _, c := range preflight.Checks {
 		addCheck(c.Name, c.Status, c.Message)
 		if !jsonOut {
@@ -186,6 +224,7 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		}
 	}
 	quickFixes = append(quickFixes, preflight.QuickFixes...)
+	result.Compatibility = preflight.Compatibility
 
 	if cpURL != "" {
 		if !jsonOut {
@@ -203,18 +242,61 @@ func runSetup(repoRoot string, opts setupOptions) error {
 			if !jsonOut {
 				fmt.Printf("[OK]   control plane reachable: %s\n", msg)
 			}
+			keyCount, keysetErr := checkControlPlanePolicyKeyset(cpURL, cpAPIKey)
+			if keysetErr != nil {
+				addCheck("control_plane_policy_keyset", "fail", keysetErr.Error())
+				if !jsonOut {
+					fmt.Printf("[FAIL] control plane policy keyset check failed: %v\n", keysetErr)
+				}
+				quickFixes = append(quickFixes, "Ensure Control Plane serves `GET /v1/policies/keyset` with active Ed25519 keys, then rerun `zt setup`.")
+			} else {
+				addCheck("control_plane_policy_keyset", "ok", fmt.Sprintf("trusted_keys=%d", keyCount))
+				if !jsonOut {
+					fmt.Printf("[OK]   control plane policy keyset loaded (trusted_keys=%d)\n", keyCount)
+				}
+			}
+		}
+	}
+	if policyHealthErr != nil {
+		addCheck("policy_loop_health", "fail", policyHealthErr.Error())
+		if !jsonOut {
+			fmt.Printf("[FAIL] policy loop health check failed: %v\n", policyHealthErr)
+		}
+	} else {
+		addCheck("policy_loop_health", policyHealth.Status, policyLoopHealthMessage(policyHealth))
+		if !jsonOut {
+			printSetupCheckLine(setupCheck{
+				Name:    "policy_loop_health",
+				Status:  policyHealth.Status,
+				Message: policyLoopHealthMessage(policyHealth),
+			})
 		}
 	}
 
 	result.QuickFixes = dedupeStrings(quickFixes)
 	result.Next = []string{
-		"Sender: zt send [--client <name>] <file>",
-		"Receiver: zt verify <packet.spkg.tgz>",
-		"Details: zt --help-advanced",
+		setupNextSender,
+		setupNextReceiver,
+		setupNextDetails,
 	}
 	result.OK = result.Failures == 0
 	if !result.OK {
 		result.ErrorCode = ztErrorCodeSetupChecksFailed
+		result.Summary = "setup checks failed"
+		result.TrustStatus = newTrustStatusFailure(result.ErrorCode)
+	} else {
+		result.Summary = "setup checks passed"
+		result.TrustStatus = newTrustStatusSuccess("none")
+	}
+	retryCommand := "zt setup"
+	if profileName != trustProfileInternal {
+		retryCommand += " --profile " + profileName
+	}
+	if jsonOut {
+		retryCommand += " --json"
+	}
+	if len(result.QuickFixes) > 0 || !result.OK {
+		result.QuickFixBundle = buildQuickFixBundle(result.Summary, result.QuickFixes, retryCommand)
 	}
 
 	if jsonOut {
@@ -235,14 +317,16 @@ func runSetup(repoRoot string, opts setupOptions) error {
 
 	fmt.Println("")
 	fmt.Println("[NEXT]")
-	fmt.Println("1. Sender:   zt send [--client <name>] <file>")
-	fmt.Println("2. Receiver: zt verify <packet.spkg.tgz>")
-	fmt.Println("3. Details:  zt --help-advanced")
+	fmt.Printf("1. %s\n", setupNextSender)
+	fmt.Printf("2. %s\n", setupNextReceiver)
+	fmt.Printf("3. %s\n", setupNextDetails)
 	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
 	if !result.OK {
 		printZTErrorCode(result.ErrorCode)
+		printTrustStatusLine(result.TrustStatus)
 		return fmt.Errorf("setup checks failed")
 	}
+	printTrustStatusLine(result.TrustStatus)
 	return nil
 }
 

@@ -18,6 +18,7 @@ type server struct {
 	policyDir               string
 	apiKey                  string
 	eventVerifyPub          ed25519.PublicKey
+	policySigner            *policyBundleSigner
 	eventKeyRegistryEnabled bool
 	eventKeyRegistry        map[string]eventKeyRegistryEntry
 	db                      *sql.DB
@@ -81,6 +82,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid ZT_CP_EVENT_VERIFY_PUBKEY_B64: %v", err)
 	}
+	policySigner, err := loadPolicyBundleSigner(dataDir)
+	if err != nil {
+		log.Fatalf("invalid policy signer config: %v", err)
+	}
 	keyRegistry, err := loadEventKeyRegistry(cwd)
 	if err != nil {
 		log.Fatalf("failed to load event key registry: %v", err)
@@ -113,6 +118,7 @@ func main() {
 		policyDir:               policyDir,
 		apiKey:                  apiKey,
 		eventVerifyPub:          verifyPub,
+		policySigner:            policySigner,
 		eventKeyRegistryEnabled: eventKeyRegistryEnabled,
 		eventKeyRegistry:        keyRegistry,
 		db:                      db,
@@ -125,6 +131,7 @@ func main() {
 	mux.HandleFunc("/v1/events/verify", s.handleEventIngest("verify"))
 	mux.HandleFunc("/v1/policies/extension/latest", s.handlePolicyLatest("extension_policy.toml"))
 	mux.HandleFunc("/v1/policies/scan/latest", s.handlePolicyLatest("scan_policy.toml"))
+	mux.HandleFunc("/v1/policies/keyset", s.handlePolicyKeyset)
 	mux.HandleFunc("/v1/rules/latest", s.handleRulesLatest)
 	mux.HandleFunc("/v1/dashboard/activity", s.handleDashboardActivity)
 	mux.HandleFunc("/v1/dashboard/activity/groups", s.handleDashboardActivityGroups)

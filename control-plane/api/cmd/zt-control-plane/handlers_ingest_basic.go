@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -47,17 +50,31 @@ func (s *server) handleEventIngest(kind string) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+		eventID, _ := payload["event_id"].(string)
+		eventID = strings.TrimSpace(eventID)
+		if eventID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "event_id_required"})
+			return
+		}
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "payload_json_encode_failed"})
+			return
+		}
+		payloadSHA := sha256Hex(payloadJSON)
 
 		now := time.Now().UTC()
 		ingestID := newID("ing")
 		record := map[string]any{
-			"ingest_id":      ingestID,
-			"kind":           kind,
-			"received_at":    now.Format(time.RFC3339Nano),
-			"remote_addr":    r.RemoteAddr,
-			"user_agent":     r.UserAgent(),
-			"payload":        payload,
-			"payload_sha256": sha256Hex(body),
+			"ingest_id":       ingestID,
+			"kind":            kind,
+			"event_id":        eventID,
+			"received_at":     now.Format(time.RFC3339Nano),
+			"remote_addr":     r.RemoteAddr,
+			"user_agent":      r.UserAgent(),
+			"raw_body_sha256": sha256Hex(body),
+			"payload":         payload,
+			"payload_sha256":  payloadSHA,
 			"envelope": map[string]any{
 				"present":          envMeta.Present,
 				"verified":         envMeta.Verified,
@@ -68,21 +85,28 @@ func (s *server) handleEventIngest(kind string) http.HandlerFunc {
 				"endpoint":         envMeta.Endpoint,
 			},
 		}
-		if err := s.appendJSONL(filepath.Join(s.dataDir, "events", kind+".jsonl"), record); err != nil {
+		eventsPath := filepath.Join(s.dataDir, "events", kind+".jsonl")
+		duplicate, duplicateIngestID, err := s.appendEventJSONLWithDedupe(eventsPath, record, eventID, payloadSHA)
+		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "persist_failed"})
 			return
 		}
-		if s.db != nil {
+		if s.db != nil && !duplicate {
 			if err := s.insertEventRecord(r.Context(), ingestID, kind, now, r, payload, body, envJSON, envMeta); err != nil {
 				log.Printf("WARN postgres dual-write failed (kind=%s ingest_id=%s): %v", kind, ingestID, err)
 			}
 		}
+		responseIngestID := ingestID
+		if duplicate && duplicateIngestID != "" {
+			responseIngestID = duplicateIngestID
+		}
 
-		eventID, _ := payload["event_id"].(string)
 		writeJSON(w, http.StatusAccepted, map[string]any{
-			"status":    "accepted",
-			"event_id":  eventID,
-			"ingest_id": ingestID,
+			"status":         "accepted",
+			"event_id":       eventID,
+			"ingest_id":      responseIngestID,
+			"duplicate":      duplicate,
+			"duplicate_rule": "event_id+payload_sha256",
 		})
 	}
 }
@@ -93,7 +117,30 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 			return
 		}
-		path := filepath.Join(s.policyDir, fileName)
+		if s.policySigner == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_signing_not_configured"})
+			return
+		}
+		gatewayID := strings.TrimSpace(r.URL.Query().Get("gateway_id"))
+		if gatewayID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "gateway_id_required"})
+			return
+		}
+		channel, err := normalizePolicyRolloutChannel(r.URL.Query().Get("channel"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_channel"})
+			return
+		}
+		profile, err := normalizePolicyProfile(r.URL.Query().Get("profile"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_profile"})
+			return
+		}
+		path, err := policyPathForProfile(s.policyDir, fileName, profile)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_profile"})
+			return
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "policy_not_found", "file": fileName})
@@ -115,13 +162,91 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"version":      version,
-			"sha256":       contentSHA,
-			"content_toml": string(b),
-			"effective_at": effectiveAt,
+		bundle, err := s.policySigner.Sign(policyBundle{
+			ManifestID:        policyManifestID(fileName, profile, version, contentSHA),
+			Profile:           profile,
+			Version:           version,
+			SHA256:            contentSHA,
+			EffectiveAt:       effectiveAt,
+			ExpiresAt:         policyExpiresAtRFC3339(info, s.policySigner.TTL),
+			KeyID:             s.policySigner.KeyID,
+			ContentTOML:       string(b),
+			MinGatewayVersion: minimumGatewayVersion(),
+			DuplicateRule:     "manifest_id+profile+sha256",
 		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})
+			return
+		}
+		rolloutID := policyRolloutID(bundle)
+		canaryPercent, rolloutErr := policyCanaryPercent()
+		if rolloutErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_rollout_config_invalid"})
+			return
+		}
+		resolvedChannel := "stable"
+		if channel == "canary" && rolloutCanaryEligible(gatewayID, rolloutID, canaryPercent) {
+			resolvedChannel = "canary"
+		}
+		bundle.RolloutID = rolloutID
+		bundle.RolloutChannel = resolvedChannel
+		bundle.RolloutRule = fmt.Sprintf("sha256(gateway_id+rollout_id)%%100<%d", canaryPercent)
+		writeJSON(w, http.StatusOK, bundle)
 	}
+}
+
+func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
+		return
+	}
+	if s.policySigner == nil || len(s.policySigner.Priv) != ed25519.PrivateKeySize {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_signing_not_configured"})
+		return
+	}
+	pub := s.policySigner.Priv.Public().(ed25519.PublicKey)
+	status := strings.TrimSpace(s.policySigner.KeyStatus)
+	if status == "" {
+		status = "active"
+	}
+	key := map[string]any{
+		"key_id":         s.policySigner.KeyID,
+		"alg":            "Ed25519",
+		"public_key_b64": base64.StdEncoding.EncodeToString(pub),
+		"status":         status,
+	}
+	validFrom := strings.TrimSpace(s.policySigner.KeyValidFrom)
+	validTo := strings.TrimSpace(s.policySigner.KeyValidTo)
+	if validFrom == "" {
+		validFrom = time.Now().UTC().Format(time.RFC3339)
+	}
+	if validTo == "" {
+		validTo = time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	}
+	key["valid_from"] = validFrom
+	key["valid_to"] = validTo
+	etagBody := map[string]any{
+		"schema_version": "zt-policy-keyset-v1",
+		"keys":           []any{key},
+	}
+	canonical, _ := json.Marshal(etagBody)
+	etag := fmt.Sprintf("\"sha256:%s\"", sha256Hex(canonical))
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	generatedAt := strings.TrimSpace(s.policySigner.KeysetCreated)
+	if generatedAt == "" {
+		generatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	resp := map[string]any{
+		"schema_version": "zt-policy-keyset-v1",
+		"generated_at":   generatedAt,
+		"keys":           []any{key},
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) handleRulesLatest(w http.ResponseWriter, r *http.Request) {

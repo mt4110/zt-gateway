@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func emitScanEventFromSecureScanJSON(command string, targetPath string, scanJSON []byte) {
+func emitScanEventFromSecureScanJSON(command string, targetPath string, scanJSON []byte, decision policyDecision) {
 	var m map[string]any
 	if err := json.Unmarshal(scanJSON, &m); err != nil {
 		return
@@ -24,25 +24,26 @@ func emitScanEventFromSecureScanJSON(command string, targetPath string, scanJSON
 		m["target"] = targetPath
 	}
 	payload := map[string]any{
-		"event_id":     fmt.Sprintf("evt_scan_%d", time.Now().UTC().UnixNano()),
-		"occurred_at":  time.Now().UTC().Format(time.RFC3339Nano),
-		"host_id":      hostID(),
-		"tool_version": ztVersion,
-		"command":      command,
-		"target_name":  filepath.Base(targetPath),
-		"result":       stringField(m, "result"),
-		"reason":       stringField(m, "reason"),
-		"summary":      mapField(m, "summary"),
-		"scanners":     sliceField(m, "scanners"),
-		"policy":       mapField(m, "policy"),
-		"provenance":   mapField(m, "provenance"),
-		"rule_hash":    stringField(m, "rule_hash"),
-		"raw_scan":     m,
+		"event_id":        fmt.Sprintf("evt_scan_%d", time.Now().UTC().UnixNano()),
+		"occurred_at":     time.Now().UTC().Format(time.RFC3339Nano),
+		"host_id":         hostID(),
+		"tool_version":    ztVersion,
+		"command":         command,
+		"target_name":     filepath.Base(targetPath),
+		"result":          stringField(m, "result"),
+		"reason":          stringField(m, "reason"),
+		"summary":         mapField(m, "summary"),
+		"scanners":        sliceField(m, "scanners"),
+		"policy":          mapField(m, "policy"),
+		"provenance":      mapField(m, "provenance"),
+		"rule_hash":       stringField(m, "rule_hash"),
+		"policy_decision": normalizePolicyDecision(decision),
+		"raw_scan":        m,
 	}
 	emitControlPlaneEvent("/v1/events/scan", payload)
 }
 
-func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash string) {
+func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash string, decision policyDecision) {
 	sha := hashPathSHA256(artifactPath)
 	payload := map[string]any{
 		"event_id":           fmt.Sprintf("evt_art_%d", time.Now().UTC().UnixNano()),
@@ -58,15 +59,17 @@ func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash st
 		"policy_version":     "",
 		"rule_hash":          ruleHash,
 		"artifact_path":      artifactPath,
+		"policy_decision":    normalizePolicyDecision(decision),
 	}
 	emitControlPlaneEvent("/v1/events/artifact", payload)
 }
 
-func emitVerifyEvent(artifactPath string, ok bool, reason string, details string) {
+func emitVerifyEvent(artifactPath string, ok bool, reason string, details string, decision policyDecision) {
 	result := "failed"
 	if ok {
 		result = "verified"
 	}
+	decision = normalizePolicyDecision(decision)
 	payload := map[string]any{
 		"event_id":          fmt.Sprintf("evt_verify_%d", time.Now().UTC().UnixNano()),
 		"occurred_at":       time.Now().UTC().Format(time.RFC3339Nano),
@@ -77,6 +80,7 @@ func emitVerifyEvent(artifactPath string, ok bool, reason string, details string
 		"verifier_identity": currentIdentity(),
 		"result":            result,
 		"reason":            reason,
+		"policy_decision":   decision,
 		"details": map[string]any{
 			"path":    artifactPath,
 			"message": details,

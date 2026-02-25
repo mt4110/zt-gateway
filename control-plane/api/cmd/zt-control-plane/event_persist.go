@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -58,19 +61,67 @@ on conflict (ingest_id) do nothing
 	return err
 }
 
-func (s *server) appendJSONL(path string, v any) error {
+func (s *server) appendEventJSONLWithDedupe(path string, v any, eventID, payloadSHA string) (bool, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	existingIngestID, duplicate, err := findDuplicateEventInJSONL(path, eventID, payloadSHA)
+	if err != nil {
+		return false, "", err
+	}
+	if duplicate {
+		return true, existingIngestID, nil
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return false, "", err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	defer f.Close()
 
 	enc := json.NewEncoder(f)
-	return enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		return false, "", err
+	}
+	return false, "", nil
+}
+
+type ingestJSONLRecord struct {
+	IngestID      string `json:"ingest_id"`
+	EventID       string `json:"event_id"`
+	PayloadSHA256 string `json:"payload_sha256"`
+}
+
+func findDuplicateEventInJSONL(path, eventID, payloadSHA string) (string, bool, error) {
+	if strings.TrimSpace(eventID) == "" || strings.TrimSpace(payloadSHA) == "" {
+		return "", false, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var rec ingestJSONLRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue
+		}
+		if rec.EventID == eventID && rec.PayloadSHA256 == payloadSHA {
+			return rec.IngestID, true, nil
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return "", false, err
+	}
+	return "", false, nil
 }

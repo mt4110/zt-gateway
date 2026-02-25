@@ -59,9 +59,13 @@ required = [
     "secure_pack_tools_lock_signature",
 ]
 bad = [(name, checks.get(name)) for name in required if checks.get(name) != "ok"]
+resolved = data.get("resolved") or {}
+profile = resolved.get("profile")
 if not data.get("ok"):
     raise SystemExit(f"zt setup fixture gate failed: ok=false error_code={data.get('error_code')}")
 if bad:
     raise SystemExit("zt setup fixture gate failed checks: " + ", ".join(f"{k}={v}" for k, v in bad))
+if profile != "internal":
+    raise SystemExit(f"zt setup fixture gate failed: resolved.profile={profile!r} (want 'internal')")
 print("zt setup --json fixture gate OK")
 PY

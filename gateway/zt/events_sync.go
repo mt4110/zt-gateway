@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,92 @@ import (
 	"strings"
 	"time"
 )
+
+type controlPlanePostError struct {
+	StatusCode  int
+	RemoteError string
+	Body        string
+	FailClosed  bool
+	ErrorCode   string
+}
+
+func (e *controlPlanePostError) Error() string {
+	msg := strings.TrimSpace(e.RemoteError)
+	if msg == "" {
+		msg = strings.TrimSpace(e.Body)
+	}
+	if msg == "" {
+		msg = "unknown_error"
+	}
+	return fmt.Sprintf("http_%d: %s", e.StatusCode, msg)
+}
+
+func isControlPlaneFailClosedSyncError(err error) bool {
+	var e *controlPlanePostError
+	return errors.As(err, &e) && e.FailClosed
+}
+
+const (
+	syncErrorClassNone       = "none"
+	syncErrorClassFailClosed = "fail_closed"
+	syncErrorClassRetryable  = "retryable"
+	syncErrorClassInternal   = "internal"
+
+	syncErrorCodeNone               = "none"
+	syncErrorCodeSyncNotInitialized = "sync_not_initialized"
+	syncErrorCodeTransportFailed    = "transport_failed"
+	syncErrorCodeInternalFailed     = "internal_failed"
+)
+
+type syncErrorInfo struct {
+	Class string
+	Code  string
+}
+
+func normalizeSyncErrorClass(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return syncErrorClassNone
+	}
+	return v
+}
+
+func normalizeSyncErrorCode(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return syncErrorCodeNone
+	}
+	return v
+}
+
+func classifySyncError(err error) syncErrorInfo {
+	if err == nil {
+		return syncErrorInfo{Class: syncErrorClassNone, Code: syncErrorCodeNone}
+	}
+	var postErr *controlPlanePostError
+	if errors.As(err, &postErr) {
+		if postErr.FailClosed {
+			return syncErrorInfo{
+				Class: syncErrorClassFailClosed,
+				Code:  normalizeSyncErrorCode(postErr.ErrorCode),
+			}
+		}
+		return syncErrorInfo{
+			Class: syncErrorClassRetryable,
+			Code:  normalizeSyncErrorCode(postErr.ErrorCode),
+		}
+	}
+	// transport / timeout / context cancellation and similar I/O failures are retryable.
+	if errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+		return syncErrorInfo{Class: syncErrorClassRetryable, Code: syncErrorCodeTransportFailed}
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "connection refused") ||
+		strings.Contains(strings.ToLower(err.Error()), "no such host") ||
+		strings.Contains(strings.ToLower(err.Error()), "tls:") {
+		return syncErrorInfo{Class: syncErrorClassRetryable, Code: syncErrorCodeTransportFailed}
+	}
+	return syncErrorInfo{Class: syncErrorClassInternal, Code: syncErrorCodeInternalFailed}
+}
 
 func (s *eventSpool) Sync(force bool) (syncResult, error) {
 	res := syncResult{}
@@ -31,8 +118,10 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 		}
 
 		kept := make([]queuedEvent, 0, len(pending))
-		for _, q := range pending {
-			if !force && !readyForRetry(q, time.Now().UTC()) {
+		var terminalErr error
+		for i, q := range pending {
+			now := time.Now().UTC()
+			if !force && !readyForRetry(q, now) {
 				res.Skipped++
 				kept = append(kept, q)
 				continue
@@ -40,9 +129,30 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 			if err := s.post(q); err != nil {
 				q.Attempts++
 				q.LastError = err.Error()
-				q.NextRetryAt = nextRetryAt(q.Attempts, time.Now().UTC()).Format(time.RFC3339Nano)
+				info := classifySyncError(err)
+				if q.FirstFailedAt == "" {
+					q.FirstFailedAt = now.Format(time.RFC3339Nano)
+				}
+				q.LastFailedAt = now.Format(time.RFC3339Nano)
+				q.ErrorClass = info.Class
+				if isControlPlaneFailClosedSyncError(err) {
+					// Fail-closed contract: keep the event, but stop automatic retries until config is fixed.
+					q.NextRetryAt = now.Add(24 * time.Hour).Format(time.RFC3339Nano)
+					kept = append(kept, q)
+					if i+1 < len(pending) {
+						kept = append(kept, pending[i+1:]...)
+					}
+					res.LastError = err.Error()
+					res.LastErrorClass = info.Class
+					res.LastErrorCode = info.Code
+					terminalErr = err
+					break
+				}
+				q.NextRetryAt = nextRetryAt(q.Attempts, now).Format(time.RFC3339Nano)
 				kept = append(kept, q)
 				res.LastError = err.Error()
+				res.LastErrorClass = info.Class
+				res.LastErrorCode = info.Code
 				continue
 			}
 			res.Sent++
@@ -57,8 +167,19 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 			return err
 		}
 		res.Remaining = len(kept)
+		if terminalErr != nil {
+			return terminalErr
+		}
 		return nil
 	})
+	if err != nil && (res.LastErrorClass == "" || res.LastErrorCode == "") {
+		info := classifySyncError(err)
+		res.LastErrorClass = info.Class
+		res.LastErrorCode = info.Code
+		if res.LastError == "" {
+			res.LastError = err.Error()
+		}
+	}
 	return res, err
 }
 
@@ -79,9 +200,54 @@ func (s *eventSpool) post(q queuedEvent) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("http_%d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		remoteErr := controlPlaneErrorField(b)
+		rawBody := strings.TrimSpace(string(b))
+		errorCode := resolveSyncErrorCode(resp.StatusCode, remoteErr)
+		return &controlPlanePostError{
+			StatusCode:  resp.StatusCode,
+			RemoteError: remoteErr,
+			Body:        rawBody,
+			FailClosed:  isControlPlaneFailClosedResponse(resp.StatusCode, remoteErr),
+			ErrorCode:   errorCode,
+		}
 	}
 	return nil
+}
+
+func controlPlaneErrorField(body []byte) string {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	v, _ := m["error"].(string)
+	return strings.TrimSpace(v)
+}
+
+func resolveSyncErrorCode(statusCode int, remoteErr string) string {
+	remoteErr = strings.ToLower(strings.TrimSpace(remoteErr))
+	if statusCode >= 500 {
+		return fmt.Sprintf("http_%d", statusCode)
+	}
+	if statusCode >= 400 && statusCode < 500 && strings.HasPrefix(remoteErr, "envelope.") {
+		if remoteErr != "" {
+			return remoteErr
+		}
+	}
+	if remoteErr != "" {
+		return remoteErr
+	}
+	return fmt.Sprintf("http_%d", statusCode)
+}
+
+func isControlPlaneFailClosedResponse(statusCode int, remoteErr string) bool {
+	if statusCode < 400 || statusCode >= 500 {
+		return false
+	}
+	remoteErr = strings.ToLower(strings.TrimSpace(remoteErr))
+	if strings.HasPrefix(remoteErr, "envelope.") {
+		return true
+	}
+	return false
 }
 
 func appendJSONLine(path string, v any) error {
@@ -181,6 +347,10 @@ func rewriteQueuedEvents(path string, items []queuedEvent) error {
 }
 
 func readyForRetry(q queuedEvent, now time.Time) bool {
+	if strings.EqualFold(strings.TrimSpace(q.ErrorClass), syncErrorClassFailClosed) {
+		// fail-closed events must be retried only with explicit force after operator fix.
+		return false
+	}
 	if strings.TrimSpace(q.NextRetryAt) == "" {
 		return true
 	}

@@ -65,7 +65,7 @@ func isQuietStartupCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "setup", "doctor", "help", "-h", "--help", "--help-advanced":
+	case "setup", "doctor", "policy", "help", "-h", "--help", "--help-advanced":
 		return true
 	case "config":
 		return len(args) >= 2 && args[1] == "doctor"

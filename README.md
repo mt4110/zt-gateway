@@ -49,6 +49,8 @@ export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="OLD_FPR_40HEX,NEW_FPR_40HEX"
 ```bash
 go run ./gateway/zt setup
 go run ./gateway/zt setup --json   # サポート/自動化向け
+# trust profile を切り替える場合
+go run ./gateway/zt setup --profile confidential --json
 ```
 
 運用向け: 鍵ローテーション手順は `docs/SECURE_PACK_KEY_ROTATION_RUNBOOK.md` を参照（旧+新 pin 併記期間 / 切替日 / 削除日 / rollback を明文化）。
@@ -57,6 +59,8 @@ go run ./gateway/zt setup --json   # サポート/自動化向け
 
 ```bash
 go run ./gateway/zt send --client <recipient-name> --copy-command ./safe.txt
+# trust profile を切り替える場合
+go run ./gateway/zt send --client <recipient-name> --profile regulated --copy-command ./safe.txt
 ```
 
 注: `zt send` は `--client <recipient-name>` 必須になり、legacy `artifact.zp` 経路は削除されました。
@@ -95,6 +99,7 @@ go run ./gateway/zt --help-advanced
 - secure-pack のローカル smoke 手順: `docs/SECURE_PACK_SMOKETEST.md`
 - `tools.lock` pin mismatch（macOS/Homebrew 差分）運用方針: `docs/SECURE_PACK_LOCAL_EXECUTION_POLICY.md`
 - Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
+- CLI I/O・表示契約（v0.4 固定）: `docs/contracts/CLI_IO_DISPLAY_CONTRACT_v0.4.md`
 
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.3.x)
 
@@ -240,16 +245,21 @@ flowchart LR
 
 - 送受信は `*.spkg.tgz` を標準手順に固定する（legacy `artifact.zp` は廃止）
 - `zt send --client <name>` を標準手順にする（legacy フォールバックを踏まない）
+- trust posture は `--profile public|internal|confidential|regulated` で固定し、業務区分ごとに使い分ける
 - `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` はローカル検証用途に限定
 - `policy/scan_policy.toml` で `required_scanners` / `require_clamav_db=true` を維持（弱める変更はレビュー対象にする）
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
 - `zt setup --json` / `zt config doctor --json` を CI に入れて設定劣化を検知（fixtureゲート: `scripts/ci/check-zt-setup-json-gate.sh`）
+- policy 契約は独立ゲート `scripts/ci/check-policy-contract-gate.sh` を追加し、署名bundle / keyset / activation / decision の回帰を分離検知する
+- v0.5g の配布回帰は `scripts/ci/check-policy-rollout-gate.sh` で実行し、sync loop / keyset window / min version fail-closed / rollback 契約をまとめて検知する
+- 次段の配布運用設計（v0.5g）は `docs/architecture/POLICY_CONTROL_LOOP_V0.5G_DESIGN.md` を正本として管理する
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
 補足:
 
-- `zt setup --json` は supply-chain pin の補助フィールド `resolved.actual_root_fingerprint` / `resolved.pin_source` / `resolved.pin_match_count` を出力します（CI・問い合わせ切り分け向け）
+- `zt setup --json` は補助フィールド `resolved.profile` / `resolved.actual_root_fingerprint` / `resolved.pin_source` / `resolved.pin_match_count` と `compatibility`（原因カテゴリ・環境情報・修復候補）を出力します（CI・問い合わせ切り分け向け）
+- `zt policy status --json` で `active/staged/last_known_good` と `last_sync_at/next_sync_at/sync_error_code` を確認できます（policy loop 一次切り分け向け）
 - `zt send` precheck 失敗時は `ZT_ERROR_CODE=ZT_PRECHECK_SUPPLY_CHAIN_FAILED`、`secure-pack send` は `SECURE_PACK_ERROR_CODE=...` を出力します
 - 運用一次対応の共通参照（CI/Helpdesk/runbook）は `docs/OPERATIONS.md` を正本として使用
 
@@ -371,6 +381,11 @@ colima stop
 - `zt` のイベント送信運用は `--no-auto-sync`（ローカル spool のみ）と `--sync-now`（コマンド終了時に強制同期）を使い分けできます
 - `zt` のイベント自動同期デフォルトは `policy/zt_client.toml` の `auto_sync` で設定できます（優先順位: `CLI --no-auto-sync` > `ENV (ZT_NO_AUTO_SYNC / ZT_EVENT_AUTO_SYNC)` > `zt_client.toml` > built-in）
 - `zt_client.toml` には `control_plane_url` / `api_key` も置けます（優先順位: `ENV (ZT_CONTROL_PLANE_URL / ZT_CONTROL_PLANE_API_KEY)` > `zt_client.toml` > built-in）
+- `ZT_EVENT_SIGNING_KEY_ID` が未設定でも envelope 署名は可能ですが、これは legacy 単一検証鍵モード向けです（Control Plane の event key registry 有効時は `envelope.key_id_required` で拒否されます）
+- `zt sync --json` は `error_class` / `error_code` を固定出力します（`envelope.*` 4xx は `fail_closed`、5xx/通信失敗は `retryable`）
+- Control Plane が `envelope.*` の 4xx を返した場合、`zt sync` / `--sync-now` は fail-closed で失敗し、設定修正後に `zt sync --force` で再送します
+- `.zt-spool/pending.jsonl` には `first_failed_at` / `last_failed_at` / `error_class` が保持され、`fail_closed` は `--force` 以外の自動再試行を抑制します
+- Control Plane ingest は `event_id + payload_sha256` を冪等キーとして扱い、重複時は `duplicate=true` を返します
 - 設定確認は `zt config doctor` で実行できます（設定解決元、spool 書き込み可否、署名鍵ENVの妥当性など）
 - CI 用には `zt config doctor --json` を使うと純JSONで判定結果を取得できます
 - `zt config doctor --json` は `version` と `exit_code` を含むので、CI 側で安定して判定できます

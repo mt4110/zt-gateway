@@ -81,7 +81,29 @@ func replaceGeneratedBlock(src, replacement string) (string, error) {
 	} else {
 		lineEnd = endIdx + lineEnd
 	}
+
+	// Keep output idempotent by replacing any duplicate "enum:" lines immediately
+	// above the generated block as well.
+	lineStart = expandToRepeatedEnumLines(src, lineStart)
 	return src[:lineStart] + replacement + src[lineEnd:], nil
+}
+
+func expandToRepeatedEnumLines(src string, lineStart int) int {
+	for lineStart > 0 {
+		prevEnd := lineStart - 1
+		prevStart := strings.LastIndex(src[:prevEnd], "\n")
+		if prevStart < 0 {
+			prevStart = 0
+		} else {
+			prevStart++
+		}
+		prevLine := strings.TrimSpace(src[prevStart:lineStart])
+		if prevLine != "enum:" {
+			break
+		}
+		lineStart = prevStart
+	}
+	return lineStart
 }
 
 func fatalf(format string, args ...any) {
