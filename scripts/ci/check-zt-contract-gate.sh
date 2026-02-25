@@ -13,4 +13,7 @@ go test ./gateway/zt -count=1 -run 'Audit.*Contract'
 echo "[contract-gate] running zt audit tamper-detection contract tests (v0.5-B)"
 go test ./gateway/zt -count=1 -run 'Audit.*(ChainContract|SignatureContract|VerifyE2EContract|DetectsTamper)'
 
+echo "[contract-gate] running zt audit verify contract tests (v0.5-C)"
+go test ./gateway/zt -count=1 -run 'AuditVerify(CLI_SuccessAndFailureContract|FailClosedContract|KeyRotationContract|LegacyV05AContract)'
+
 echo "[contract-gate] ok"

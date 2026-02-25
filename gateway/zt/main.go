@@ -162,6 +162,11 @@ func main() {
 			os.Exit(1)
 		}
 		runVerify(adapters, opts)
+	case "audit":
+		code := runAuditCommand(repoRoot, os.Args[2:])
+		if code != 0 {
+			os.Exit(code)
+		}
 	case "sync":
 		opts, err := parseSyncArgs(os.Args[2:])
 		if err != nil {

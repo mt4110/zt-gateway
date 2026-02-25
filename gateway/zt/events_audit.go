@@ -42,6 +42,8 @@ type auditRecordSigner struct {
 type auditVerifyOptions struct {
 	RequireSignature bool
 	PublicKey        ed25519.PublicKey
+	PublicKeys       []ed25519.PublicKey
+	AllowLegacyV05A  bool
 }
 
 func (s *eventSpool) auditPath() string { return filepath.Join(s.cfg.SpoolDir, "events.jsonl") }
@@ -179,23 +181,66 @@ func (s *auditRecordSigner) sign(record *auditEventRecord) error {
 }
 
 func loadAuditVerifyPublicKeyFromEnv() (ed25519.PublicKey, error) {
+	keys, err := loadAuditVerifyPublicKeysFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	return keys[0], nil
+}
+
+func loadAuditVerifyPublicKeysFromEnv() ([]ed25519.PublicKey, error) {
+	combined := make([]ed25519.PublicKey, 0, 4)
+
+	listRaw := strings.TrimSpace(os.Getenv("ZT_AUDIT_VERIFY_ED25519_PUBKEYS_B64"))
+	if listRaw != "" {
+		tokens := strings.FieldsFunc(listRaw, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+		})
+		for i, token := range tokens {
+			pub, err := decodeAuditPublicKeyB64(token)
+			if err != nil {
+				return nil, fmt.Errorf("ZT_AUDIT_VERIFY_ED25519_PUBKEYS_B64[%d]: %w", i, err)
+			}
+			combined = append(combined, pub)
+		}
+	}
+
 	pubRaw := strings.TrimSpace(os.Getenv("ZT_AUDIT_SIGNING_ED25519_PUB_B64"))
 	if pubRaw != "" {
-		b, err := base64.StdEncoding.DecodeString(pubRaw)
+		pub, err := decodeAuditPublicKeyB64(pubRaw)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("ZT_AUDIT_SIGNING_ED25519_PUB_B64: %w", err)
 		}
-		if len(b) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("expected %d-byte audit public key, got %d", ed25519.PublicKeySize, len(b))
-		}
-		return ed25519.PublicKey(b), nil
+		combined = append(combined, pub)
 	}
 
 	privRaw := strings.TrimSpace(os.Getenv("ZT_AUDIT_SIGNING_ED25519_PRIV_B64"))
-	if privRaw == "" {
-		return nil, nil
+	if privRaw != "" {
+		privPub, err := deriveAuditPublicKeyFromPrivateB64(privRaw)
+		if err != nil {
+			return nil, fmt.Errorf("ZT_AUDIT_SIGNING_ED25519_PRIV_B64: %w", err)
+		}
+		combined = append(combined, privPub)
 	}
-	b, err := base64.StdEncoding.DecodeString(privRaw)
+	return dedupeAuditPublicKeys(combined), nil
+}
+
+func decodeAuditPublicKeyB64(raw string) (ed25519.PublicKey, error) {
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("expected %d-byte audit public key, got %d", ed25519.PublicKeySize, len(b))
+	}
+	return ed25519.PublicKey(b), nil
+}
+
+func deriveAuditPublicKeyFromPrivateB64(raw string) (ed25519.PublicKey, error) {
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +254,26 @@ func loadAuditVerifyPublicKeyFromEnv() (ed25519.PublicKey, error) {
 	}
 }
 
+func dedupeAuditPublicKeys(in []ed25519.PublicKey) []ed25519.PublicKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ed25519.PublicKey, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, key := range in {
+		if len(key) != ed25519.PublicKeySize {
+			continue
+		}
+		fp := base64.StdEncoding.EncodeToString(key)
+		if _, exists := seen[fp]; exists {
+			continue
+		}
+		seen[fp] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
 func verifyAuditEventsFile(path string, opts auditVerifyOptions) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -216,6 +281,7 @@ func verifyAuditEventsFile(path string, opts auditVerifyOptions) error {
 	}
 	defer f.Close()
 
+	verifyKeys := dedupeAuditPublicKeys(appendAuditPublicKeys(opts.PublicKeys, opts.PublicKey))
 	scanner := bufio.NewScanner(f)
 	expectedPrev := ""
 	lineNo := 0
@@ -228,6 +294,18 @@ func verifyAuditEventsFile(path string, opts auditVerifyOptions) error {
 		var rec auditEventRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			return fmt.Errorf("line %d: invalid audit JSON: %w", lineNo, err)
+		}
+		if isLegacyAuditRecordV05A(rec) {
+			if !opts.AllowLegacyV05A {
+				return fmt.Errorf("line %d: legacy v0.5-A record requires compat mode", lineNo)
+			}
+			if err := validateLegacyAuditRecordV05A(rec, lineNo, opts.RequireSignature); err != nil {
+				return err
+			}
+			// Keep chain continuity for mixed v0.5-A -> v1 logs by deriving the same
+			// fallback hash used by append-time predecessor lookup.
+			expectedPrev = calculateAuditRecordSHA256(rec)
+			continue
 		}
 		if strings.TrimSpace(rec.ChainVersion) == "" {
 			return fmt.Errorf("line %d: chain_version is empty", lineNo)
@@ -242,18 +320,22 @@ func verifyAuditEventsFile(path string, opts auditVerifyOptions) error {
 		if strings.TrimSpace(rec.RecordSHA256) != wantHash {
 			return fmt.Errorf("line %d: record_sha256 mismatch", lineNo)
 		}
-		if opts.RequireSignature || strings.TrimSpace(rec.Signature) != "" {
+		sig := strings.TrimSpace(rec.Signature)
+		if opts.RequireSignature && sig == "" {
+			return fmt.Errorf("line %d: signature is required", lineNo)
+		}
+		if sig != "" {
 			if strings.TrimSpace(rec.SignatureAlg) != "Ed25519" {
 				return fmt.Errorf("line %d: unsupported signature_alg %q", lineNo, rec.SignatureAlg)
 			}
-			if len(opts.PublicKey) != ed25519.PublicKeySize {
+			if len(verifyKeys) == 0 {
 				return fmt.Errorf("line %d: audit verify public key is not configured", lineNo)
 			}
-			sig, err := base64.StdEncoding.DecodeString(rec.Signature)
+			sigBytes, err := base64.StdEncoding.DecodeString(sig)
 			if err != nil {
 				return fmt.Errorf("line %d: invalid signature encoding: %w", lineNo, err)
 			}
-			if !ed25519.Verify(opts.PublicKey, []byte(rec.RecordSHA256), sig) {
+			if !verifyAuditRecordSignatureAnyKey(verifyKeys, rec.RecordSHA256, sigBytes) {
 				return fmt.Errorf("line %d: signature verification failed", lineNo)
 			}
 		}
@@ -266,14 +348,58 @@ func verifyAuditEventsFile(path string, opts auditVerifyOptions) error {
 }
 
 func verifyAuditEventsFileFromEnv(path string) error {
-	pub, err := loadAuditVerifyPublicKeyFromEnv()
+	keys, err := loadAuditVerifyPublicKeysFromEnv()
 	if err != nil {
 		return err
 	}
 	return verifyAuditEventsFile(path, auditVerifyOptions{
 		RequireSignature: envBool("ZT_AUDIT_VERIFY_REQUIRE_SIGNATURE"),
-		PublicKey:        pub,
+		PublicKeys:       keys,
+		AllowLegacyV05A:  envBool("ZT_AUDIT_VERIFY_ALLOW_LEGACY_V05A"),
 	})
+}
+
+func appendAuditPublicKeys(keys []ed25519.PublicKey, key ed25519.PublicKey) []ed25519.PublicKey {
+	if len(key) == 0 {
+		return keys
+	}
+	return append(append([]ed25519.PublicKey(nil), keys...), key)
+}
+
+func verifyAuditRecordSignatureAnyKey(keys []ed25519.PublicKey, recordHash string, sig []byte) bool {
+	for _, key := range keys {
+		if ed25519.Verify(key, []byte(recordHash), sig) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLegacyAuditRecordV05A(rec auditEventRecord) bool {
+	return strings.TrimSpace(rec.ChainVersion) == "" && strings.TrimSpace(rec.RecordSHA256) == ""
+}
+
+func validateLegacyAuditRecordV05A(rec auditEventRecord, lineNo int, requireSignature bool) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "event_id", value: rec.EventID},
+		{name: "event_type", value: rec.EventType},
+		{name: "timestamp", value: rec.Timestamp},
+		{name: "result", value: rec.Result},
+		{name: "endpoint", value: rec.Endpoint},
+		{name: "payload_sha256", value: rec.PayloadSHA256},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("line %d: legacy record %s is empty", lineNo, field.name)
+		}
+	}
+	if requireSignature {
+		return fmt.Errorf("line %d: signature is required", lineNo)
+	}
+	return nil
 }
 
 func parseAuditPayloadFields(payloadJSON []byte) auditPayloadFields {

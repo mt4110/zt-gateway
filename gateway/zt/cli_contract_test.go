@@ -32,6 +32,7 @@ func TestPrintUsage_Contract(t *testing.T) {
 		"  setup                       - Check local config/tools/key env/control-plane reachability",
 		"  send --client <name> <file> - Scan -> sanitize -> pack",
 		"  verify <packet.spkg.tgz>    - Verify received packet",
+		"  audit verify                - Verify local audit log contract",
 		"  doctor                      - Validate local config resolution",
 		"  zt --help-advanced          - Show all commands/flags",
 	}
@@ -50,6 +51,7 @@ func TestPrintAdvancedUsage_Contract(t *testing.T) {
 		"  " + cliSendSignature + " - Scan, sanitize and package a file",
 		"  " + cliScanSignature + " - Risk assessment",
 		"  " + cliVerifySignature + " - Verify artifact or packet",
+		"  " + cliAuditSignature + " - Verify local audit events contract",
 		"  " + cliSyncSignature + " - Retry sending locally spooled events",
 		"  " + cliConfigSignature + " - Validate zt client config/env resolution",
 		"  " + cliDoctorSignature + " - Alias of `zt config doctor`",
@@ -72,6 +74,7 @@ func TestParseArgs_UsageContract(t *testing.T) {
 		{name: "send", err: func() error { _, err := parseSendArgs([]string{"--client", "alice"}); return err }(), want: cliSendUsage},
 		{name: "scan", err: func() error { _, err := parseScanArgs(nil); return err }(), want: cliScanUsage},
 		{name: "verify", err: func() error { _, err := parseVerifyArgs(nil); return err }(), want: cliVerifyUsage},
+		{name: "audit verify", err: func() error { _, err := parseAuditVerifyArgs(t.TempDir(), []string{"extra"}); return err }(), want: cliAuditUsage},
 		{name: "sync", err: func() error { _, err := parseSyncArgs([]string{"unexpected"}); return err }(), want: cliSyncUsage},
 	}
 	for _, tc := range cases {
