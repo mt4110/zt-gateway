@@ -94,9 +94,14 @@ Response:
 Purpose:
 - Distribute latest `extension_policy.toml`
 
+Request query:
+- `profile` (optional)
+- `gateway_id` (required)
+- `channel` (`stable|canary`, optional)
+
 Response:
 - `200 OK`
-- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"...", "min_gateway_version":"...", "duplicate_rule":"manifest_id+profile+sha256" }`
+- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"...", "min_gateway_version":"...", "duplicate_rule":"manifest_id+profile+sha256", "rollout_id":"...", "rollout_channel":"stable|canary", "rollout_rule":"sha256(gateway_id+rollout_id)%100<canary_percent" }`
 - Signing key operation:
   - Default: `ZT_CP_POLICY_SIGNING_MODE=auto`（未設定時）で Ed25519 seed を `control-plane/data/keys/policy_signing_ed25519.seed.b64` に自動生成・永続化
   - Mode override: `ZT_CP_POLICY_SIGNING_MODE=auto|env|file`
@@ -107,9 +112,14 @@ Response:
 Purpose:
 - Distribute latest `scan_policy.toml`
 
+Request query:
+- `profile` (optional)
+- `gateway_id` (required)
+- `channel` (`stable|canary`, optional)
+
 Response:
 - `200 OK`
-- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"...", "min_gateway_version":"...", "duplicate_rule":"manifest_id+profile+sha256" }`
+- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"...", "min_gateway_version":"...", "duplicate_rule":"manifest_id+profile+sha256", "rollout_id":"...", "rollout_channel":"stable|canary", "rollout_rule":"sha256(gateway_id+rollout_id)%100<canary_percent" }`
 
 ### `GET /v1/policies/keyset`
 

@@ -31,6 +31,9 @@ type signedPolicyBundle struct {
 	ContentTOML       string `json:"content_toml"`
 	MinGatewayVersion string `json:"min_gateway_version"`
 	DuplicateRule     string `json:"duplicate_rule"`
+	RolloutID         string `json:"rollout_id,omitempty"`
+	RolloutChannel    string `json:"rollout_channel,omitempty"`
+	RolloutRule       string `json:"rollout_rule,omitempty"`
 }
 
 type policyBundleSigningPayload struct {

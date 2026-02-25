@@ -108,6 +108,21 @@ paths:
     get:
       tags: [Policies]
       summary: Get latest signed extension policy bundle
+      parameters:
+        - name: profile
+          in: query
+          required: false
+          schema: { type: string }
+        - name: gateway_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [stable, canary]
       responses:
         '200':
           description: OK
@@ -126,6 +141,21 @@ paths:
     get:
       tags: [Policies]
       summary: Get latest signed scan policy bundle
+      parameters:
+        - name: profile
+          in: query
+          required: false
+          schema: { type: string }
+        - name: gateway_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [stable, canary]
       responses:
         '200':
           description: OK
@@ -610,6 +640,9 @@ components:
         content_toml: { type: string }
         min_gateway_version: { type: string }
         duplicate_rule: { type: string, example: manifest_id+profile+sha256 }
+        rollout_id: { type: string }
+        rollout_channel: { type: string, enum: [stable, canary] }
+        rollout_rule: { type: string }
       required: [manifest_id, profile, version, sha256, effective_at, expires_at, key_id, signature, content_toml, min_gateway_version, duplicate_rule]
     PolicyKeysetKey:
       type: object

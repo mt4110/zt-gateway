@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,9 @@ type policyBundle struct {
 	ContentTOML       string `json:"content_toml"`
 	MinGatewayVersion string `json:"min_gateway_version"`
 	DuplicateRule     string `json:"duplicate_rule"`
+	RolloutID         string `json:"rollout_id,omitempty"`
+	RolloutChannel    string `json:"rollout_channel,omitempty"`
+	RolloutRule       string `json:"rollout_rule,omitempty"`
 }
 
 type policyBundleSigningPayload struct {
@@ -378,4 +382,48 @@ func minimumGatewayVersion() string {
 		return v
 	}
 	return "v0.5f"
+}
+
+func normalizePolicyRolloutChannel(raw string) (string, error) {
+	channel := strings.ToLower(strings.TrimSpace(raw))
+	if channel == "" {
+		return "stable", nil
+	}
+	switch channel {
+	case "stable", "canary":
+		return channel, nil
+	default:
+		return "", fmt.Errorf("invalid_channel")
+	}
+}
+
+func policyRolloutID(bundle policyBundle) string {
+	if v := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_ROLLOUT_ID")); v != "" {
+		return v
+	}
+	return strings.TrimSpace(bundle.ManifestID)
+}
+
+func policyCanaryPercent() (int, error) {
+	raw := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_ROLLOUT_CANARY_PERCENT"))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 || n > 100 {
+		return 0, fmt.Errorf("invalid_rollout_percent")
+	}
+	return n, nil
+}
+
+func rolloutCanaryEligible(gatewayID, rolloutID string, canaryPercent int) bool {
+	if canaryPercent <= 0 {
+		return false
+	}
+	if canaryPercent >= 100 {
+		return true
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(gatewayID) + ":" + strings.TrimSpace(rolloutID)))
+	bucket := int(binary.BigEndian.Uint64(sum[:8]) % 100)
+	return bucket < canaryPercent
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -36,6 +37,8 @@ func fetchControlPlanePolicyLatest(baseURL, apiKey, kind, profile, ifNoneMatch s
 	}
 	q := u.Query()
 	q.Set("profile", profile)
+	q.Set("gateway_id", resolvePolicyGatewayID())
+	q.Set("channel", resolvePolicyRolloutChannel())
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
@@ -70,4 +73,28 @@ func fetchControlPlanePolicyLatest(baseURL, apiKey, kind, profile, ifNoneMatch s
 		return policyLatestFetchResult{}, fmt.Errorf("policy_latest.invalid_bundle:%v", err)
 	}
 	return policyLatestFetchResult{Bundle: bundle, ETag: strings.TrimSpace(resp.Header.Get("ETag"))}, nil
+}
+
+func resolvePolicyGatewayID() string {
+	if v := strings.TrimSpace(os.Getenv("ZT_GATEWAY_ID")); v != "" {
+		return v
+	}
+	host, err := os.Hostname()
+	if err == nil {
+		host = strings.TrimSpace(strings.ToLower(host))
+		if host != "" {
+			return host
+		}
+	}
+	return "gateway-local"
+}
+
+func resolvePolicyRolloutChannel() string {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("ZT_POLICY_ROLLOUT_CHANNEL")))
+	switch v {
+	case "canary":
+		return "canary"
+	default:
+		return "stable"
+	}
 }

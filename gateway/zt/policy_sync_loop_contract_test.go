@@ -335,3 +335,85 @@ func TestPolicySyncLoopContract_BrokenBundleKeepsActiveAndLKG(t *testing.T) {
 		t.Fatalf("LKG changed on broken bundle: got=%q want=%q", lkgAfter.ManifestID, lkgBefore.ManifestID)
 	}
 }
+
+func TestPolicySyncLoopContract_CanaryNotEligibleKeepsActive(t *testing.T) {
+	t.Setenv("ZT_POLICY_ROLLOUT_CHANNEL", "canary")
+	priv, pub := policyBundleKeyPairContract(241)
+	now := time.Date(2026, 2, 25, 14, 0, 0, 0, time.UTC)
+	good := signPolicyBundleContract(t, signedPolicyBundle{
+		ManifestID:        "pmf_extension_internal_20260225_keep1111keep1111",
+		Profile:           trustProfileInternal,
+		Version:           "2026.02.25-140000z",
+		SHA256:            sha256HexBytes([]byte("scan_only_extensions=[\".txt\"]\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "scan_only_extensions=[\".txt\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
+	}, priv)
+	canary := signPolicyBundleContract(t, signedPolicyBundle{
+		ManifestID:        "pmf_extension_internal_20260225_canary2222canary2",
+		Profile:           trustProfileInternal,
+		Version:           "2026.02.25-141000z",
+		SHA256:            sha256HexBytes([]byte("deny_extensions=[\".txt\"]\n")),
+		EffectiveAt:       now.Add(-30 * time.Minute).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "deny_extensions=[\".txt\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
+		RolloutID:         "rollout-1",
+		RolloutChannel:    "stable",
+		RolloutRule:       "sha256(gateway_id+rollout_id)%100<5",
+	}, priv)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/policies/keyset":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schema_version": "zt-policy-keyset-v1",
+				"generated_at":   now.Format(time.RFC3339),
+				"keys": []any{map[string]any{
+					"key_id":         "policy-key-v1",
+					"alg":            "Ed25519",
+					"public_key_b64": base64.StdEncoding.EncodeToString(pub),
+					"status":         "active",
+				}},
+			})
+		case "/v1/policies/extension/latest":
+			_ = json.NewEncoder(w).Encode(canary)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	store := &policyActivationStore{stateDir: t.TempDir()}
+	if err := writeSignedPolicyBundleAtomic(store.activePath("extension"), good); err != nil {
+		t.Fatalf("seed active: %v", err)
+	}
+	if err := writeSignedPolicyBundleAtomic(store.lastKnownGoodPath("extension"), good); err != nil {
+		t.Fatalf("seed lkg: %v", err)
+	}
+	cfg := policySyncConfig{
+		BaseURL:  srv.URL,
+		Profile:  trustProfileInternal,
+		Kind:     "extension",
+		Store:    store,
+		VerifyAt: now,
+	}
+	got, err := runPolicySyncOnce(cfg)
+	if err != nil {
+		t.Fatalf("runPolicySyncOnce: %v", err)
+	}
+	if got.ErrorCode != "policy_rollout_not_eligible" {
+		t.Fatalf("error_code = %q, want policy_rollout_not_eligible", got.ErrorCode)
+	}
+	activeAfter, err := store.readActive("extension")
+	if err != nil {
+		t.Fatalf("readActive: %v", err)
+	}
+	if activeAfter.ManifestID != good.ManifestID {
+		t.Fatalf("active changed for not-eligible canary: got=%q want=%q", activeAfter.ManifestID, good.ManifestID)
+	}
+}

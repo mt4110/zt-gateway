@@ -102,6 +102,19 @@ func runPolicySyncOnce(cfg policySyncConfig) (policySyncRunResult, error) {
 	if strings.TrimSpace(latest.ETag) != "" {
 		meta.ETagLatest = latest.ETag
 	}
+	if resolvePolicyRolloutChannel() == "canary" && strings.EqualFold(strings.TrimSpace(latest.Bundle.RolloutChannel), "stable") {
+		meta.LastError = "policy_rollout_not_eligible"
+		meta.LastSuccess = now.Format(time.RFC3339)
+		if writeErr := cfg.Store.writeMeta(kind, meta); writeErr != nil {
+			return policySyncRunResult{Kind: kind, ErrorCode: "policy_sync_meta_write_failed"}, writeErr
+		}
+		return policySyncRunResult{
+			Kind:        kind,
+			NotModified: true,
+			ManifestID:  strings.TrimSpace(latest.Bundle.ManifestID),
+			ErrorCode:   "policy_rollout_not_eligible",
+		}, nil
+	}
 	if latest.NotModified {
 		meta.LastError = policySyncErrorCodeNone
 		meta.LastSuccess = now.Format(time.RFC3339)

@@ -28,7 +28,7 @@ func TestPolicyBundleSignatureContract_LatestEndpointReturnsSignedBundle(t *test
 
 	srv := &server{policyDir: policyDir, policySigner: signer}
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/policies/extension/latest?profile=internal", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/policies/extension/latest?profile=internal&gateway_id=gw-a", nil)
 	srv.handlePolicyLatest("extension_policy.toml").ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -67,7 +67,7 @@ func TestPolicyBundleSignatureContract_ProfilePolicyPathSelection(t *testing.T) 
 
 	srv := &server{policyDir: policyDir, policySigner: signer}
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/policies/scan/latest?profile=regulated", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/policies/scan/latest?profile=regulated&gateway_id=gw-a", nil)
 	srv.handlePolicyLatest("scan_policy.toml").ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -100,6 +100,30 @@ func TestPolicyBundleSignatureContract_MissingSignerFailsClosed(t *testing.T) {
 	}
 	if got, _ := resp["error"].(string); got != "policy_signing_not_configured" {
 		t.Fatalf("error = %q, want policy_signing_not_configured", got)
+	}
+}
+
+func TestPolicyBundleSignatureContract_GatewayIDRequired(t *testing.T) {
+	signer := newPolicyBundleSignerContract(29, 24*time.Hour)
+	policyDir := t.TempDir()
+	policyPath := filepath.Join(policyDir, "extension_policy.toml")
+	if err := os.WriteFile(policyPath, []byte("scan_only_extensions=[\".txt\"]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	srv := &server{policyDir: policyDir, policySigner: signer}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/policies/extension/latest?profile=internal", nil)
+	srv.handlePolicyLatest("extension_policy.toml").ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got, _ := resp["error"].(string); got != "gateway_id_required" {
+		t.Fatalf("error = %q, want gateway_id_required", got)
 	}
 }
 

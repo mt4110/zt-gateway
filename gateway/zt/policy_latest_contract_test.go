@@ -166,3 +166,46 @@ func TestPolicyLatestContract_DecodeSignatureB64Sanity(t *testing.T) {
 		t.Fatalf("signature should be base64: %v", err)
 	}
 }
+
+func TestPolicyLatestContract_SendsGatewayIDAndChannelQuery(t *testing.T) {
+	t.Setenv("ZT_GATEWAY_ID", "gw-contract-1")
+	t.Setenv("ZT_POLICY_ROLLOUT_CHANNEL", "canary")
+	priv, _ := policyBundleKeyPairContract(141)
+	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
+	bundle := signPolicyBundleContract(t, signedPolicyBundle{
+		ManifestID:        "pmf_extension_internal_20260225_1313131313131313",
+		Profile:           "internal",
+		Version:           "2026.02.25-120000z",
+		SHA256:            sha256HexBytes([]byte("max_size_mb = 50\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "max_size_mb = 50\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
+		RolloutID:         "rollout-x",
+		RolloutChannel:    "canary",
+		RolloutRule:       "sha256(gateway_id+rollout_id)%100<25",
+	}, priv)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("gateway_id"); got != "gw-contract-1" {
+			t.Fatalf("gateway_id query = %q, want gw-contract-1", got)
+		}
+		if got := r.URL.Query().Get("channel"); got != "canary" {
+			t.Fatalf("channel query = %q, want canary", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"manifest_id":%q,"profile":%q,"version":%q,"sha256":%q,"effective_at":%q,"expires_at":%q,"key_id":%q,"signature":%q,"content_toml":%q,"min_gateway_version":%q,"duplicate_rule":%q,"rollout_id":%q,"rollout_channel":%q,"rollout_rule":%q}`,
+			bundle.ManifestID, bundle.Profile, bundle.Version, bundle.SHA256, bundle.EffectiveAt, bundle.ExpiresAt, bundle.KeyID, bundle.Signature, bundle.ContentTOML, bundle.MinGatewayVersion, bundle.DuplicateRule, bundle.RolloutID, bundle.RolloutChannel, bundle.RolloutRule)
+	}))
+	defer srv.Close()
+
+	got, err := fetchControlPlanePolicyLatest(srv.URL, "", "extension", "internal", "")
+	if err != nil {
+		t.Fatalf("fetchControlPlanePolicyLatest: %v", err)
+	}
+	if got.Bundle.RolloutChannel != "canary" {
+		t.Fatalf("rollout_channel = %q, want canary", got.Bundle.RolloutChannel)
+	}
+}

@@ -121,6 +121,16 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_signing_not_configured"})
 			return
 		}
+		gatewayID := strings.TrimSpace(r.URL.Query().Get("gateway_id"))
+		if gatewayID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "gateway_id_required"})
+			return
+		}
+		channel, err := normalizePolicyRolloutChannel(r.URL.Query().Get("channel"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_channel"})
+			return
+		}
 		profile, err := normalizePolicyProfile(r.URL.Query().Get("profile"))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_profile"})
@@ -164,6 +174,19 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})
 			return
 		}
+		rolloutID := policyRolloutID(bundle)
+		canaryPercent, rolloutErr := policyCanaryPercent()
+		if rolloutErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_rollout_config_invalid"})
+			return
+		}
+		resolvedChannel := "stable"
+		if channel == "canary" && rolloutCanaryEligible(gatewayID, rolloutID, canaryPercent) {
+			resolvedChannel = "canary"
+		}
+		bundle.RolloutID = rolloutID
+		bundle.RolloutChannel = resolvedChannel
+		bundle.RolloutRule = fmt.Sprintf("sha256(gateway_id+rollout_id)%%100<%d", canaryPercent)
 		writeJSON(w, http.StatusOK, bundle)
 	}
 }
