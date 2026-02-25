@@ -44,3 +44,51 @@ func TestRunSetup_TextNextContract(t *testing.T) {
 		t.Fatalf("missing details next line in text output:\n%s", out)
 	}
 }
+
+func TestRunSetup_JSONQuickFixRetryContractByProfile(t *testing.T) {
+	cases := []struct {
+		name      string
+		profile   string
+		wantRetry string
+	}{
+		{
+			name:      "internal",
+			profile:   trustProfileInternal,
+			wantRetry: "zt setup --json",
+		},
+		{
+			name:      "public",
+			profile:   trustProfilePublic,
+			wantRetry: "zt setup --profile public --json",
+		},
+		{
+			name:      "confidential",
+			profile:   trustProfileConfidential,
+			wantRetry: "zt setup --profile confidential --json",
+		},
+		{
+			name:      "regulated",
+			profile:   trustProfileRegulated,
+			wantRetry: "zt setup --profile regulated --json",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			out := captureStdout(t, func() {
+				_ = runSetup(repoRoot, setupOptions{JSON: true, Profile: tc.profile})
+			})
+			var got setupResult
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("json.Unmarshal returned error: %v\n%s", err, out)
+			}
+			if got.QuickFixBundle == nil {
+				t.Fatalf("QuickFixBundle is nil")
+			}
+			if got.QuickFixBundle.Retry != tc.wantRetry {
+				t.Fatalf("QuickFixBundle.Retry = %q, want %q", got.QuickFixBundle.Retry, tc.wantRetry)
+			}
+		})
+	}
+}
