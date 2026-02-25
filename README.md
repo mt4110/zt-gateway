@@ -256,8 +256,14 @@ flowchart LR
 - v0.6.0MAX では `zt sync --json` の `pending_count` / `oldest_pending_age_seconds` / `retryable_count` / `fail_closed_count` を監視し、閾値超過時は backlog runbook を実行する
 - v0.6.0MAX では Control Plane ingest 202 応答の `payload_sha256` を ACK 整合検証し、`ingest_ack_mismatch` を fail-fast で検知する
 - v0.6.0MAX 契約ゲートは `scripts/ci/check-policy-set-gate.sh` / `scripts/ci/check-sync-observability-gate.sh` / `scripts/ci/check-openapi-contract-gate.sh` を追加して分離検知する
+- v0.7.0 では `policy_magic_mismatch` 時に `file_type_guard.reason_code`（例: `expected_pdf`, `expected_text_like`）を JSON 契約で固定し、一次切り分けを機械化する
+- v0.7.0 では `zt policy status --json --kind all` を導入し、`overall_set_consistency` / `overall_freshness_state` / `critical_kinds` を一括判定できるようにする
+- v0.7.0 では `zt sync --json` に `backlog_slo_seconds` / `backlog_breached` / `backlog_breached_since` を追加し、SLO breach 判定を再現可能にする
+- v0.7.0 では `quick_fix_bundle.runbook_anchor` を追加し、`error_code -> runbook anchor` を固定する
 - 次段の配布運用設計（v0.5g）は `docs/architecture/POLICY_CONTROL_LOOP_V0.5G_DESIGN.md` を正本として管理する
 - v0.6.0MAX 設計正本は `docs/architecture/V0.6.0MAX_DESIGN.md`
+- v0.7.0 設計正本は `docs/architecture/V0.7.0_DESIGN.md`
+- v0.7.0 実装チケット分割は `docs/architecture/V0.7.0_IMPLEMENTATION_TICKETS.md`
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
@@ -275,6 +281,14 @@ go run ./gateway/zt setup --json
 go run ./gateway/zt policy status --json --kind extension
 go run ./gateway/zt policy status --json --kind scan
 go run ./gateway/zt sync --json
+```
+
+v0.7.0 最短確認:
+
+```bash
+go run ./gateway/zt policy status --json --kind all
+go run ./gateway/zt sync --json
+go run ./gateway/zt send --client <recipient> --share-json ./safe.txt
 ```
 
 ### 運用・CIの共通参照（短縮版）

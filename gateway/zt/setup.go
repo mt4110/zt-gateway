@@ -296,7 +296,7 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		retryCommand += " --json"
 	}
 	if len(result.QuickFixes) > 0 || !result.OK {
-		result.QuickFixBundle = buildQuickFixBundle(result.Summary, result.QuickFixes, retryCommand)
+		result.QuickFixBundle = buildQuickFixBundleWithCode(result.Summary, result.QuickFixes, retryCommand, result.ErrorCode)
 	}
 
 	if jsonOut {

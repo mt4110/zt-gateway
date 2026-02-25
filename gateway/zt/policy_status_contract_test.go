@@ -171,6 +171,13 @@ func TestPolicyStatus_SetConsistencyContract(t *testing.T) {
 	if got, _ := gotSkew["sync_error_code"].(string); got != "policy_set_skew_detected" {
 		t.Fatalf("sync_error_code(skew) = %q, want policy_set_skew_detected", got)
 	}
+	qfb, ok := gotSkew["quick_fix_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("quick_fix_bundle(skew) missing: %#v", gotSkew["quick_fix_bundle"])
+	}
+	if got, _ := qfb["runbook_anchor"].(string); got != "#policy-set-consistency-reason" {
+		t.Fatalf("runbook_anchor(skew) = %q, want #policy-set-consistency-reason", got)
+	}
 }
 
 func TestPolicyStatus_FreshnessSLOContract(t *testing.T) {
@@ -237,6 +244,98 @@ func TestPolicyStatus_FreshnessSLOContract(t *testing.T) {
 		if gotErr, _ := got["sync_error_code"].(string); gotErr != tc.wantErrCode {
 			t.Fatalf("sync_error_code(%s) = %q, want %q", tc.name, gotErr, tc.wantErrCode)
 		}
+	}
+}
+
+func TestPolicyStatus_AllKindsContract(t *testing.T) {
+	repoRoot := t.TempDir()
+	stateDir := filepath.Join(repoRoot, ".zt-policy-state")
+	t.Setenv("ZT_POLICY_STATE_DIR", stateDir)
+	store := &policyActivationStore{stateDir: stateDir}
+	now := time.Now().UTC()
+
+	writeActive := func(kind, setID string, profile string, freshnessSLO int64) {
+		t.Helper()
+		bundle := signedPolicyBundle{
+			ManifestID:        "pmf_" + kind + "_contract_20260225_abcd1234abcd1234",
+			Profile:           profile,
+			Version:           "2026.02.25-120000z",
+			SHA256:            sha256HexBytes([]byte(kind + "_policy=true\n")),
+			EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+			ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+			KeyID:             "policy-key-v1",
+			Signature:         "sig",
+			ContentTOML:       kind + "_policy=true\n",
+			MinGatewayVersion: "v0.5f",
+			DuplicateRule:     "manifest_id+profile+sha256",
+			PolicySetID:       setID,
+			FreshnessSLOSec:   freshnessSLO,
+		}
+		if err := writeSignedPolicyBundleAtomic(store.activePath(kind), bundle); err != nil {
+			t.Fatalf("write active(%s): %v", kind, err)
+		}
+	}
+
+	writeActive("extension", "set-all", trustProfileInternal, 86400)
+	writeActive("scan", "set-all", trustProfileInternal, 86400)
+	if err := store.writeMeta("extension", policySyncMeta{
+		LastFetchAt: now.Add(-30 * time.Second).Format(time.RFC3339),
+		LastSuccess: now.Add(-30 * time.Second).Format(time.RFC3339),
+		LastError:   policySyncErrorCodeNone,
+	}); err != nil {
+		t.Fatalf("write meta(extension): %v", err)
+	}
+	if err := store.writeMeta("scan", policySyncMeta{
+		LastFetchAt: now.Add(-49 * time.Hour).Format(time.RFC3339),
+		LastSuccess: now.Add(-49 * time.Hour).Format(time.RFC3339),
+		LastError:   policySyncErrorCodeNone,
+	}); err != nil {
+		t.Fatalf("write meta(scan): %v", err)
+	}
+
+	got := readPolicyStatusJSONContract(t, repoRoot, "--json", "--kind", "all")
+	if kind, _ := got["kind"].(string); kind != "all" {
+		t.Fatalf("kind = %q, want all", kind)
+	}
+	if overall, _ := got["overall_set_consistency"].(string); overall != policySetConsistencyConsistent {
+		t.Fatalf("overall_set_consistency = %q, want %q", overall, policySetConsistencyConsistent)
+	}
+	if reason, _ := got["set_consistency_reason"].(string); reason != policySetConsistencyReasonNone {
+		t.Fatalf("set_consistency_reason = %q, want %q", reason, policySetConsistencyReasonNone)
+	}
+	if freshness, _ := got["overall_freshness_state"].(string); freshness != policyFreshnessCritical {
+		t.Fatalf("overall_freshness_state = %q, want %q", freshness, policyFreshnessCritical)
+	}
+	if syncErr, _ := got["sync_error_code"].(string); syncErr != "policy_sync_slo_breached" {
+		t.Fatalf("sync_error_code = %q, want policy_sync_slo_breached", syncErr)
+	}
+	qfb, ok := got["quick_fix_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("quick_fix_bundle missing: %#v", got["quick_fix_bundle"])
+	}
+	if gotAnchor, _ := qfb["runbook_anchor"].(string); gotAnchor != "#policy-sync-slo-breached" {
+		t.Fatalf("runbook_anchor = %q, want #policy-sync-slo-breached", gotAnchor)
+	}
+	extension, ok := got["extension"].(map[string]any)
+	if !ok {
+		t.Fatalf("extension missing or invalid: %#v", got["extension"])
+	}
+	if extensionKind, _ := extension["kind"].(string); extensionKind != "extension" {
+		t.Fatalf("extension.kind = %q, want extension", extensionKind)
+	}
+	scan, ok := got["scan"].(map[string]any)
+	if !ok {
+		t.Fatalf("scan missing or invalid: %#v", got["scan"])
+	}
+	if scanKind, _ := scan["kind"].(string); scanKind != "scan" {
+		t.Fatalf("scan.kind = %q, want scan", scanKind)
+	}
+	criticalKinds, ok := got["critical_kinds"].([]any)
+	if !ok {
+		t.Fatalf("critical_kinds missing or invalid: %#v", got["critical_kinds"])
+	}
+	if len(criticalKinds) != 1 || criticalKinds[0] != "scan" {
+		t.Fatalf("critical_kinds = %#v, want [scan]", criticalKinds)
 	}
 }
 

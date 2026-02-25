@@ -44,6 +44,15 @@ func resolveSendScanStrict(opts sendOptions, envZTScanStrict bool) (bool, string
 	return true, "[Scan] strict mode enabled by default (zt send)"
 }
 
+func buildScanPostureSummary(strictEffective bool, requiredScanners []string, requireClamAVDB bool) *scanPostureSummary {
+	return normalizeScanPostureSummary(&scanPostureSummary{
+		StrictEffective:  strictEffective,
+		RequiredScanners: append([]string(nil), requiredScanners...),
+		RequireClamAVDB:  requireClamAVDB,
+		AllowDegraded:    !strictEffective,
+	})
+}
+
 func runSendSecurePackPrecheck(repoRoot string) (bool, []string) {
 	filesCheck, rootPinCheck, sigCheck, fixes := buildSecurePackSupplyChainSetupChecks(repoRoot)
 	checks := []setupCheck{filesCheck, rootPinCheck, sigCheck}
@@ -118,7 +127,8 @@ func runScan(adapters *toolAdapters, opts scanOptions) {
 					profile = trustProfilePublic
 				}
 				manifestID := buildLocalPolicyManifestID(filepath.Join(adapters.repoRoot, "policy", "scan_policy.toml"), profile)
-				decision := decisionFromScanResult(scanRes, profile, manifestID, stringField(scanMap, "rule_hash"))
+				posture := buildScanPostureSummary(opts.Strict, nil, false)
+				decision := decisionFromScanResultWithPosture(scanRes, profile, manifestID, stringField(scanMap, "rule_hash"), posture)
 				scanMap["policy_decision"] = decision
 				if b, mErr := json.MarshalIndent(scanMap, "", "  "); mErr == nil {
 					out = append(b, '\n')
@@ -250,7 +260,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	if err := enforceFileTypeConsistency(inputPath); err != nil {
-		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_magic_mismatch"))
+		emitPolicyDecisionCLI(decisionForSendPolicyBlockWithCause(profileSelection.Name, manifestID, "policy_magic_mismatch", err))
 		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
 		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
 		if opts.SyncNow {
@@ -274,6 +284,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	fmt.Println("[Step 1/3] Scanning...")
 	scanStrict, strictMsg := resolveSendScanStrict(opts, envBool("ZT_SCAN_STRICT"))
 	fmt.Println(strictMsg)
+	scanPosture := buildScanPostureSummary(scanStrict, scanPol.RequiredScanners, scanPol.RequireClamAVDB)
 	output, scanStderr, err := adapters.modernScanCheckJSON(
 		inputPath,
 		opts.ForcePublic,
@@ -318,12 +329,23 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	if len(output) > 0 {
 		var scanMeta map[string]any
 		_ = json.Unmarshal(output, &scanMeta)
-		scanDecision := decisionFromScanResult(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"))
+		scanDecision := decisionFromScanResultWithPosture(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"), scanPosture)
 		emitPolicyDecisionCLI(scanDecision)
 		emitScanEventFromSecureScanJSON("send", inputPath, output, scanDecision)
+		if scanDecision.ErrorCode == "policy_scan_posture_violation" {
+			printZTErrorCode(ztErrorCodeSendScanDenied)
+			fmt.Printf("\n[BLOCKED] File was rejected by scan posture contract.\nReason: %s\n", scanDecision.ReasonCode)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(ztErrorCodeSendScanDenied)
+			os.Exit(1)
+		}
 	}
 	if res.Reason == "clean.no_scanners_available" {
-		fmt.Println("[WARN] secure-scan returned allow with no scanners available (degraded mode).")
+		if scanPosture != nil && scanPosture.AllowDegraded {
+			fmt.Println("[WARN] secure-scan returned allow with no scanners available (degraded mode).")
+		}
 	}
 
 	if res.Result != "allow" {
@@ -381,7 +403,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		}
 		var scanMeta map[string]any
 		_ = json.Unmarshal(output, &scanMeta)
-		finalDecision := decisionFromScanResult(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"))
+		finalDecision := decisionFromScanResultWithPosture(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"), scanPosture)
 		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"), finalDecision)
 		if opts.SyncNow {
 			runSyncEvents(true)

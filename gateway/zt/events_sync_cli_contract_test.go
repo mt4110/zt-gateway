@@ -180,8 +180,67 @@ func TestSyncCLIJSONContract_BacklogVisibilityContract(t *testing.T) {
 	if got, _ := payload["oldest_pending_age_seconds"].(float64); int(got) <= 0 {
 		t.Fatalf("oldest_pending_age_seconds = %v, want >0", got)
 	}
+	if got, _ := payload["backlog_slo_seconds"].(float64); int64(got) != 10 {
+		t.Fatalf("backlog_slo_seconds = %v, want 10", got)
+	}
+	if got, _ := payload["backlog_breached"].(bool); !got {
+		t.Fatalf("backlog_breached = %v, want true", got)
+	}
 	if got, _ := payload["error_code"].(string); got != syncErrorCodeBacklogSLOBreached {
 		t.Fatalf("error_code = %q, want %q", got, syncErrorCodeBacklogSLOBreached)
+	}
+	qfb, ok := payload["quick_fix_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("quick_fix_bundle missing: %#v", payload["quick_fix_bundle"])
+	}
+	if got, _ := qfb["runbook_anchor"].(string); got != "#sync-backlog-slo-breached-v070" {
+		t.Fatalf("runbook_anchor = %q, want #sync-backlog-slo-breached-v070", got)
+	}
+}
+
+func TestSyncCLIJSONContract_BacklogSLODeterminismContract(t *testing.T) {
+	spool := newEventSpool(t.TempDir())
+	spool.SetAutoSync(false)
+	if err := spool.Enqueue("/v1/events/scan", map[string]any{"event_id": "evt_backlog_slo_determinism"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	pending, err := readQueuedEvents(spool.pendingPath())
+	if err != nil {
+		t.Fatalf("readQueuedEvents: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending len = %d, want 1", len(pending))
+	}
+	oldest := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	pending[0].EnqueuedAt = oldest.Format(time.RFC3339Nano)
+	if err := rewriteQueuedEvents(spool.pendingPath(), pending); err != nil {
+		t.Fatalf("rewriteQueuedEvents: %v", err)
+	}
+
+	prev := cpEvents
+	cpEvents = spool
+	defer func() { cpEvents = prev }()
+
+	t.Setenv("ZT_SYNC_BACKLOG_SLO_SECONDS", "60")
+	var out bytes.Buffer
+	exitCode := runSyncEventsCommand(syncOptions{JSON: true}, []string{"zt", "sync", "--json"}, &out)
+	if exitCode != 0 {
+		t.Fatalf("exit_code = %d, want 0", exitCode)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal stdout: %v (stdout=%s)", err, out.String())
+	}
+	if got, _ := payload["backlog_slo_seconds"].(float64); int64(got) != 60 {
+		t.Fatalf("backlog_slo_seconds = %v, want 60", got)
+	}
+	if got, _ := payload["backlog_breached"].(bool); !got {
+		t.Fatalf("backlog_breached = %v, want true", got)
+	}
+	wantSince := oldest.Add(60 * time.Second).UTC().Format(time.RFC3339)
+	if got, _ := payload["backlog_breached_since"].(string); got != wantSince {
+		t.Fatalf("backlog_breached_since = %q, want %q", got, wantSince)
 	}
 }
 
@@ -218,5 +277,12 @@ func TestSyncCLIJSONContract_AckIntegrityMismatchContract(t *testing.T) {
 	}
 	if got, _ := payload["error_code"].(string); got != syncErrorCodeIngestAckMismatch {
 		t.Fatalf("error_code = %q, want %q", got, syncErrorCodeIngestAckMismatch)
+	}
+	qfb, ok := payload["quick_fix_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("quick_fix_bundle missing: %#v", payload["quick_fix_bundle"])
+	}
+	if got, _ := qfb["runbook_anchor"].(string); got != "#ingest-ack-mismatch-v070" {
+		t.Fatalf("runbook_anchor = %q, want #ingest-ack-mismatch-v070", got)
 	}
 }

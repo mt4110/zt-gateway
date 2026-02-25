@@ -53,6 +53,7 @@ type syncResult struct {
 	Configured              bool
 	PendingCount            int
 	OldestPendingAgeSeconds int64
+	OldestPendingAt         string
 	RetryableCount          int
 	FailClosedCount         int
 	NextRetryAt             string
@@ -112,26 +113,29 @@ func runSyncEvents(force bool) {
 }
 
 type syncCommandJSONResult struct {
-	OK                  bool            `json:"ok"`
-	SchemaVer           int             `json:"schema_version"`
-	GeneratedAt         string          `json:"generated_at"`
-	Command             string          `json:"command"`
-	Argv                []string        `json:"argv"`
-	Force               bool            `json:"force"`
-	Configured          bool            `json:"configured"`
-	Sent                int             `json:"sent"`
-	Remaining           int             `json:"remaining"`
-	Skipped             int             `json:"skipped"`
-	PendingCount        int             `json:"pending_count"`
-	OldestPendingAgeSec int64           `json:"oldest_pending_age_seconds"`
-	RetryableCount      int             `json:"retryable_count"`
-	FailClosedCount     int             `json:"fail_closed_count"`
-	NextRetryAt         string          `json:"next_retry_at,omitempty"`
-	ErrorClass          string          `json:"error_class"`
-	ErrorCode           string          `json:"error_code"`
-	LastError           string          `json:"last_error,omitempty"`
-	QuickFixBundle      *quickFixBundle `json:"quick_fix_bundle,omitempty"`
-	ExitCode            int             `json:"exit_code"`
+	OK                   bool            `json:"ok"`
+	SchemaVer            int             `json:"schema_version"`
+	GeneratedAt          string          `json:"generated_at"`
+	Command              string          `json:"command"`
+	Argv                 []string        `json:"argv"`
+	Force                bool            `json:"force"`
+	Configured           bool            `json:"configured"`
+	Sent                 int             `json:"sent"`
+	Remaining            int             `json:"remaining"`
+	Skipped              int             `json:"skipped"`
+	PendingCount         int             `json:"pending_count"`
+	OldestPendingAgeSec  int64           `json:"oldest_pending_age_seconds"`
+	BacklogSLOSeconds    int64           `json:"backlog_slo_seconds"`
+	BacklogBreached      bool            `json:"backlog_breached"`
+	BacklogBreachedSince string          `json:"backlog_breached_since,omitempty"`
+	RetryableCount       int             `json:"retryable_count"`
+	FailClosedCount      int             `json:"fail_closed_count"`
+	NextRetryAt          string          `json:"next_retry_at,omitempty"`
+	ErrorClass           string          `json:"error_class"`
+	ErrorCode            string          `json:"error_code"`
+	LastError            string          `json:"last_error,omitempty"`
+	QuickFixBundle       *quickFixBundle `json:"quick_fix_bundle,omitempty"`
+	ExitCode             int             `json:"exit_code"`
 }
 
 func runSyncEventsWithOptions(opts syncOptions) {
@@ -146,14 +150,15 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 		out = os.Stdout
 	}
 	result := syncCommandJSONResult{
-		OK:          true,
-		SchemaVer:   1,
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Command:     "zt sync",
-		Argv:        append([]string(nil), argv...),
-		Force:       opts.Force,
-		ErrorClass:  syncErrorClassNone,
-		ErrorCode:   syncErrorCodeNone,
+		OK:                true,
+		SchemaVer:         1,
+		GeneratedAt:       time.Now().UTC().Format(time.RFC3339),
+		Command:           "zt sync",
+		Argv:              append([]string(nil), argv...),
+		Force:             opts.Force,
+		ErrorClass:        syncErrorClassNone,
+		ErrorCode:         syncErrorCodeNone,
+		BacklogSLOSeconds: syncBacklogSLOSeconds(),
 	}
 
 	if cpEvents == nil {
@@ -162,10 +167,10 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 		result.ErrorClass = syncErrorClassInternal
 		result.ErrorCode = syncErrorCodeSyncNotInitialized
 		result.LastError = "event spool is not initialized"
-		result.QuickFixBundle = buildQuickFixBundle("sync failed", []string{
+		result.QuickFixBundle = buildQuickFixBundleWithCode("sync failed", []string{
 			"Re-run command from repository root so event spool can initialize.",
 			"Run `zt setup --json` to validate local spool path and config resolution.",
-		}, "zt sync --force --json")
+		}, "zt sync --force --json", result.ErrorCode)
 		if opts.JSON {
 			emitSyncJSON(out, result)
 		} else {
@@ -187,7 +192,8 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 	result.LastError = res.LastError
 	result.ErrorClass = normalizeSyncErrorClass(res.LastErrorClass)
 	result.ErrorCode = normalizeSyncErrorCode(res.LastErrorCode)
-	if result.ErrorClass == syncErrorClassNone && result.ErrorCode == syncErrorCodeNone && isSyncBacklogSLOBreached(res) {
+	result.BacklogBreached, result.BacklogBreachedSince = computeBacklogSLOStatus(res, result.BacklogSLOSeconds)
+	if result.ErrorClass == syncErrorClassNone && result.ErrorCode == syncErrorCodeNone && result.BacklogBreached {
 		result.ErrorClass = syncErrorClassRetryable
 		result.ErrorCode = syncErrorCodeBacklogSLOBreached
 		result.LastError = "sync backlog SLO breached"
@@ -204,7 +210,7 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 			result.ErrorClass = normalizeSyncErrorClass(info.Class)
 			result.ErrorCode = normalizeSyncErrorCode(info.Code)
 		}
-		result.QuickFixBundle = buildQuickFixBundle("sync failed", syncQuickFixes(result.ErrorCode), "zt sync --force --json")
+		result.QuickFixBundle = buildQuickFixBundleWithCode("sync failed", syncQuickFixes(result.ErrorCode), "zt sync --force --json", result.ErrorCode)
 		if opts.JSON {
 			emitSyncJSON(out, result)
 		} else if isControlPlaneFailClosedSyncError(err) {
@@ -218,7 +224,7 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 
 	if opts.JSON {
 		if result.ErrorCode != syncErrorCodeNone {
-			result.QuickFixBundle = buildQuickFixBundle("sync attention required", syncQuickFixes(result.ErrorCode), "zt sync --force --json")
+			result.QuickFixBundle = buildQuickFixBundleWithCode("sync attention required", syncQuickFixes(result.ErrorCode), "zt sync --force --json", result.ErrorCode)
 		}
 		emitSyncJSON(out, result)
 		return 0
@@ -237,6 +243,17 @@ func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
 func isSyncBacklogSLOBreached(res syncResult) bool {
 	slo := syncBacklogSLOSeconds()
 	return res.PendingCount > 0 && slo > 0 && res.OldestPendingAgeSeconds > slo
+}
+
+func computeBacklogSLOStatus(res syncResult, sloSeconds int64) (bool, string) {
+	if res.PendingCount <= 0 || sloSeconds <= 0 || res.OldestPendingAgeSeconds <= sloSeconds {
+		return false, ""
+	}
+	oldestAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(res.OldestPendingAt))
+	if err != nil {
+		return true, ""
+	}
+	return true, oldestAt.UTC().Add(time.Duration(sloSeconds) * time.Second).Format(time.RFC3339)
 }
 
 func syncBacklogSLOSeconds() int64 {
