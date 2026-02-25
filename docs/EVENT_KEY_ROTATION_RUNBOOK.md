@@ -61,6 +61,23 @@ curl -sS "http://127.0.0.1:8080/v1/admin/event-keys/evk_old/rotation-status?repl
 curl -sS -X DELETE "http://127.0.0.1:8080/v1/admin/event-keys/evk_old?mode=delete&replacement_key_id=evk_2026q1&updated_by=ops&reason=rotation_delete"
 ```
 
+## Gateway 側 cutover 確認（v0.5e）
+
+rotation 中の `zt sync --json` 判定は以下で固定します。
+
+1. 併存期間（旧鍵/新鍵とも許可）:
+   - 旧 `key_id` でも `zt sync --force --json` が `ok=true` で通ること
+2. 切替完了後（旧鍵 disable 後）:
+   - 旧 `key_id` は `error_class=fail_closed`, `error_code=envelope.key_id_not_allowed` になること
+3. 送信側を新 `key_id` に更新後:
+   - `zt sync --force --json` が `ok=true` に戻ること
+
+例:
+
+```bash
+zt sync --force --json | jq '{ok,error_class,error_code,sent,remaining}'
+```
+
 ## 代表的な拒否エラー（契約）
 
 - `replacement_key_id_required`

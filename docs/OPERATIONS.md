@@ -47,18 +47,29 @@
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_HASH_MISMATCH`
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_VERSION_MISMATCH`
 
-## Control Plane event sync（v0.5d-5 契約）
+## Control Plane event sync（v0.5e 運用固定）
 
-- `ZT_EVENT_SIGNING_KEY_ID` 未設定時:
-  - envelope署名自体は実施される（legacy 単一検証鍵モード）
-  - ただし Control Plane の event key registry 有効時は `envelope.key_id_required` で reject される
-- fail-closed 条件（gateway 側固定）:
-  - Control Plane から `envelope.*` の 4xx を受信した場合、`zt sync` / `--sync-now` は失敗（exit non-zero）
-  - 失敗イベントは spool に保持されるため、設定修正後に `zt sync --force` で再送する
-- 代表エラー:
-  - `envelope.required`
-  - `envelope.key_id_required`
-  - `envelope.key_id_not_allowed`
+`zt sync --json` は `error_class` / `error_code` を固定出力します。  
+現場一次対応は下表だけ見れば判断できるようにします。
+
+| `error_class` | 代表 `error_code` | 意味 | 自動再試行 | 一次対応 |
+| --- | --- | --- | --- | --- |
+| `none` | `none` | 同期成功（または pending なし） | n/a | 通常運用 |
+| `retryable` | `http_503`, `transport_failed` | 5xx / 通信失敗 | 継続（指数バックオフ） | 監視継続。必要時のみ `zt sync --force --json` |
+| `fail_closed` | `envelope.required`, `envelope.key_id_required`, `envelope.key_id_not_allowed` | 署名/鍵設定の契約不一致 | 抑制（`--force` 時のみ再送） | 設定修正後に `zt sync --force --json` |
+| `internal` | `internal_failed` | spool I/O などの内部障害 | 停止 | ローカル環境修復（権限/容量/lock） |
+
+補足:
+
+- `ZT_EVENT_SIGNING_KEY_ID` 未設定でも envelope 署名自体は可能ですが、event key registry 有効時は `envelope.key_id_required` で reject されます
+- `pending.jsonl` には `first_failed_at` / `last_failed_at` / `error_class` が保存されます
+- `fail_closed` は busy loop を避けるため、`--force` なしの自動再試行を行いません
+
+標準手順（sync fail-closed 対応）:
+
+1. `zt sync --json` を実行し、`error_class` / `error_code` を確認
+2. `fail_closed` の場合は鍵設定（`ZT_EVENT_SIGNING_KEY_ID` / registry 側許可鍵）を修正
+3. 修正後に `zt sync --force --json` を実行し、`ok=true` を確認
 
 ## `zt setup --json` で見るポイント（supply-chain）
 
