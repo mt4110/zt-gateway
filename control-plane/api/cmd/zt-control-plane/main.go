@@ -131,6 +131,7 @@ func main() {
 	mux.HandleFunc("/v1/events/verify", s.handleEventIngest("verify"))
 	mux.HandleFunc("/v1/policies/extension/latest", s.handlePolicyLatest("extension_policy.toml"))
 	mux.HandleFunc("/v1/policies/scan/latest", s.handlePolicyLatest("scan_policy.toml"))
+	mux.HandleFunc("/v1/policies/keyset", s.handlePolicyKeyset)
 	mux.HandleFunc("/v1/rules/latest", s.handleRulesLatest)
 	mux.HandleFunc("/v1/dashboard/activity", s.handleDashboardActivity)
 	mux.HandleFunc("/v1/dashboard/activity/groups", s.handleDashboardActivityGroups)

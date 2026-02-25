@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -138,17 +140,43 @@ func TestRunSetup_JSONQuickFixCommandsContractByProfile(t *testing.T) {
 	}
 }
 
+func TestRunSetup_JSONControlPlanePolicyKeysetCheckContract(t *testing.T) {
+	repoRoot := setupContractRepoFixture(t)
+	out := captureStdout(t, func() {
+		_ = runSetup(repoRoot, setupOptions{JSON: true, Profile: trustProfileInternal})
+	})
+	var got setupResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v\n%s", err, out)
+	}
+	if !setupCheckExistsWithStatus(got.Checks, "control_plane_policy_keyset", "ok") {
+		t.Fatalf("control_plane_policy_keyset should be ok: %#v", got.Checks)
+	}
+}
+
 const setupContractPinnedFPR = "0123456789ABCDEF0123456789ABCDEF01234567"
 
 func setupContractRepoFixture(t *testing.T) string {
 	t.Helper()
 
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(120 + i)
+	}
+	pubB64 := base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey))
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusOK)
+			return
+		case "/v1/policies/keyset":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"schema_version":"zt-policy-keyset-v1","generated_at":"2026-02-25T00:00:00Z","keys":[{"key_id":"cp-policy-key-v1","alg":"Ed25519","public_key_b64":%q,"status":"active"}]}`, pubB64)))
+			return
+		default:
 			http.NotFound(w, r)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(health.Close)
 
@@ -238,6 +266,15 @@ func hasDuplicateStrings(items []string) bool {
 			return true
 		}
 		seen[item] = struct{}{}
+	}
+	return false
+}
+
+func setupCheckExistsWithStatus(checks []setupCheck, name, status string) bool {
+	for _, c := range checks {
+		if c.Name == name && c.Status == status {
+			return true
+		}
 	}
 	return false
 }

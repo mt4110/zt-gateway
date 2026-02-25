@@ -135,6 +135,7 @@ create table verification_logs (
 - `POST /v1/events/verify`
 - `GET /v1/policies/extension/latest`
 - `GET /v1/policies/scan/latest`
+- `GET /v1/policies/keyset`
 - `GET /v1/rules/latest`
 - `GET /v1/dashboard/activity`
 

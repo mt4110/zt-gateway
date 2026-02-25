@@ -110,6 +110,15 @@ Response:
 - `200 OK`
 - `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"..." }`
 
+### `GET /v1/policies/keyset`
+
+Purpose:
+- Distribute policy bundle signature verification keys for Gateway trust bootstrap
+
+Response:
+- `200 OK`
+- `{ "schema_version":"zt-policy-keyset-v1", "generated_at":"...", "keys":[{"key_id":"...","alg":"Ed25519","public_key_b64":"...","status":"active"}] }`
+
 ## Optional (MVP+) Endpoint
 
 ### `GET /v1/rules/latest`

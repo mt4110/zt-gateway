@@ -236,6 +236,19 @@ func runSetup(repoRoot string, opts setupOptions) error {
 			if !jsonOut {
 				fmt.Printf("[OK]   control plane reachable: %s\n", msg)
 			}
+			keyCount, keysetErr := checkControlPlanePolicyKeyset(cpURL, cpAPIKey)
+			if keysetErr != nil {
+				addCheck("control_plane_policy_keyset", "fail", keysetErr.Error())
+				if !jsonOut {
+					fmt.Printf("[FAIL] control plane policy keyset check failed: %v\n", keysetErr)
+				}
+				quickFixes = append(quickFixes, "Ensure Control Plane serves `GET /v1/policies/keyset` with active Ed25519 keys, then rerun `zt setup`.")
+			} else {
+				addCheck("control_plane_policy_keyset", "ok", fmt.Sprintf("trusted_keys=%d", keyCount))
+				if !jsonOut {
+					fmt.Printf("[OK]   control plane policy keyset loaded (trusted_keys=%d)\n", keyCount)
+				}
+			}
 		}
 	}
 

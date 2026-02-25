@@ -140,6 +140,22 @@ paths:
                 $ref: '#/components/schemas/PolicyResponse'
         '304':
           description: Not Modified
+  /v1/policies/keyset:
+    get:
+      tags: [Policies]
+      summary: Get policy signing public key set
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyKeysetResponse'
+        '304':
+          description: Not Modified
   /v1/dashboard/activity:
     get:
       tags: [Dashboard]
@@ -593,6 +609,24 @@ components:
         signature: { type: string, description: base64-encoded Ed25519 signature }
         content_toml: { type: string }
       required: [manifest_id, profile, version, sha256, effective_at, expires_at, key_id, signature, content_toml]
+    PolicyKeysetKey:
+      type: object
+      properties:
+        key_id: { type: string }
+        alg: { type: string, enum: [Ed25519] }
+        public_key_b64: { type: string }
+        status: { type: string, enum: [active, retired, revoked] }
+      required: [key_id, alg, public_key_b64]
+    PolicyKeysetResponse:
+      type: object
+      properties:
+        schema_version: { type: string, example: zt-policy-keyset-v1 }
+        generated_at: { type: string, format: date-time }
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyKeysetKey'
+      required: [schema_version, keys]
     SignedEnvelope:
       type: object
       properties:

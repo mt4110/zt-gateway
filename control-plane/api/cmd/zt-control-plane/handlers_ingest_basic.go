@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -162,6 +164,38 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, bundle)
 	}
+}
+
+func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
+		return
+	}
+	if s.policySigner == nil || len(s.policySigner.Priv) != ed25519.PrivateKeySize {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_signing_not_configured"})
+		return
+	}
+	pub := s.policySigner.Priv.Public().(ed25519.PublicKey)
+	key := map[string]any{
+		"key_id":         s.policySigner.KeyID,
+		"alg":            "Ed25519",
+		"public_key_b64": base64.StdEncoding.EncodeToString(pub),
+		"status":         "active",
+	}
+	resp := map[string]any{
+		"schema_version": "zt-policy-keyset-v1",
+		"generated_at":   time.Now().UTC().Format(time.RFC3339),
+		"keys":           []any{key},
+	}
+	canonical, _ := json.Marshal(resp)
+	etag := fmt.Sprintf("\"sha256:%s\"", sha256Hex(canonical))
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) handleRulesLatest(w http.ResponseWriter, r *http.Request) {
