@@ -19,4 +19,7 @@ go test ./gateway/zt -count=1 -run 'AuditVerify(CLI_SuccessAndFailureContract|Fa
 echo "[contract-gate] running gateway/control-plane integration contract tests (v0.5d-5)"
 go test ./gateway/zt -count=1 -run 'GatewayEvent(Sync|Signing).*Contract'
 
+echo "[contract-gate] running gateway/control-plane e2e regression contract tests (v0.5e-4)"
+go test ./gateway/zt -count=1 -run 'GatewayControlPlaneE2EContract.*'
+
 echo "[contract-gate] ok"
