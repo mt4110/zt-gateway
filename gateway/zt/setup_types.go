@@ -12,15 +12,18 @@ type setupCheck struct {
 }
 
 type setupResolved struct {
-	AutoSync        bool   `json:"auto_sync"`
-	AutoSyncSource  string `json:"auto_sync_source"`
-	ControlPlaneURL string `json:"control_plane_url"`
-	ControlPlaneSrc string `json:"control_plane_url_source"`
-	APIKeySet       bool   `json:"api_key_set"`
-	APIKeySource    string `json:"api_key_source"`
-	SpoolDir        string `json:"spool_dir"`
-	Profile         string `json:"profile"`
-	ProfileSource   string `json:"profile_source"`
+	AutoSync         bool   `json:"auto_sync"`
+	AutoSyncSource   string `json:"auto_sync_source"`
+	ControlPlaneURL  string `json:"control_plane_url"`
+	ControlPlaneSrc  string `json:"control_plane_url_source"`
+	APIKeySet        bool   `json:"api_key_set"`
+	APIKeySource     string `json:"api_key_source"`
+	SpoolDir         string `json:"spool_dir"`
+	Profile          string `json:"profile"`
+	ProfileSource    string `json:"profile_source"`
+	PolicyLastSyncAt string `json:"policy_last_sync_at,omitempty"`
+	PolicyNextSyncAt string `json:"policy_next_sync_at,omitempty"`
+	PolicySyncError  string `json:"policy_sync_error_code,omitempty"`
 	// Optional supply-chain pin details for machine-readable CI diagnostics.
 	ActualRootFingerprint string `json:"actual_root_fingerprint,omitempty"`
 	PinSource             string `json:"pin_source,omitempty"`

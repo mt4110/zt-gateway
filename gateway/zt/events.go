@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const ztVersion = "v0.1.0-dev"
+const ztVersion = "v0.5g-dev"
 
 var cpEvents *eventSpool
 

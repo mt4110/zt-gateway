@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPolicyKeysetContract_FetchAndDecodeTrustedKeys(t *testing.T) {
@@ -95,6 +96,59 @@ func TestPolicyKeysetContract_HTTPErrorIsReported(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "http_404:not_found") {
 		t.Fatalf("error = %q, want contains http_404:not_found", err.Error())
+	}
+}
+
+func TestPolicyKeysetContract_AcceptsNextKeyWithinValidityWindow(t *testing.T) {
+	pub := policyKeysetPublicKeyContract(71)
+	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
+	ks := policyKeysetResponse{
+		SchemaVersion: "zt-policy-keyset-v1",
+		Keys: []policyKeysetItem{
+			{
+				KeyID:        "cp-policy-key-next",
+				Alg:          "Ed25519",
+				PublicKeyB64: base64.StdEncoding.EncodeToString(pub),
+				Status:       "next",
+				ValidFrom:    now.Add(-1 * time.Hour).Format(time.RFC3339),
+				ValidTo:      now.Add(2 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	}
+	keys, err := decodePolicyKeysetTrustedKeysAt(ks, now)
+	if err != nil {
+		t.Fatalf("decodePolicyKeysetTrustedKeysAt: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("len(keys) = %d, want 1", len(keys))
+	}
+	if string(keys["cp-policy-key-next"]) != string(pub) {
+		t.Fatalf("decoded next key mismatch")
+	}
+}
+
+func TestPolicyKeysetContract_ExpiredActiveKeyIsRejected(t *testing.T) {
+	pub := policyKeysetPublicKeyContract(81)
+	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
+	ks := policyKeysetResponse{
+		SchemaVersion: "zt-policy-keyset-v1",
+		Keys: []policyKeysetItem{
+			{
+				KeyID:        "cp-policy-key-expired",
+				Alg:          "Ed25519",
+				PublicKeyB64: base64.StdEncoding.EncodeToString(pub),
+				Status:       "active",
+				ValidFrom:    now.Add(-3 * time.Hour).Format(time.RFC3339),
+				ValidTo:      now.Add(-1 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	}
+	_, err := decodePolicyKeysetTrustedKeysAt(ks, now)
+	if err == nil {
+		t.Fatalf("decodePolicyKeysetTrustedKeysAt returned nil error, want fail-closed")
+	}
+	if !strings.Contains(err.Error(), "no_active_keys") {
+		t.Fatalf("error = %q, want contains no_active_keys", err.Error())
 	}
 }
 

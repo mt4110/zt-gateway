@@ -82,6 +82,12 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		Profile:         profileSelection.Name,
 		ProfileSource:   profileSelection.Source,
 	}
+	policyHealth, policyHealthErr := inspectPolicyLoopHealth(repoRoot, "extension")
+	if policyHealthErr == nil {
+		result.Resolved.PolicyLastSyncAt = policyHealth.LastSyncAt
+		result.Resolved.PolicyNextSyncAt = policyHealth.NextSyncAt
+		result.Resolved.PolicySyncError = policyHealth.SyncError
+	}
 	if profileErr != nil {
 		addCheck("trust_profile", "fail", profileErr.Error())
 		quickFixes = append(quickFixes,
@@ -249,6 +255,21 @@ func runSetup(repoRoot string, opts setupOptions) error {
 					fmt.Printf("[OK]   control plane policy keyset loaded (trusted_keys=%d)\n", keyCount)
 				}
 			}
+		}
+	}
+	if policyHealthErr != nil {
+		addCheck("policy_loop_health", "fail", policyHealthErr.Error())
+		if !jsonOut {
+			fmt.Printf("[FAIL] policy loop health check failed: %v\n", policyHealthErr)
+		}
+	} else {
+		addCheck("policy_loop_health", policyHealth.Status, policyLoopHealthMessage(policyHealth))
+		if !jsonOut {
+			printSetupCheckLine(setupCheck{
+				Name:    "policy_loop_health",
+				Status:  policyHealth.Status,
+				Message: policyLoopHealthMessage(policyHealth),
+			})
 		}
 	}
 

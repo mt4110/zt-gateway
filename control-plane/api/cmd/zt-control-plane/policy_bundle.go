@@ -20,12 +20,19 @@ const (
 	defaultPolicySigningKeyFileRel   = "keys/policy_signing_ed25519.seed.b64"
 	defaultPolicyKeyIDPrefix         = "cp-policy-ed25519"
 	defaultPolicyKeyIDFingerprintLen = 16
+	policySigningModeAuto            = "auto"
+	policySigningModeEnv             = "env"
+	policySigningModeFile            = "file"
 )
 
 type policyBundleSigner struct {
-	KeyID string
-	Priv  ed25519.PrivateKey
-	TTL   time.Duration
+	KeyID         string
+	Priv          ed25519.PrivateKey
+	TTL           time.Duration
+	KeyStatus     string
+	KeyValidFrom  string
+	KeyValidTo    string
+	KeysetCreated string
 }
 
 type policyBundle struct {
@@ -60,17 +67,65 @@ func loadPolicyBundleSigner(dataDir string) (*policyBundleSigner, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	priv, err := loadPolicyBundlePrivateKeyWithFallback(dataDir)
+	mode, err := resolvePolicySigningMode()
+	if err != nil {
+		return nil, err
+	}
+	priv, err := loadPolicyBundlePrivateKeyByMode(dataDir, mode)
 	if err != nil {
 		return nil, err
 	}
 	keyID := resolvePolicySigningKeyID(priv.Public().(ed25519.PublicKey))
+	status := strings.ToLower(strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_KEY_STATUS")))
+	if status == "" {
+		status = "active"
+	}
+	switch status {
+	case "active", "next", "retiring":
+	default:
+		return nil, fmt.Errorf("policy_signing_key_status_invalid:%q", status)
+	}
+	createdAt := time.Now().UTC()
+	validFrom := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_VALID_FROM"))
+	if validFrom == "" {
+		validFrom = createdAt.Format(time.RFC3339)
+	}
+	if validFrom != "" {
+		if _, err := time.Parse(time.RFC3339, validFrom); err != nil {
+			return nil, fmt.Errorf("policy_signing_valid_from_invalid:%w", err)
+		}
+	}
+	validTo := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_VALID_TO"))
+	if validTo == "" {
+		validTo = createdAt.Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	}
+	if validTo != "" {
+		if _, err := time.Parse(time.RFC3339, validTo); err != nil {
+			return nil, fmt.Errorf("policy_signing_valid_to_invalid:%w", err)
+		}
+	}
 	return &policyBundleSigner{
-		KeyID: keyID,
-		Priv:  priv,
-		TTL:   ttl,
+		KeyID:         keyID,
+		Priv:          priv,
+		TTL:           ttl,
+		KeyStatus:     status,
+		KeyValidFrom:  validFrom,
+		KeyValidTo:    validTo,
+		KeysetCreated: createdAt.Format(time.RFC3339),
 	}, nil
+}
+
+func resolvePolicySigningMode() (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_MODE")))
+	if mode == "" {
+		return policySigningModeAuto, nil
+	}
+	switch mode {
+	case policySigningModeAuto, policySigningModeEnv, policySigningModeFile:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("policy_signing_mode_invalid:%q", mode)
+	}
 }
 
 func loadPolicyBundleTTL() (time.Duration, error) {
@@ -85,15 +140,64 @@ func loadPolicyBundleTTL() (time.Duration, error) {
 	return ttl, nil
 }
 
+func loadPolicyBundlePrivateKeyByMode(dataDir, mode string) (ed25519.PrivateKey, error) {
+	switch mode {
+	case policySigningModeEnv:
+		return loadPolicyBundlePrivateKeyFromEnv()
+	case policySigningModeFile:
+		return loadPolicyBundlePrivateKeyFromFile(dataDir, false)
+	default:
+		return loadPolicyBundlePrivateKeyWithFallback(dataDir)
+	}
+}
+
 func loadPolicyBundlePrivateKeyWithFallback(dataDir string) (ed25519.PrivateKey, error) {
 	if rawPriv := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64")); rawPriv != "" {
-		return decodePolicyPrivateKeyB64(rawPriv)
+		priv, err := decodePolicyPrivateKeyB64(rawPriv)
+		if err != nil {
+			return nil, fmt.Errorf("policy_signing_env_invalid:%w", err)
+		}
+		return priv, nil
 	}
+	return loadPolicyBundlePrivateKeyFromFile(dataDir, true)
+}
+
+func loadPolicyBundlePrivateKeyFromEnv() (ed25519.PrivateKey, error) {
+	rawPriv := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64"))
+	if rawPriv == "" {
+		return nil, fmt.Errorf("policy_signing_env_required")
+	}
+	priv, err := decodePolicyPrivateKeyB64(rawPriv)
+	if err != nil {
+		return nil, fmt.Errorf("policy_signing_env_invalid:%w", err)
+	}
+	return priv, nil
+}
+
+func loadPolicyBundlePrivateKeyFromFile(dataDir string, autoCreate bool) (ed25519.PrivateKey, error) {
 	keyPath, err := resolvePolicySigningKeyFilePath(dataDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("policy_signing_file_path_invalid:%w", err)
 	}
-	return loadOrCreatePolicyPrivateKeyFile(keyPath)
+	if autoCreate {
+		priv, loadErr := loadOrCreatePolicyPrivateKeyFile(keyPath)
+		if loadErr != nil {
+			return nil, fmt.Errorf("policy_signing_file_load_failed:%w", loadErr)
+		}
+		return priv, nil
+	}
+	raw, err := os.ReadFile(keyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("policy_signing_file_missing:%s", keyPath)
+		}
+		return nil, fmt.Errorf("policy_signing_file_load_failed:%w", err)
+	}
+	priv, err := decodePolicyPrivateKeyB64(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return nil, fmt.Errorf("policy_signing_file_invalid:%w", err)
+	}
+	return priv, nil
 }
 
 func resolvePolicySigningKeyFilePath(dataDir string) (string, error) {

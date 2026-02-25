@@ -21,6 +21,8 @@ type policyKeysetContractRecord struct {
 	Alg          string `json:"alg"`
 	PublicKeyB64 string `json:"public_key_b64"`
 	Status       string `json:"status"`
+	ValidFrom    string `json:"valid_from"`
+	ValidTo      string `json:"valid_to"`
 }
 
 func TestPolicyKeysetContract_ReturnsActiveEd25519Key(t *testing.T) {
@@ -56,6 +58,12 @@ func TestPolicyKeysetContract_ReturnsActiveEd25519Key(t *testing.T) {
 	}
 	if k.Status != "active" {
 		t.Fatalf("status = %q, want active", k.Status)
+	}
+	if k.ValidFrom == "" {
+		t.Fatalf("valid_from is empty")
+	}
+	if k.ValidTo == "" {
+		t.Fatalf("valid_to is empty")
 	}
 	pubDecoded, err := base64.StdEncoding.DecodeString(k.PublicKeyB64)
 	if err != nil {

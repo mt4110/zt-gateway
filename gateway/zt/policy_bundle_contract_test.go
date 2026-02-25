@@ -158,6 +158,50 @@ func TestPolicyBundleStalenessContract_PublicAfterGraceFailsClosed(t *testing.T)
 	assertPolicyBundleErrorCodeContract(t, err, policyErrorCodeStale)
 }
 
+func TestPolicyBundleVersionContract_MinGatewayVersionUnsupportedFailsClosed(t *testing.T) {
+	t.Setenv("ZT_GATEWAY_VERSION_OVERRIDE", "v0.5f")
+	priv, pub := policyBundleKeyPairContract(65)
+	now := time.Date(2026, 2, 27, 13, 0, 0, 0, time.UTC)
+	bundle := signPolicyBundleContract(t, signedPolicyBundle{
+		ManifestID:        "pmf_extension_internal_20260227_f0f0f0f0f0f0f0f0",
+		Profile:           trustProfileInternal,
+		Version:           "2026.02.27-130000z",
+		ContentTOML:       "scan_only_extensions=[\".txt\"]\n",
+		SHA256:            sha256HexBytes([]byte("scan_only_extensions=[\".txt\"]\n")),
+		EffectiveAt:       now.Add(-2 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		MinGatewayVersion: "v0.5g",
+		DuplicateRule:     "manifest_id+profile+sha256",
+	}, priv)
+	err := verifySignedPolicyBundle(bundle, now, map[string]ed25519.PublicKey{"policy-key-v1": pub})
+	if err == nil {
+		t.Fatalf("verifySignedPolicyBundle returned nil, want policy_gateway_version_unsupported")
+	}
+	assertPolicyBundleErrorCodeContract(t, err, policyErrorCodeGatewayVersionUnsupported)
+}
+
+func TestPolicyBundleVersionContract_MinGatewayVersionSupportedPasses(t *testing.T) {
+	t.Setenv("ZT_GATEWAY_VERSION_OVERRIDE", "v0.5g")
+	priv, pub := policyBundleKeyPairContract(66)
+	now := time.Date(2026, 2, 27, 14, 0, 0, 0, time.UTC)
+	bundle := signPolicyBundleContract(t, signedPolicyBundle{
+		ManifestID:        "pmf_extension_internal_20260227_f1f1f1f1f1f1f1f1",
+		Profile:           trustProfileInternal,
+		Version:           "2026.02.27-140000z",
+		ContentTOML:       "scan_only_extensions=[\".txt\"]\n",
+		SHA256:            sha256HexBytes([]byte("scan_only_extensions=[\".txt\"]\n")),
+		EffectiveAt:       now.Add(-2 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
+	}, priv)
+	if err := verifySignedPolicyBundle(bundle, now, map[string]ed25519.PublicKey{"policy-key-v1": pub}); err != nil {
+		t.Fatalf("verifySignedPolicyBundle returned error: %v", err)
+	}
+}
+
 func policyBundleKeyPairContract(seedStart byte) (ed25519.PrivateKey, ed25519.PublicKey) {
 	seed := make([]byte, ed25519.SeedSize)
 	for i := range seed {

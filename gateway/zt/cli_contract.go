@@ -9,17 +9,20 @@ const (
 	cliVerifySignature = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>"
 	cliAuditSignature  = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
 	cliSyncSignature   = "sync [--force] [--json]"
+	cliPolicySignature = "policy status [--json] [--kind extension|scan]"
 	cliConfigSignature = "config doctor [--json]"
 	cliDoctorSignature = "doctor [--json]"
 	cliHelpSignature   = "help [advanced]"
 
-	cliSetupUsage  = "Usage: zt " + cliSetupSignature
-	cliSendUsage   = "Usage: zt " + cliSendSignature
-	cliScanUsage   = "Usage: zt " + cliScanSignature
-	cliVerifyUsage = "Usage: zt " + cliVerifySignature
-	cliAuditUsage  = "Usage: zt " + cliAuditSignature
-	cliSyncUsage   = "Usage: zt " + cliSyncSignature
-	cliConfigUsage = "Usage: zt " + cliConfigSignature
+	cliSetupUsage        = "Usage: zt " + cliSetupSignature
+	cliSendUsage         = "Usage: zt " + cliSendSignature
+	cliScanUsage         = "Usage: zt " + cliScanSignature
+	cliVerifyUsage       = "Usage: zt " + cliVerifySignature
+	cliAuditUsage        = "Usage: zt " + cliAuditSignature
+	cliSyncUsage         = "Usage: zt " + cliSyncSignature
+	cliPolicyUsage       = "Usage: zt " + cliPolicySignature
+	cliPolicyStatusUsage = "Usage: zt " + cliPolicySignature
+	cliConfigUsage       = "Usage: zt " + cliConfigSignature
 
 	setupNextSender   = "Sender: zt send --client <name> <file>"
 	setupNextReceiver = "Receiver: zt verify <packet.spkg.tgz>"

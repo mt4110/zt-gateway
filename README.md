@@ -251,6 +251,7 @@ flowchart LR
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
 - `zt setup --json` / `zt config doctor --json` を CI に入れて設定劣化を検知（fixtureゲート: `scripts/ci/check-zt-setup-json-gate.sh`）
 - policy 契約は独立ゲート `scripts/ci/check-policy-contract-gate.sh` を追加し、署名bundle / keyset / activation / decision の回帰を分離検知する
+- v0.5g の配布回帰は `scripts/ci/check-policy-rollout-gate.sh` で実行し、sync loop / keyset window / min version fail-closed / rollback 契約をまとめて検知する
 - 次段の配布運用設計（v0.5g）は `docs/architecture/POLICY_CONTROL_LOOP_V0.5G_DESIGN.md` を正本として管理する
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
@@ -258,6 +259,7 @@ flowchart LR
 補足:
 
 - `zt setup --json` は補助フィールド `resolved.profile` / `resolved.actual_root_fingerprint` / `resolved.pin_source` / `resolved.pin_match_count` と `compatibility`（原因カテゴリ・環境情報・修復候補）を出力します（CI・問い合わせ切り分け向け）
+- `zt policy status --json` で `active/staged/last_known_good` と `last_sync_at/next_sync_at/sync_error_code` を確認できます（policy loop 一次切り分け向け）
 - `zt send` precheck 失敗時は `ZT_ERROR_CODE=ZT_PRECHECK_SUPPLY_CHAIN_FAILED`、`secure-pack send` は `SECURE_PACK_ERROR_CODE=...` を出力します
 - 運用一次対応の共通参照（CI/Helpdesk/runbook）は `docs/OPERATIONS.md` を正本として使用
 

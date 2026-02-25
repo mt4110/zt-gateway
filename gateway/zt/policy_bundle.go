@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	policyErrorCodeVerifyFailed  = "policy_verify_failed"
-	policyErrorCodeStale         = "policy_stale"
-	defaultPolicyStaleGraceHours = 24
+	policyErrorCodeVerifyFailed              = "policy_verify_failed"
+	policyErrorCodeStale                     = "policy_stale"
+	policyErrorCodeGatewayVersionUnsupported = "policy_gateway_version_unsupported"
+	defaultPolicyStaleGraceHours             = 24
 )
 
 type signedPolicyBundle struct {
@@ -86,6 +87,12 @@ func verifySignedPolicyBundle(bundle signedPolicyBundle, verifyAt time.Time, tru
 	if err := validateSignedPolicyBundleFields(bundle); err != nil {
 		return &policyBundleVerifyError{ErrorCode: policyErrorCodeVerifyFailed, Reason: err.Error()}
 	}
+	if !gatewayVersionAtLeast(currentGatewayVersion(), bundle.MinGatewayVersion) {
+		return &policyBundleVerifyError{
+			ErrorCode: policyErrorCodeGatewayVersionUnsupported,
+			Reason:    policyErrorCodeGatewayVersionUnsupported,
+		}
+	}
 	effectiveAt, err := time.Parse(time.RFC3339, strings.TrimSpace(bundle.EffectiveAt))
 	if err != nil {
 		return &policyBundleVerifyError{ErrorCode: policyErrorCodeVerifyFailed, Reason: "effective_at_invalid"}
@@ -122,6 +129,13 @@ func verifySignedPolicyBundle(bundle signedPolicyBundle, verifyAt time.Time, tru
 		return &policyBundleVerifyError{ErrorCode: policyErrorCodeVerifyFailed, Reason: "policy_signature_invalid"}
 	}
 	return nil
+}
+
+func currentGatewayVersion() string {
+	if v := strings.TrimSpace(os.Getenv("ZT_GATEWAY_VERSION_OVERRIDE")); v != "" {
+		return v
+	}
+	return ztVersion
 }
 
 func evaluatePolicyStaleness(profile string, expiresAt, now time.Time) (bool, error) {

@@ -178,24 +178,46 @@ func (s *server) handlePolicyKeyset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pub := s.policySigner.Priv.Public().(ed25519.PublicKey)
+	status := strings.TrimSpace(s.policySigner.KeyStatus)
+	if status == "" {
+		status = "active"
+	}
 	key := map[string]any{
 		"key_id":         s.policySigner.KeyID,
 		"alg":            "Ed25519",
 		"public_key_b64": base64.StdEncoding.EncodeToString(pub),
-		"status":         "active",
+		"status":         status,
 	}
-	resp := map[string]any{
+	validFrom := strings.TrimSpace(s.policySigner.KeyValidFrom)
+	validTo := strings.TrimSpace(s.policySigner.KeyValidTo)
+	if validFrom == "" {
+		validFrom = time.Now().UTC().Format(time.RFC3339)
+	}
+	if validTo == "" {
+		validTo = time.Now().UTC().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	}
+	key["valid_from"] = validFrom
+	key["valid_to"] = validTo
+	etagBody := map[string]any{
 		"schema_version": "zt-policy-keyset-v1",
-		"generated_at":   time.Now().UTC().Format(time.RFC3339),
 		"keys":           []any{key},
 	}
-	canonical, _ := json.Marshal(resp)
+	canonical, _ := json.Marshal(etagBody)
 	etag := fmt.Sprintf("\"sha256:%s\"", sha256Hex(canonical))
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
+	}
+	generatedAt := strings.TrimSpace(s.policySigner.KeysetCreated)
+	if generatedAt == "" {
+		generatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	resp := map[string]any{
+		"schema_version": "zt-policy-keyset-v1",
+		"generated_at":   generatedAt,
+		"keys":           []any{key},
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -195,6 +195,108 @@ func TestPolicyBundleSignatureContract_LoadSignerEnvOverride(t *testing.T) {
 	}
 }
 
+func TestPolicyBundleSignatureContract_LoadSignerModeEnvRequiresEnvKey(t *testing.T) {
+	t.Setenv("ZT_CP_POLICY_SIGNING_MODE", policySigningModeEnv)
+	t.Setenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64", "")
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_FILE", "")
+
+	_, err := loadPolicyBundleSigner(t.TempDir())
+	if err == nil {
+		t.Fatalf("loadPolicyBundleSigner returned nil error, want fail-fast")
+	}
+	if !strings.Contains(err.Error(), "policy_signing_env_required") {
+		t.Fatalf("error = %q, want contains policy_signing_env_required", err.Error())
+	}
+}
+
+func TestPolicyBundleSignatureContract_LoadSignerModeFilePrefersFileOverEnv(t *testing.T) {
+	envSeed := makePolicyBundleSeedContract(130)
+	fileSeed := makePolicyBundleSeedContract(150)
+
+	dataDir := t.TempDir()
+	keyPath := filepath.Join(dataDir, "keys", "ops.seed.b64")
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(fileSeed)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(keyPath): %v", err)
+	}
+
+	t.Setenv("ZT_CP_POLICY_SIGNING_MODE", policySigningModeFile)
+	t.Setenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64", base64.StdEncoding.EncodeToString(envSeed))
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_FILE", "keys/ops.seed.b64")
+
+	signer, err := loadPolicyBundleSigner(dataDir)
+	if err != nil {
+		t.Fatalf("loadPolicyBundleSigner: %v", err)
+	}
+	wantFromFile := ed25519.NewKeyFromSeed(fileSeed)
+	if string(signer.Priv) != string(wantFromFile) {
+		t.Fatalf("mode=file should load key from file, env key must not override")
+	}
+}
+
+func TestPolicyBundleSignatureContract_LoadSignerModeEnvPrefersEnvOverFile(t *testing.T) {
+	envSeed := makePolicyBundleSeedContract(160)
+	fileSeed := makePolicyBundleSeedContract(170)
+
+	dataDir := t.TempDir()
+	keyPath := filepath.Join(dataDir, "keys", "ops.seed.b64")
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(fileSeed)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(keyPath): %v", err)
+	}
+
+	t.Setenv("ZT_CP_POLICY_SIGNING_MODE", policySigningModeEnv)
+	t.Setenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64", base64.StdEncoding.EncodeToString(envSeed))
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_FILE", "keys/ops.seed.b64")
+
+	signer, err := loadPolicyBundleSigner(dataDir)
+	if err != nil {
+		t.Fatalf("loadPolicyBundleSigner: %v", err)
+	}
+	wantFromEnv := ed25519.NewKeyFromSeed(envSeed)
+	if string(signer.Priv) != string(wantFromEnv) {
+		t.Fatalf("mode=env should load key from env, file key must not override")
+	}
+}
+
+func TestPolicyBundleSignatureContract_LoadSignerModeFileMissingFailsFast(t *testing.T) {
+	t.Setenv("ZT_CP_POLICY_SIGNING_MODE", policySigningModeFile)
+	t.Setenv("ZT_CP_POLICY_SIGNING_KEY_FILE", "keys/missing.seed.b64")
+	t.Setenv("ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64", base64.StdEncoding.EncodeToString(makePolicyBundleSeedContract(180)))
+
+	_, err := loadPolicyBundleSigner(t.TempDir())
+	if err == nil {
+		t.Fatalf("loadPolicyBundleSigner returned nil error, want fail-fast")
+	}
+	if !strings.Contains(err.Error(), "policy_signing_file_missing") {
+		t.Fatalf("error = %q, want contains policy_signing_file_missing", err.Error())
+	}
+}
+
+func TestPolicyBundleSignatureContract_LoadSignerInvalidModeFailsFast(t *testing.T) {
+	t.Setenv("ZT_CP_POLICY_SIGNING_MODE", "invalid-mode")
+
+	_, err := loadPolicyBundleSigner(t.TempDir())
+	if err == nil {
+		t.Fatalf("loadPolicyBundleSigner returned nil error, want fail-fast")
+	}
+	if !strings.Contains(err.Error(), "policy_signing_mode_invalid") {
+		t.Fatalf("error = %q, want contains policy_signing_mode_invalid", err.Error())
+	}
+}
+
+func makePolicyBundleSeedContract(seedStart byte) []byte {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = seedStart + byte(i)
+	}
+	return seed
+}
+
 func newPolicyBundleSignerContract(seedStart byte, ttl time.Duration) *policyBundleSigner {
 	seed := make([]byte, ed25519.SeedSize)
 	for i := range seed {

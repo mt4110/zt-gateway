@@ -99,6 +99,11 @@ func runScan(adapters *toolAdapters, opts scanOptions) {
 			os.Exit(1)
 		}
 	}
+	scanProfile := trustProfileInternal
+	if opts.ForcePublic {
+		scanProfile = trustProfilePublic
+	}
+	tryPolicySync(adapters.repoRoot, "scan", scanProfile)
 
 	// File scan defaults to legacy JSON adapter (machine-readable) to preserve zt flow.
 	if !opts.TUI && !info.IsDir() {
@@ -181,6 +186,8 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	fmt.Printf("[Profile] %s source=%s\n", profileSelection.Name, profileSelection.Source)
+	tryPolicySync(adapters.repoRoot, "extension", profileSelection.Name)
+	tryPolicySync(adapters.repoRoot, "scan", profileSelection.Name)
 	manifestID := buildLocalPolicyManifestID(profileSelection.ExtensionPolicyPath, profileSelection.Name)
 
 	policyFile := profileSelection.ExtensionPolicyPath

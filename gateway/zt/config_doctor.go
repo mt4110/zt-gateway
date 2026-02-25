@@ -18,13 +18,16 @@ type doctorCheck struct {
 }
 
 type doctorResolved struct {
-	AutoSync        bool   `json:"auto_sync"`
-	AutoSyncSource  string `json:"auto_sync_source"`
-	ControlPlaneURL string `json:"control_plane_url"`
-	ControlPlaneSrc string `json:"control_plane_url_source"`
-	APIKeySet       bool   `json:"api_key_set"`
-	APIKeySource    string `json:"api_key_source"`
-	SpoolDir        string `json:"spool_dir"`
+	AutoSync         bool   `json:"auto_sync"`
+	AutoSyncSource   string `json:"auto_sync_source"`
+	ControlPlaneURL  string `json:"control_plane_url"`
+	ControlPlaneSrc  string `json:"control_plane_url_source"`
+	APIKeySet        bool   `json:"api_key_set"`
+	APIKeySource     string `json:"api_key_source"`
+	SpoolDir         string `json:"spool_dir"`
+	PolicyLastSyncAt string `json:"policy_last_sync_at,omitempty"`
+	PolicyNextSyncAt string `json:"policy_next_sync_at,omitempty"`
+	PolicySyncError  string `json:"policy_sync_error_code,omitempty"`
 }
 
 type doctorResult struct {
@@ -118,6 +121,12 @@ func runConfigDoctor(repoRoot string, args []string) error {
 		APIKeySet:       cpAPIKey != "",
 		APIKeySource:    cpAPIKeySource,
 		SpoolDir:        spoolDir,
+	}
+	policyHealth, policyHealthErr := inspectPolicyLoopHealth(repoRoot, "extension")
+	if policyHealthErr == nil {
+		result.Resolved.PolicyLastSyncAt = policyHealth.LastSyncAt
+		result.Resolved.PolicyNextSyncAt = policyHealth.NextSyncAt
+		result.Resolved.PolicySyncError = policyHealth.SyncError
 	}
 
 	result.Checks = append(result.Checks, doctorCheck{
@@ -220,6 +229,26 @@ func runConfigDoctor(repoRoot string, args []string) error {
 			Name:    "event_signing_key_env",
 			Status:  "ok",
 			Message: "loaded key_id=" + keyID,
+		})
+	}
+	if policyHealthErr != nil {
+		result.Failures++
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    "policy_loop_health",
+			Status:  "fail",
+			Message: policyHealthErr.Error(),
+		})
+	} else {
+		switch policyHealth.Status {
+		case "fail":
+			result.Failures++
+		case "warn":
+			result.Warnings++
+		}
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    "policy_loop_health",
+			Status:  policyHealth.Status,
+			Message: policyLoopHealthMessage(policyHealth),
 		})
 	}
 

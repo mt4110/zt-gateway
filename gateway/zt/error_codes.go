@@ -31,6 +31,8 @@ const (
 	ztErrorCodeSendSanitizeFail    = "ZT_SEND_SANITIZE_FAILED"
 	ztErrorCodeSendPackFail        = "ZT_SEND_PACK_FAILED"
 	ztErrorCodeSendClientRequired  = "ZT_SEND_CLIENT_REQUIRED"
+	ztErrorCodePolicyUsage         = "ZT_POLICY_USAGE"
+	ztErrorCodePolicyStatusFailed  = "ZT_POLICY_STATUS_FAILED"
 )
 
 func printZTErrorCode(code string) {

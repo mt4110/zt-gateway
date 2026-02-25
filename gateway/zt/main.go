@@ -175,6 +175,11 @@ func main() {
 			os.Exit(1)
 		}
 		runSyncEventsWithOptions(opts)
+	case "policy":
+		if err := runPolicyCommand(repoRoot, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "config":
 		if err := runConfigCommand(repoRoot, os.Args[2:]); err != nil {
 			if !isConfigDoctorJSONMode(os.Args[1:]) {
