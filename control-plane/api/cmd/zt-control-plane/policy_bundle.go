@@ -29,26 +29,30 @@ type policyBundleSigner struct {
 }
 
 type policyBundle struct {
-	ManifestID  string `json:"manifest_id"`
-	Profile     string `json:"profile"`
-	Version     string `json:"version"`
-	SHA256      string `json:"sha256"`
-	EffectiveAt string `json:"effective_at"`
-	ExpiresAt   string `json:"expires_at"`
-	KeyID       string `json:"key_id"`
-	Signature   string `json:"signature"`
-	ContentTOML string `json:"content_toml"`
+	ManifestID        string `json:"manifest_id"`
+	Profile           string `json:"profile"`
+	Version           string `json:"version"`
+	SHA256            string `json:"sha256"`
+	EffectiveAt       string `json:"effective_at"`
+	ExpiresAt         string `json:"expires_at"`
+	KeyID             string `json:"key_id"`
+	Signature         string `json:"signature"`
+	ContentTOML       string `json:"content_toml"`
+	MinGatewayVersion string `json:"min_gateway_version"`
+	DuplicateRule     string `json:"duplicate_rule"`
 }
 
 type policyBundleSigningPayload struct {
-	ManifestID  string `json:"manifest_id"`
-	Profile     string `json:"profile"`
-	Version     string `json:"version"`
-	SHA256      string `json:"sha256"`
-	EffectiveAt string `json:"effective_at"`
-	ExpiresAt   string `json:"expires_at"`
-	KeyID       string `json:"key_id"`
-	ContentTOML string `json:"content_toml"`
+	ManifestID        string `json:"manifest_id"`
+	Profile           string `json:"profile"`
+	Version           string `json:"version"`
+	SHA256            string `json:"sha256"`
+	EffectiveAt       string `json:"effective_at"`
+	ExpiresAt         string `json:"expires_at"`
+	KeyID             string `json:"key_id"`
+	ContentTOML       string `json:"content_toml"`
+	MinGatewayVersion string `json:"min_gateway_version"`
+	DuplicateRule     string `json:"duplicate_rule"`
 }
 
 func loadPolicyBundleSigner(dataDir string) (*policyBundleSigner, error) {
@@ -176,14 +180,16 @@ func (s *policyBundleSigner) Sign(bundle policyBundle) (policyBundle, error) {
 
 func policyBundleSigningBytes(bundle policyBundle) ([]byte, error) {
 	payload := policyBundleSigningPayload{
-		ManifestID:  strings.TrimSpace(bundle.ManifestID),
-		Profile:     strings.TrimSpace(bundle.Profile),
-		Version:     strings.TrimSpace(bundle.Version),
-		SHA256:      strings.TrimSpace(bundle.SHA256),
-		EffectiveAt: strings.TrimSpace(bundle.EffectiveAt),
-		ExpiresAt:   strings.TrimSpace(bundle.ExpiresAt),
-		KeyID:       strings.TrimSpace(bundle.KeyID),
-		ContentTOML: bundle.ContentTOML,
+		ManifestID:        strings.TrimSpace(bundle.ManifestID),
+		Profile:           strings.TrimSpace(bundle.Profile),
+		Version:           strings.TrimSpace(bundle.Version),
+		SHA256:            strings.TrimSpace(bundle.SHA256),
+		EffectiveAt:       strings.TrimSpace(bundle.EffectiveAt),
+		ExpiresAt:         strings.TrimSpace(bundle.ExpiresAt),
+		KeyID:             strings.TrimSpace(bundle.KeyID),
+		ContentTOML:       bundle.ContentTOML,
+		MinGatewayVersion: strings.TrimSpace(bundle.MinGatewayVersion),
+		DuplicateRule:     strings.TrimSpace(bundle.DuplicateRule),
 	}
 	return json.Marshal(payload)
 }
@@ -261,4 +267,11 @@ func policyExpiresAtRFC3339(info os.FileInfo, ttl time.Duration) string {
 		ttl = defaultPolicyBundleTTL
 	}
 	return effective.Add(ttl).Format(time.RFC3339)
+}
+
+func minimumGatewayVersion() string {
+	if v := strings.TrimSpace(os.Getenv("ZT_CP_POLICY_MIN_GATEWAY_VERSION")); v != "" {
+		return v
+	}
+	return "v0.5f"
 }

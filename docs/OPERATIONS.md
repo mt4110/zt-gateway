@@ -71,6 +71,25 @@
 2. `fail_closed` の場合は鍵設定（`ZT_EVENT_SIGNING_KEY_ID` / registry 側許可鍵）を修正
 3. 修正後に `zt sync --force --json` を実行し、`ok=true` を確認
 
+## Policy Control Loop 一次復旧（v0.5f）
+
+現場での一次対応を `policy_decision` / `error_code` だけで判断できるように固定します。
+
+| 症状 | 代表 `policy_decision.error_code` | 判定 | 一次対応 |
+| --- | --- | --- | --- |
+| policy 署名不正 / 鍵不一致 | `policy_verify_failed` | fail-closed | `GET /v1/policies/keyset` の active key と Gateway 信頼鍵を確認し、policy を再取得して再適用 |
+| policy 期限切れ（confidential/regulated） | `policy_stale` | fail-closed | CP 側で新 policy を publish し、Gateway で fetch/activate。復旧前の送信は停止 |
+| policy 期限切れ（internal/public・grace内） | `policy_stale` | degraded | 期限内に更新。grace 超過で fail-closed へ遷移するため前倒しで更新 |
+| staged policy 破損 | `policy_activation_verify_failed` | fail-closed | `active` は不変。`last_known_good` へ rollback 済みか確認し、破損 bundle を再配布 |
+
+最短確認コマンド:
+
+```bash
+bash ./scripts/ci/check-policy-contract-gate.sh
+zt setup --json
+zt sync --force --json
+```
+
 ## `zt setup --json` で見るポイント（supply-chain）
 
 優先チェック:
@@ -99,6 +118,7 @@ fixtureゲート（ロジック回帰検知）:
 
 - `scripts/ci/check-zt-setup-json-gate.sh`
 - 固定署名fixtureで `zt setup --json` を実行し、supply-chain 3項目の `ok` を検証
+- policy 契約は `scripts/ci/check-policy-contract-gate.sh` で独立実行（bundle署名 / keyset / activation / decision / policy e2e）
 
 actual repo ゲート（実artifact直検査）:
 

@@ -96,7 +96,7 @@ Purpose:
 
 Response:
 - `200 OK`
-- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"..." }`
+- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"...", "min_gateway_version":"...", "duplicate_rule":"manifest_id+profile+sha256" }`
 - Signing key operation:
   - Default: auto-provision and persist Ed25519 seed at `control-plane/data/keys/policy_signing_ed25519.seed.b64`
   - Optional overrides: `ZT_CP_POLICY_SIGNING_ED25519_PRIV_B64`, `ZT_CP_POLICY_SIGNING_KEY_ID`, `ZT_CP_POLICY_SIGNING_KEY_FILE`, `ZT_CP_POLICY_BUNDLE_TTL_HOURS`
@@ -108,7 +108,7 @@ Purpose:
 
 Response:
 - `200 OK`
-- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"..." }`
+- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"...", "min_gateway_version":"...", "duplicate_rule":"manifest_id+profile+sha256" }`
 
 ### `GET /v1/policies/keyset`
 

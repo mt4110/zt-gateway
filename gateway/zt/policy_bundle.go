@@ -6,36 +6,43 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	policyErrorCodeVerifyFailed = "policy_verify_failed"
-	policyErrorCodeStale        = "policy_stale"
+	policyErrorCodeVerifyFailed  = "policy_verify_failed"
+	policyErrorCodeStale         = "policy_stale"
+	defaultPolicyStaleGraceHours = 24
 )
 
 type signedPolicyBundle struct {
-	ManifestID  string `json:"manifest_id"`
-	Profile     string `json:"profile"`
-	Version     string `json:"version"`
-	SHA256      string `json:"sha256"`
-	EffectiveAt string `json:"effective_at"`
-	ExpiresAt   string `json:"expires_at"`
-	KeyID       string `json:"key_id"`
-	Signature   string `json:"signature"`
-	ContentTOML string `json:"content_toml"`
+	ManifestID        string `json:"manifest_id"`
+	Profile           string `json:"profile"`
+	Version           string `json:"version"`
+	SHA256            string `json:"sha256"`
+	EffectiveAt       string `json:"effective_at"`
+	ExpiresAt         string `json:"expires_at"`
+	KeyID             string `json:"key_id"`
+	Signature         string `json:"signature"`
+	ContentTOML       string `json:"content_toml"`
+	MinGatewayVersion string `json:"min_gateway_version"`
+	DuplicateRule     string `json:"duplicate_rule"`
 }
 
 type policyBundleSigningPayload struct {
-	ManifestID  string `json:"manifest_id"`
-	Profile     string `json:"profile"`
-	Version     string `json:"version"`
-	SHA256      string `json:"sha256"`
-	EffectiveAt string `json:"effective_at"`
-	ExpiresAt   string `json:"expires_at"`
-	KeyID       string `json:"key_id"`
-	ContentTOML string `json:"content_toml"`
+	ManifestID        string `json:"manifest_id"`
+	Profile           string `json:"profile"`
+	Version           string `json:"version"`
+	SHA256            string `json:"sha256"`
+	EffectiveAt       string `json:"effective_at"`
+	ExpiresAt         string `json:"expires_at"`
+	KeyID             string `json:"key_id"`
+	ContentTOML       string `json:"content_toml"`
+	MinGatewayVersion string `json:"min_gateway_version"`
+	DuplicateRule     string `json:"duplicate_rule"`
 }
 
 type policyBundleVerifyError struct {
@@ -90,8 +97,10 @@ func verifySignedPolicyBundle(bundle signedPolicyBundle, verifyAt time.Time, tru
 	if verifyAt.Before(effectiveAt) {
 		return &policyBundleVerifyError{ErrorCode: policyErrorCodeStale, Reason: "policy_not_effective"}
 	}
-	if verifyAt.After(expiresAt) {
-		return &policyBundleVerifyError{ErrorCode: policyErrorCodeStale, Reason: "policy_expired"}
+	if degraded, staleErr := evaluatePolicyStaleness(bundle.Profile, expiresAt, verifyAt); staleErr != nil {
+		return staleErr
+	} else if degraded {
+		// internal/public profiles permit bounded degraded operation in stale grace window.
 	}
 	pub, ok := trustedKeys[strings.TrimSpace(bundle.KeyID)]
 	if !ok || len(pub) != ed25519.PublicKeySize {
@@ -115,17 +124,48 @@ func verifySignedPolicyBundle(bundle signedPolicyBundle, verifyAt time.Time, tru
 	return nil
 }
 
+func evaluatePolicyStaleness(profile string, expiresAt, now time.Time) (bool, error) {
+	profile = strings.ToLower(strings.TrimSpace(profile))
+	if now.Before(expiresAt) || now.Equal(expiresAt) {
+		return false, nil
+	}
+	switch profile {
+	case trustProfileRegulated, trustProfileConfidential:
+		return false, &policyBundleVerifyError{ErrorCode: policyErrorCodeStale, Reason: "policy_expired"}
+	default:
+		grace := policyStaleGraceDuration()
+		if now.Before(expiresAt.Add(grace)) || now.Equal(expiresAt.Add(grace)) {
+			return true, nil
+		}
+		return false, &policyBundleVerifyError{ErrorCode: policyErrorCodeStale, Reason: "policy_expired_after_grace"}
+	}
+}
+
+func policyStaleGraceDuration() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("ZT_POLICY_STALE_GRACE_HOURS"))
+	if raw == "" {
+		return defaultPolicyStaleGraceHours * time.Hour
+	}
+	hours, err := strconv.Atoi(raw)
+	if err != nil || hours < 0 {
+		return defaultPolicyStaleGraceHours * time.Hour
+	}
+	return time.Duration(hours) * time.Hour
+}
+
 func validateSignedPolicyBundleFields(bundle signedPolicyBundle) error {
 	required := map[string]string{
-		"manifest_id":  bundle.ManifestID,
-		"profile":      bundle.Profile,
-		"version":      bundle.Version,
-		"sha256":       bundle.SHA256,
-		"effective_at": bundle.EffectiveAt,
-		"expires_at":   bundle.ExpiresAt,
-		"key_id":       bundle.KeyID,
-		"signature":    bundle.Signature,
-		"content_toml": bundle.ContentTOML,
+		"manifest_id":         bundle.ManifestID,
+		"profile":             bundle.Profile,
+		"version":             bundle.Version,
+		"sha256":              bundle.SHA256,
+		"effective_at":        bundle.EffectiveAt,
+		"expires_at":          bundle.ExpiresAt,
+		"key_id":              bundle.KeyID,
+		"signature":           bundle.Signature,
+		"content_toml":        bundle.ContentTOML,
+		"min_gateway_version": bundle.MinGatewayVersion,
+		"duplicate_rule":      bundle.DuplicateRule,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -137,14 +177,16 @@ func validateSignedPolicyBundleFields(bundle signedPolicyBundle) error {
 
 func policyBundleSigningBytes(bundle signedPolicyBundle) ([]byte, error) {
 	payload := policyBundleSigningPayload{
-		ManifestID:  strings.TrimSpace(bundle.ManifestID),
-		Profile:     strings.TrimSpace(bundle.Profile),
-		Version:     strings.TrimSpace(bundle.Version),
-		SHA256:      strings.TrimSpace(bundle.SHA256),
-		EffectiveAt: strings.TrimSpace(bundle.EffectiveAt),
-		ExpiresAt:   strings.TrimSpace(bundle.ExpiresAt),
-		KeyID:       strings.TrimSpace(bundle.KeyID),
-		ContentTOML: bundle.ContentTOML,
+		ManifestID:        strings.TrimSpace(bundle.ManifestID),
+		Profile:           strings.TrimSpace(bundle.Profile),
+		Version:           strings.TrimSpace(bundle.Version),
+		SHA256:            strings.TrimSpace(bundle.SHA256),
+		EffectiveAt:       strings.TrimSpace(bundle.EffectiveAt),
+		ExpiresAt:         strings.TrimSpace(bundle.ExpiresAt),
+		KeyID:             strings.TrimSpace(bundle.KeyID),
+		ContentTOML:       bundle.ContentTOML,
+		MinGatewayVersion: strings.TrimSpace(bundle.MinGatewayVersion),
+		DuplicateRule:     strings.TrimSpace(bundle.DuplicateRule),
 	}
 	return json.Marshal(payload)
 }

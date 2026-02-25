@@ -14,24 +14,26 @@ import (
 )
 
 type auditEventRecord struct {
-	EventID          string `json:"event_id"`
-	EventType        string `json:"event_type"`
-	Timestamp        string `json:"timestamp"`
-	Result           string `json:"result"`
-	Endpoint         string `json:"endpoint"`
-	PayloadSHA256    string `json:"payload_sha256"`
-	ChainVersion     string `json:"chain_version"`
-	PrevRecordSHA256 string `json:"prev_record_sha256,omitempty"`
-	RecordSHA256     string `json:"record_sha256"`
-	SignatureAlg     string `json:"signature_alg,omitempty"`
-	SignatureKeyID   string `json:"signature_key_id,omitempty"`
-	Signature        string `json:"signature,omitempty"`
+	EventID          string          `json:"event_id"`
+	EventType        string          `json:"event_type"`
+	Timestamp        string          `json:"timestamp"`
+	Result           string          `json:"result"`
+	PolicyDecision   *policyDecision `json:"policy_decision,omitempty"`
+	Endpoint         string          `json:"endpoint"`
+	PayloadSHA256    string          `json:"payload_sha256"`
+	ChainVersion     string          `json:"chain_version"`
+	PrevRecordSHA256 string          `json:"prev_record_sha256,omitempty"`
+	RecordSHA256     string          `json:"record_sha256"`
+	SignatureAlg     string          `json:"signature_alg,omitempty"`
+	SignatureKeyID   string          `json:"signature_key_id,omitempty"`
+	Signature        string          `json:"signature,omitempty"`
 }
 
 type auditPayloadFields struct {
-	EventID string
-	Result  string
-	Command string
+	EventID        string
+	Result         string
+	Command        string
+	PolicyDecision *policyDecision
 }
 
 type auditRecordSigner struct {
@@ -82,15 +84,19 @@ func newAuditEventRecord(endpoint string, payloadJSON []byte, now time.Time, pre
 	if result == "" {
 		result = "recorded"
 	}
+	if fields.PolicyDecision != nil && strings.TrimSpace(fields.PolicyDecision.Decision) != "" {
+		result = strings.TrimSpace(fields.PolicyDecision.Decision)
+	}
 	eventType := resolveAuditEventType(endpoint, fields.Command)
 	record := auditEventRecord{
-		EventID:       eventID,
-		EventType:     eventType,
-		Timestamp:     now.Format(time.RFC3339Nano),
-		Result:        result,
-		Endpoint:      strings.TrimSpace(endpoint),
-		PayloadSHA256: sha256HexBytes(payloadJSON),
-		ChainVersion:  "v1",
+		EventID:        eventID,
+		EventType:      eventType,
+		Timestamp:      now.Format(time.RFC3339Nano),
+		Result:         result,
+		PolicyDecision: fields.PolicyDecision,
+		Endpoint:       strings.TrimSpace(endpoint),
+		PayloadSHA256:  sha256HexBytes(payloadJSON),
+		ChainVersion:   "v1",
 	}
 	record.PrevRecordSHA256 = strings.TrimSpace(prevHash)
 	record.RecordSHA256 = calculateAuditRecordSHA256(record)
@@ -104,6 +110,7 @@ func calculateAuditRecordSHA256(record auditEventRecord) string {
 		"event_type=" + strings.TrimSpace(record.EventType),
 		"timestamp=" + strings.TrimSpace(record.Timestamp),
 		"result=" + strings.TrimSpace(record.Result),
+		"policy_decision=" + canonicalPolicyDecisionForHash(record.PolicyDecision),
 		"endpoint=" + strings.TrimSpace(record.Endpoint),
 		"payload_sha256=" + strings.TrimSpace(record.PayloadSHA256),
 		"prev_record_sha256=" + strings.TrimSpace(record.PrevRecordSHA256),
@@ -407,11 +414,46 @@ func parseAuditPayloadFields(payloadJSON []byte) auditPayloadFields {
 	if err := json.Unmarshal(payloadJSON, &payload); err != nil || payload == nil {
 		return auditPayloadFields{}
 	}
-	return auditPayloadFields{
-		EventID: stringFromAnyMap(payload, "event_id"),
-		Result:  stringFromAnyMap(payload, "result"),
-		Command: stringFromAnyMap(payload, "command"),
+	var dec *policyDecision
+	if m, ok := mapFromAnyMap(payload, "policy_decision"); ok {
+		candidate := policyDecision{
+			Decision:      stringFromAnyMap(m, "decision"),
+			ReasonCode:    stringFromAnyMap(m, "reason_code"),
+			ManifestID:    stringFromAnyMap(m, "manifest_id"),
+			Profile:       stringFromAnyMap(m, "profile"),
+			RuleHash:      stringFromAnyMap(m, "rule_hash"),
+			ErrorClass:    stringFromAnyMap(m, "error_class"),
+			ErrorCode:     stringFromAnyMap(m, "error_code"),
+			Source:        stringFromAnyMap(m, "source"),
+			MinGatewayVer: stringFromAnyMap(m, "min_gateway_version"),
+		}
+		n := normalizePolicyDecision(candidate)
+		dec = &n
 	}
+	return auditPayloadFields{
+		EventID:        stringFromAnyMap(payload, "event_id"),
+		Result:         stringFromAnyMap(payload, "result"),
+		Command:        stringFromAnyMap(payload, "command"),
+		PolicyDecision: dec,
+	}
+}
+
+func canonicalPolicyDecisionForHash(dec *policyDecision) string {
+	if dec == nil {
+		return ""
+	}
+	n := normalizePolicyDecision(*dec)
+	return strings.Join([]string{
+		n.Decision,
+		n.ReasonCode,
+		n.ManifestID,
+		n.Profile,
+		n.RuleHash,
+		n.ErrorClass,
+		n.ErrorCode,
+		n.Source,
+		n.MinGatewayVer,
+	}, "|")
 }
 
 func resolveAuditEventType(endpoint, command string) string {
@@ -428,4 +470,9 @@ func resolveAuditEventType(endpoint, command string) string {
 func stringFromAnyMap(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+func mapFromAnyMap(m map[string]any, key string) (map[string]any, bool) {
+	v, ok := m[key].(map[string]any)
+	return v, ok
 }

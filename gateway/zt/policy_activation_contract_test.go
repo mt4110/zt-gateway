@@ -15,14 +15,16 @@ func TestPolicyActivationContract_ActivateStagedUpdatesActiveAndLKG(t *testing.T
 	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
 
 	bundle := signPolicyActivationBundleContract(t, signedPolicyBundle{
-		ManifestID:  "pmf_extension_internal_20260225_aaaaaaaaaaaaaaaa",
-		Profile:     "internal",
-		Version:     "2026.02.25-120000z",
-		SHA256:      sha256HexBytes([]byte("max_size_mb = 50\n")),
-		EffectiveAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
-		ExpiresAt:   now.Add(24 * time.Hour).Format(time.RFC3339),
-		KeyID:       "policy-key-v1",
-		ContentTOML: "max_size_mb = 50\n",
+		ManifestID:        "pmf_extension_internal_20260225_aaaaaaaaaaaaaaaa",
+		Profile:           "internal",
+		Version:           "2026.02.25-120000z",
+		SHA256:            sha256HexBytes([]byte("max_size_mb = 50\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "max_size_mb = 50\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
 	}, priv)
 
 	if err := store.stage("extension", bundle); err != nil {
@@ -61,14 +63,16 @@ func TestPolicyActivationContract_BrokenStagedKeepsActiveUnchanged(t *testing.T)
 	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
 
 	activeBundle := signPolicyActivationBundleContract(t, signedPolicyBundle{
-		ManifestID:  "pmf_extension_internal_20260225_bbbbbbbbbbbbbbbb",
-		Profile:     "internal",
-		Version:     "2026.02.25-120000z",
-		SHA256:      sha256HexBytes([]byte("scan_only_extensions=[\".txt\"]\n")),
-		EffectiveAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
-		ExpiresAt:   now.Add(24 * time.Hour).Format(time.RFC3339),
-		KeyID:       "policy-key-v1",
-		ContentTOML: "scan_only_extensions=[\".txt\"]\n",
+		ManifestID:        "pmf_extension_internal_20260225_bbbbbbbbbbbbbbbb",
+		Profile:           "internal",
+		Version:           "2026.02.25-120000z",
+		SHA256:            sha256HexBytes([]byte("scan_only_extensions=[\".txt\"]\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "scan_only_extensions=[\".txt\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
 	}, priv)
 	if err := store.stage("extension", activeBundle); err != nil {
 		t.Fatalf("stage(active): %v", err)
@@ -78,14 +82,16 @@ func TestPolicyActivationContract_BrokenStagedKeepsActiveUnchanged(t *testing.T)
 	}
 
 	broken := signPolicyActivationBundleContract(t, signedPolicyBundle{
-		ManifestID:  "pmf_extension_internal_20260225_cccccccccccccccc",
-		Profile:     "internal",
-		Version:     "2026.02.25-130000z",
-		SHA256:      sha256HexBytes([]byte("scan_only_extensions=[\".md\"]\n")),
-		EffectiveAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
-		ExpiresAt:   now.Add(24 * time.Hour).Format(time.RFC3339),
-		KeyID:       "policy-key-v1",
-		ContentTOML: "scan_only_extensions=[\".md\"]\n",
+		ManifestID:        "pmf_extension_internal_20260225_cccccccccccccccc",
+		Profile:           "internal",
+		Version:           "2026.02.25-130000z",
+		SHA256:            sha256HexBytes([]byte("scan_only_extensions=[\".md\"]\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "scan_only_extensions=[\".md\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
 	}, priv)
 	broken.ContentTOML = "scan_only_extensions=[\".json\"]\n" // tamper after signing
 	if err := store.stage("extension", broken); err != nil {
@@ -122,28 +128,32 @@ func TestPolicyActivationContract_RestoreFromLKGWhenActiveMissing(t *testing.T) 
 	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
 
 	good := signPolicyActivationBundleContract(t, signedPolicyBundle{
-		ManifestID:  "pmf_scan_internal_20260225_dddddddddddddddd",
-		Profile:     "internal",
-		Version:     "2026.02.25-120000z",
-		SHA256:      sha256HexBytes([]byte("required_scanners=[\"ClamAV\"]\n")),
-		EffectiveAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
-		ExpiresAt:   now.Add(24 * time.Hour).Format(time.RFC3339),
-		KeyID:       "policy-key-v1",
-		ContentTOML: "required_scanners=[\"ClamAV\"]\n",
+		ManifestID:        "pmf_scan_internal_20260225_dddddddddddddddd",
+		Profile:           "internal",
+		Version:           "2026.02.25-120000z",
+		SHA256:            sha256HexBytes([]byte("required_scanners=[\"ClamAV\"]\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "required_scanners=[\"ClamAV\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
 	}, priv)
 	if err := writeSignedPolicyBundleAtomic(store.lastKnownGoodPath("scan"), good); err != nil {
 		t.Fatalf("write lkg: %v", err)
 	}
 
 	broken := signPolicyActivationBundleContract(t, signedPolicyBundle{
-		ManifestID:  "pmf_scan_internal_20260225_eeeeeeeeeeeeeeee",
-		Profile:     "internal",
-		Version:     "2026.02.25-130000z",
-		SHA256:      sha256HexBytes([]byte("required_scanners=[\"YARA\"]\n")),
-		EffectiveAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
-		ExpiresAt:   now.Add(24 * time.Hour).Format(time.RFC3339),
-		KeyID:       "policy-key-v1",
-		ContentTOML: "required_scanners=[\"YARA\"]\n",
+		ManifestID:        "pmf_scan_internal_20260225_eeeeeeeeeeeeeeee",
+		Profile:           "internal",
+		Version:           "2026.02.25-130000z",
+		SHA256:            sha256HexBytes([]byte("required_scanners=[\"YARA\"]\n")),
+		EffectiveAt:       now.Add(-1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt:         now.Add(24 * time.Hour).Format(time.RFC3339),
+		KeyID:             "policy-key-v1",
+		ContentTOML:       "required_scanners=[\"YARA\"]\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
 	}, priv)
 	broken.Signature = "%%%broken%%%"
 	if err := store.stage("scan", broken); err != nil {

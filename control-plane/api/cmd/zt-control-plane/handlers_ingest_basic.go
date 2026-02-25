@@ -149,14 +149,16 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			return
 		}
 		bundle, err := s.policySigner.Sign(policyBundle{
-			ManifestID:  policyManifestID(fileName, profile, version, contentSHA),
-			Profile:     profile,
-			Version:     version,
-			SHA256:      contentSHA,
-			EffectiveAt: effectiveAt,
-			ExpiresAt:   policyExpiresAtRFC3339(info, s.policySigner.TTL),
-			KeyID:       s.policySigner.KeyID,
-			ContentTOML: string(b),
+			ManifestID:        policyManifestID(fileName, profile, version, contentSHA),
+			Profile:           profile,
+			Version:           version,
+			SHA256:            contentSHA,
+			EffectiveAt:       effectiveAt,
+			ExpiresAt:         policyExpiresAtRFC3339(info, s.policySigner.TTL),
+			KeyID:             s.policySigner.KeyID,
+			ContentTOML:       string(b),
+			MinGatewayVersion: minimumGatewayVersion(),
+			DuplicateRule:     "manifest_id+profile+sha256",
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})

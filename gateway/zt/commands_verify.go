@@ -25,7 +25,9 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 		fmt.Printf("[VERIFY] Packet: %s\n", resolvedPath)
 		out, err := adapters.modernPackVerify(resolvedPath)
 		if err != nil {
-			emitVerifyEvent(resolvedPath, false, "packet.verify_failed", strings.TrimSpace(string(out)))
+			decision := decisionForVerify(false, "policy_verify_failed")
+			emitPolicyDecisionCLI(decision)
+			emitVerifyEvent(resolvedPath, false, "packet.verify_failed", strings.TrimSpace(string(out)), decision)
 			if opts.SyncNow {
 				runSyncEvents(true)
 			}
@@ -41,11 +43,14 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
 			fmt.Printf("[DETAIL] %s\n", trimmed)
 		}
-		receipt := buildVerificationReceipt(resolvedPath)
+		decision := decisionForVerify(true, "policy_verify_pass")
+		receipt := buildVerificationReceipt(resolvedPath, decision)
 		if strings.TrimSpace(opts.ReceiptOut) != "" {
 			receiptPath, err := filepath.Abs(opts.ReceiptOut)
 			if err != nil {
-				emitVerifyEvent(resolvedPath, false, "receipt.path_invalid", err.Error())
+				failDecision := decisionForVerify(false, "policy_receipt_path_invalid")
+				emitPolicyDecisionCLI(failDecision)
+				emitVerifyEvent(resolvedPath, false, "receipt.path_invalid", err.Error(), failDecision)
 				if opts.SyncNow {
 					runSyncEvents(true)
 				}
@@ -55,7 +60,9 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 				os.Exit(1)
 			}
 			if err := writeVerificationReceipt(receiptPath, receipt); err != nil {
-				emitVerifyEvent(resolvedPath, false, "receipt.write_failed", err.Error())
+				failDecision := decisionForVerify(false, "policy_receipt_write_failed")
+				emitPolicyDecisionCLI(failDecision)
+				emitVerifyEvent(resolvedPath, false, "receipt.write_failed", err.Error(), failDecision)
 				if opts.SyncNow {
 					runSyncEvents(true)
 				}
@@ -69,14 +76,17 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 			fmt.Printf("[RECEIPT] id=%s verified_at=%s\n", receipt.ReceiptID, receipt.VerifiedAt)
 		}
 		fmt.Println("[VERIFIED] Trust established.")
-		emitVerifyEvent(resolvedPath, true, "packet.verified", strings.TrimSpace(string(out)))
+		emitPolicyDecisionCLI(decision)
+		emitVerifyEvent(resolvedPath, true, "packet.verified", strings.TrimSpace(string(out)), decision)
 		if opts.SyncNow {
 			runSyncEvents(true)
 		}
 		printTrustStatusLine(newTrustStatusSuccess(receipt.ReceiptID))
 		return
 	}
-	emitVerifyEvent(resolvedPath, false, "verify.unsupported_input", "zt verify now supports only .spkg.tgz packets")
+	decision := decisionForVerify(false, "policy_verify_unsupported_input")
+	emitPolicyDecisionCLI(decision)
+	emitVerifyEvent(resolvedPath, false, "verify.unsupported_input", "zt verify now supports only .spkg.tgz packets", decision)
 	if opts.SyncNow {
 		runSyncEvents(true)
 	}

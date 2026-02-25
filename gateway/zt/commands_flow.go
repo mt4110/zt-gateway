@@ -104,9 +104,22 @@ func runScan(adapters *toolAdapters, opts scanOptions) {
 	if !opts.TUI && !info.IsDir() {
 		out, stderr, err := adapters.modernScanCheckJSON(targetPath, opts.ForcePublic, opts.AutoUpdate, opts.Strict, nil, false)
 		if len(out) > 0 {
-			emitScanEventFromSecureScanJSON("scan", targetPath, out)
-		}
-		if len(out) > 0 {
+			var scanRes ScanResult
+			_ = json.Unmarshal(out, &scanRes)
+			var scanMap map[string]any
+			if err := json.Unmarshal(out, &scanMap); err == nil {
+				profile := trustProfileInternal
+				if opts.ForcePublic {
+					profile = trustProfilePublic
+				}
+				manifestID := buildLocalPolicyManifestID(filepath.Join(adapters.repoRoot, "policy", "scan_policy.toml"), profile)
+				decision := decisionFromScanResult(scanRes, profile, manifestID, stringField(scanMap, "rule_hash"))
+				scanMap["policy_decision"] = decision
+				if b, mErr := json.MarshalIndent(scanMap, "", "  "); mErr == nil {
+					out = append(b, '\n')
+				}
+				emitScanEventFromSecureScanJSON("scan", targetPath, out, decision)
+			}
 			fmt.Print(string(out))
 			if err != nil {
 				if len(stderr) > 0 {
@@ -168,6 +181,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	fmt.Printf("[Profile] %s source=%s\n", profileSelection.Name, profileSelection.Source)
+	manifestID := buildLocalPolicyManifestID(profileSelection.ExtensionPolicyPath, profileSelection.Name)
 
 	policyFile := profileSelection.ExtensionPolicyPath
 	extPolicy, policyErr := loadExtensionPolicy(policyFile)
@@ -209,6 +223,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		fmt.Printf("[Policy] scan requirements: required_scanners=%v require_clamav_db=%t source=%s\n", scanPol.RequiredScanners, scanPol.RequireClamAVDB, scanPol.Source)
 	}
 	if mode == ExtModeDeny {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_extension_denied"))
 		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
 		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %s\n", policyReason)
 		if opts.SyncNow {
@@ -218,6 +233,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	if err := enforceFilePolicy(inputPath, mode, extPolicy); err != nil {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_file_constraints_failed"))
 		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
 		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
 		if opts.SyncNow {
@@ -227,6 +243,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	if err := enforceFileTypeConsistency(inputPath); err != nil {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_magic_mismatch"))
 		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
 		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
 		if opts.SyncNow {
@@ -236,6 +253,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	if ok, _ := runSendSecurePackPrecheck(adapters.repoRoot); !ok {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_precheck_failed"))
 		printZTErrorCode(ztErrorCodePrecheckSupplyChain)
 		fmt.Println("[BLOCKED] secure-pack supply-chain precheck failed; fix the items above and retry `zt send`.")
 		if opts.SyncNow {
@@ -291,13 +309,18 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	if len(output) > 0 {
-		emitScanEventFromSecureScanJSON("send", inputPath, output)
+		var scanMeta map[string]any
+		_ = json.Unmarshal(output, &scanMeta)
+		scanDecision := decisionFromScanResult(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"))
+		emitPolicyDecisionCLI(scanDecision)
+		emitScanEventFromSecureScanJSON("send", inputPath, output, scanDecision)
 	}
 	if res.Reason == "clean.no_scanners_available" {
 		fmt.Println("[WARN] secure-scan returned allow with no scanners available (degraded mode).")
 	}
 
 	if res.Result != "allow" {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_scan_denied"))
 		printZTErrorCode(ztErrorCodeSendScanDenied)
 		fmt.Printf("\n[BLOCKED] File was rejected by secure-scan.\nReason: %s\n", res.Reason)
 		if opts.SyncNow {
@@ -351,11 +374,13 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		}
 		var scanMeta map[string]any
 		_ = json.Unmarshal(output, &scanMeta)
-		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"))
+		finalDecision := decisionFromScanResult(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"))
+		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"), finalDecision)
 		if opts.SyncNow {
 			runSyncEvents(true)
 		}
 		fmt.Printf("\n[SUCCESS] Packet generated.\n%s\nSaved: %s\n", string(packOut), packetPath)
+		emitPolicyDecisionCLI(finalDecision)
 		deliverReceiverShare(packetPath, opts)
 		printTrustStatusLine(newTrustStatusSuccess("pending"))
 		return

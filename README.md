@@ -250,6 +250,7 @@ flowchart LR
 - `policy/scan_policy.toml` で `required_scanners` / `require_clamav_db=true` を維持（弱める変更はレビュー対象にする）
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
 - `zt setup --json` / `zt config doctor --json` を CI に入れて設定劣化を検知（fixtureゲート: `scripts/ci/check-zt-setup-json-gate.sh`）
+- policy 契約は独立ゲート `scripts/ci/check-policy-contract-gate.sh` を追加し、署名bundle / keyset / activation / decision の回帰を分離検知する
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 

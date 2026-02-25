@@ -106,14 +106,16 @@ func TestPolicyBundleSignatureContract_MissingSignerFailsClosed(t *testing.T) {
 func TestPolicyBundleSignatureContract_TamperBreaksVerification(t *testing.T) {
 	signer := newPolicyBundleSignerContract(31, 24*time.Hour)
 	bundle, err := signer.Sign(policyBundle{
-		ManifestID:  "pmf_extension_internal_test_aaaaaaaaaaaaaaaa",
-		Profile:     "internal",
-		Version:     "2026.02.25-090000z",
-		SHA256:      sha256Hex([]byte("max_size_mb = 10\n")),
-		EffectiveAt: "2026-02-25T09:00:00Z",
-		ExpiresAt:   "2026-02-26T09:00:00Z",
-		KeyID:       signer.KeyID,
-		ContentTOML: "max_size_mb = 10\n",
+		ManifestID:        "pmf_extension_internal_test_aaaaaaaaaaaaaaaa",
+		Profile:           "internal",
+		Version:           "2026.02.25-090000z",
+		SHA256:            sha256Hex([]byte("max_size_mb = 10\n")),
+		EffectiveAt:       "2026-02-25T09:00:00Z",
+		ExpiresAt:         "2026-02-26T09:00:00Z",
+		KeyID:             signer.KeyID,
+		ContentTOML:       "max_size_mb = 10\n",
+		MinGatewayVersion: "v0.5f",
+		DuplicateRule:     "manifest_id+profile+sha256",
 	})
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
@@ -246,5 +248,11 @@ func assertPolicyBundleRequiredFieldsContract(t *testing.T, bundle policyBundle)
 	}
 	if bundle.ContentTOML == "" {
 		t.Fatalf("content_toml is empty")
+	}
+	if bundle.MinGatewayVersion == "" {
+		t.Fatalf("min_gateway_version is empty")
+	}
+	if bundle.DuplicateRule == "" {
+		t.Fatalf("duplicate_rule is empty")
 	}
 }

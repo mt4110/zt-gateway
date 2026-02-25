@@ -28,9 +28,10 @@ type receiptArtifact struct {
 }
 
 type receiptVerification struct {
-	SignatureValid bool   `json:"signature_valid"`
-	TamperDetected bool   `json:"tamper_detected"`
-	PolicyResult   string `json:"policy_result"`
+	SignatureValid bool           `json:"signature_valid"`
+	TamperDetected bool           `json:"tamper_detected"`
+	PolicyResult   string         `json:"policy_result"`
+	PolicyDecision policyDecision `json:"policy_decision"`
 }
 
 type receiptProvenance struct {
@@ -46,11 +47,18 @@ type receiptTooling struct {
 
 var packetClientPattern = regexp.MustCompile(`^bundle_([^_]+)_\d{8}T\d{6}Z\.spkg\.tgz$`)
 
-func buildVerificationReceipt(artifactPath string) verificationReceipt {
+func buildVerificationReceipt(artifactPath string, decision policyDecision) verificationReceipt {
 	now := time.Now().UTC().Format(time.RFC3339)
 	sha := hashPathSHA256(artifactPath)
 	receiptID := buildReceiptID(sha, now)
 	client := inferReceiptClient(filepath.Base(artifactPath))
+	decision = normalizePolicyDecision(decision)
+	policyResult := "pass"
+	if decision.Decision == policyDecisionDeny {
+		policyResult = "fail"
+	} else if decision.Decision == policyDecisionDegraded {
+		policyResult = "degraded"
+	}
 
 	return verificationReceipt{
 		ReceiptVersion: "v1",
@@ -63,7 +71,8 @@ func buildVerificationReceipt(artifactPath string) verificationReceipt {
 		Verification: receiptVerification{
 			SignatureValid: true,
 			TamperDetected: false,
-			PolicyResult:   "pass",
+			PolicyResult:   policyResult,
+			PolicyDecision: decision,
 		},
 		Provenance: receiptProvenance{
 			Sender:         "unknown",

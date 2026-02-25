@@ -34,7 +34,7 @@ func TestBuildAndWriteVerificationReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("ZT_SECURE_PACK_VERSION", "v0.3.0-test")
-	receipt := buildVerificationReceipt(artifact)
+	receipt := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"))
 
 	if receipt.ReceiptVersion != "v1" {
 		t.Fatalf("ReceiptVersion = %q, want v1", receipt.ReceiptVersion)
@@ -71,6 +71,9 @@ func TestBuildAndWriteVerificationReceipt(t *testing.T) {
 	if got.Verification.PolicyResult != "pass" {
 		t.Fatalf("Verification.PolicyResult = %q", got.Verification.PolicyResult)
 	}
+	if got.Verification.PolicyDecision.Decision != policyDecisionAllow {
+		t.Fatalf("Verification.PolicyDecision.Decision = %q", got.Verification.PolicyDecision.Decision)
+	}
 }
 
 func TestVerificationReceipt_JSONContractV1(t *testing.T) {
@@ -79,7 +82,7 @@ func TestVerificationReceipt_JSONContractV1(t *testing.T) {
 	if err := os.WriteFile(artifact, []byte("packet"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildVerificationReceipt(artifact)
+	receipt := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"))
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatalf("json.Marshal returned error: %v", err)
@@ -110,5 +113,8 @@ func TestVerificationReceipt_JSONContractV1(t *testing.T) {
 	}
 	if verificationMap["policy_result"] != "pass" {
 		t.Fatalf("verification.policy_result = %v", verificationMap["policy_result"])
+	}
+	if _, ok := verificationMap["policy_decision"]; !ok {
+		t.Fatalf("verification.policy_decision is missing")
 	}
 }
