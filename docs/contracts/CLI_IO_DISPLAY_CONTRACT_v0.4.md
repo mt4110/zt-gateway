@@ -106,6 +106,8 @@
 - `verify_receipt_test.go`: receipt v1 契約
 - `trust_contract_test.go`: failure envelope 契約
 
+CI では `scripts/ci/check-zt-contract-gate.sh` が `Contract|JSONContract|E2EContract` テスト群を明示実行する。
+
 ## 4. 完了条件 (このスレの終点)
 
 1. コマンド I/O 契約をコード定数化し、`help` と `parse` が同一契約を参照

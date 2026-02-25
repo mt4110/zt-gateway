@@ -21,6 +21,11 @@ jobs:
     - name: Build
       run: nix build .#zt
 
+    - name: ZT Contract Gate
+      run: |
+        chmod +x scripts/ci/check-zt-contract-gate.sh
+        ./scripts/ci/check-zt-contract-gate.sh
+
     - name: Supply-Chain Setup JSON Gate (fixture)
       env:
         ZT_BIN: ${{ github.workspace }}/result/bin/zt
