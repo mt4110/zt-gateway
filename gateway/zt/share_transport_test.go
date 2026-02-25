@@ -103,8 +103,8 @@ func TestRenderReceiverShareJSON_Contract(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &got); err != nil {
 		t.Fatalf("json.Unmarshal returned error: %v", err)
 	}
-	if len(got) != 5 {
-		t.Fatalf("top-level keys = %d, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("top-level keys = %d, want 6", len(got))
 	}
 	if got["kind"] != "receiver_verify_hint" {
 		t.Fatalf("kind = %v", got["kind"])
@@ -135,6 +135,61 @@ func TestRenderReceiverShareJSON_Contract(t *testing.T) {
 	}
 	if !strings.Contains(command, "--receipt-out") {
 		t.Fatalf("receipt_hint.command missing --receipt-out: %v", receiptHint["command"])
+	}
+	channelTemplates, ok := got["channel_templates"].(map[string]any)
+	if !ok {
+		t.Fatalf("channel_templates missing or invalid: %#v", got["channel_templates"])
+	}
+	if channelTemplates["version"] != "v1" {
+		t.Fatalf("channel_templates.version = %v, want v1", channelTemplates["version"])
+	}
+	slackText, ok := channelTemplates["slack_text"].(string)
+	if !ok {
+		t.Fatalf("channel_templates.slack_text type = %T", channelTemplates["slack_text"])
+	}
+	if !strings.Contains(slackText, msg.Command) {
+		t.Fatalf("slack_text missing verify command: %q", slackText)
+	}
+	if !strings.Contains(slackText, msg.ReceiptHint.Command) {
+		t.Fatalf("slack_text missing receipt command: %q", slackText)
+	}
+	emailSubject, ok := channelTemplates["email_subject"].(string)
+	if !ok || strings.TrimSpace(emailSubject) == "" {
+		t.Fatalf("email_subject invalid: %v", channelTemplates["email_subject"])
+	}
+	emailBody, ok := channelTemplates["email_body"].(string)
+	if !ok {
+		t.Fatalf("channel_templates.email_body type = %T", channelTemplates["email_body"])
+	}
+	if !strings.Contains(emailBody, msg.Command) {
+		t.Fatalf("email_body missing verify command: %q", emailBody)
+	}
+	if !strings.Contains(emailBody, msg.ReceiptHint.Command) {
+		t.Fatalf("email_body missing receipt command: %q", emailBody)
+	}
+}
+
+func TestRenderReceiverShareJSON_ChannelTemplatesContract(t *testing.T) {
+	msg, ok := buildReceiverShareMessage("bundle_clientA.spkg.tgz", "ja")
+	if !ok {
+		t.Fatalf("buildReceiverShareMessage returned ok=false")
+	}
+	raw := renderReceiverShareJSON(msg)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &got); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	channelTemplates, ok := got["channel_templates"].(map[string]any)
+	if !ok {
+		t.Fatalf("channel_templates missing or invalid: %#v", got["channel_templates"])
+	}
+	slackText, ok := channelTemplates["slack_text"].(string)
+	if !ok || !strings.Contains(slackText, "受信ファイル検証のお願い") {
+		t.Fatalf("unexpected JA slack_text: %v", channelTemplates["slack_text"])
+	}
+	emailSubject, ok := channelTemplates["email_subject"].(string)
+	if !ok || !strings.Contains(emailSubject, "受信ファイル検証のお願い") {
+		t.Fatalf("unexpected JA email_subject: %v", channelTemplates["email_subject"])
 	}
 }
 
@@ -175,6 +230,9 @@ func TestStdoutShareTransport_JSONContract(t *testing.T) {
 	}
 	if _, ok := payload["receipt_hint"].(map[string]any); !ok {
 		t.Fatalf("receipt_hint missing: %#v", payload["receipt_hint"])
+	}
+	if _, ok := payload["channel_templates"].(map[string]any); !ok {
+		t.Fatalf("channel_templates missing: %#v", payload["channel_templates"])
 	}
 }
 
@@ -224,6 +282,9 @@ func TestFileShareTransportWritesJSON(t *testing.T) {
 	}
 	if !strings.Contains(s, `"receipt_hint":{"version":"v1","path":"./receipt_bundle.json","command":"zt verify --receipt-out './receipt_bundle.json' -- './bundle.spkg.tgz'"`) {
 		t.Fatalf("missing receipt_hint: %q", s)
+	}
+	if !strings.Contains(s, `"channel_templates":{"version":"v1"`) {
+		t.Fatalf("missing channel_templates: %q", s)
 	}
 }
 

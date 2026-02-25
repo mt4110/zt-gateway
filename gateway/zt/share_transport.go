@@ -57,9 +57,10 @@ func parseShareRoute(raw string) (shareRoute, error) {
 }
 
 type receiverShareMessage struct {
-	Command     string
-	Format      string
-	ReceiptHint *receiverShareReceiptHint
+	Command          string
+	Format           string
+	ReceiptHint      *receiverShareReceiptHint
+	ChannelTemplates *receiverShareChannelTemplates
 }
 
 type receiverShareReceiptHint struct {
@@ -68,15 +69,25 @@ type receiverShareReceiptHint struct {
 	Command string `json:"command"`
 }
 
+type receiverShareChannelTemplates struct {
+	Version      string `json:"version"`
+	SlackText    string `json:"slack_text"`
+	EmailSubject string `json:"email_subject"`
+	EmailBody    string `json:"email_body"`
+}
+
 func buildReceiverShareMessage(artifactPath, format string) (receiverShareMessage, bool) {
 	cmd := receiverVerifyCommand(artifactPath)
 	if cmd == "" {
 		return receiverShareMessage{}, false
 	}
+	resolvedFormat := resolveShareFormat(format)
+	receiptHint := buildReceiverReceiptHint(artifactPath)
 	return receiverShareMessage{
-		Command:     cmd,
-		Format:      resolveShareFormat(format),
-		ReceiptHint: buildReceiverReceiptHint(artifactPath),
+		Command:          cmd,
+		Format:           resolvedFormat,
+		ReceiptHint:      receiptHint,
+		ChannelTemplates: buildReceiverChannelTemplates(artifactPath, resolvedFormat, cmd, receiptHint),
 	}, true
 }
 
@@ -91,17 +102,19 @@ func renderReceiverShareText(msg receiverShareMessage) string {
 
 func renderReceiverShareJSON(msg receiverShareMessage) string {
 	payload := struct {
-		Kind        string                    `json:"kind"`
-		Format      string                    `json:"format"`
-		Command     string                    `json:"command"`
-		Text        string                    `json:"text"`
-		ReceiptHint *receiverShareReceiptHint `json:"receipt_hint,omitempty"`
+		Kind             string                         `json:"kind"`
+		Format           string                         `json:"format"`
+		Command          string                         `json:"command"`
+		Text             string                         `json:"text"`
+		ReceiptHint      *receiverShareReceiptHint      `json:"receipt_hint,omitempty"`
+		ChannelTemplates *receiverShareChannelTemplates `json:"channel_templates,omitempty"`
 	}{
-		Kind:        "receiver_verify_hint",
-		Format:      msg.Format,
-		Command:     msg.Command,
-		Text:        renderReceiverShareText(msg),
-		ReceiptHint: msg.ReceiptHint,
+		Kind:             "receiver_verify_hint",
+		Format:           msg.Format,
+		Command:          msg.Command,
+		Text:             renderReceiverShareText(msg),
+		ReceiptHint:      msg.ReceiptHint,
+		ChannelTemplates: msg.ChannelTemplates,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -122,6 +135,65 @@ func buildReceiverReceiptHint(artifactPath string) *receiverShareReceiptHint {
 		Path:    path,
 		Command: command,
 	}
+}
+
+func buildReceiverChannelTemplates(artifactPath, format, verifyCommand string, receiptHint *receiverShareReceiptHint) *receiverShareChannelTemplates {
+	base := resolveReceiverPacketBase(artifactPath)
+	if base == "" {
+		return nil
+	}
+	verifyCommand = strings.TrimSpace(verifyCommand)
+	if verifyCommand == "" {
+		verifyCommand = receiverVerifyCommand(artifactPath)
+	}
+	receiptCommand := ""
+	if receiptHint != nil {
+		receiptCommand = strings.TrimSpace(receiptHint.Command)
+	}
+	switch format {
+	case "ja":
+		return &receiverShareChannelTemplates{
+			Version:      "v1",
+			SlackText:    renderSlackTemplateJA(verifyCommand, receiptCommand),
+			EmailSubject: "[ZT Gateway] 受信ファイル検証のお願い: " + base,
+			EmailBody:    renderEmailTemplateJA(verifyCommand, receiptCommand),
+		}
+	default:
+		return &receiverShareChannelTemplates{
+			Version:      "v1",
+			SlackText:    renderSlackTemplateEN(verifyCommand, receiptCommand),
+			EmailSubject: "[ZT Gateway] Verification request: " + base,
+			EmailBody:    renderEmailTemplateEN(verifyCommand, receiptCommand),
+		}
+	}
+}
+
+func renderSlackTemplateEN(verifyCommand, receiptCommand string) string {
+	if strings.TrimSpace(receiptCommand) == "" {
+		return fmt.Sprintf("[ZT Gateway] Receiver verification request\nVerify command:\n%s", verifyCommand)
+	}
+	return fmt.Sprintf("[ZT Gateway] Receiver verification request\nVerify command:\n%s\nReceipt command (JSON evidence):\n%s", verifyCommand, receiptCommand)
+}
+
+func renderSlackTemplateJA(verifyCommand, receiptCommand string) string {
+	if strings.TrimSpace(receiptCommand) == "" {
+		return fmt.Sprintf("[ZT Gateway] 受信ファイル検証のお願い\n検証コマンド:\n%s", verifyCommand)
+	}
+	return fmt.Sprintf("[ZT Gateway] 受信ファイル検証のお願い\n検証コマンド:\n%s\nレシート保存コマンド (JSON証跡):\n%s", verifyCommand, receiptCommand)
+}
+
+func renderEmailTemplateEN(verifyCommand, receiptCommand string) string {
+	if strings.TrimSpace(receiptCommand) == "" {
+		return fmt.Sprintf("Please verify the received packet with the command below.\n\nVerify command:\n%s\n", verifyCommand)
+	}
+	return fmt.Sprintf("Please verify the received packet with the command below.\n\nVerify command:\n%s\n\nSave a JSON receipt with this command and attach the file when you reply.\n%s\n", verifyCommand, receiptCommand)
+}
+
+func renderEmailTemplateJA(verifyCommand, receiptCommand string) string {
+	if strings.TrimSpace(receiptCommand) == "" {
+		return fmt.Sprintf("受信したパケットを次のコマンドで検証してください。\n\n検証コマンド:\n%s\n", verifyCommand)
+	}
+	return fmt.Sprintf("受信したパケットを次のコマンドで検証してください。\n\n検証コマンド:\n%s\n\n次のコマンドで JSON レシートを保存し、返信時に添付してください。\n%s\n", verifyCommand, receiptCommand)
 }
 
 func receiverSuggestedReceiptPath(artifactPath string) string {

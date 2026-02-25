@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestReceiverVerifyCommandQuotesPath(t *testing.T) {
 	got := receiverVerifyCommand(" out dir/O'Brien file.spkg.tgz ")
@@ -58,5 +61,34 @@ func TestResolveShareFormatAutoLocale(t *testing.T) {
 	t.Setenv("LANG", "")
 	if got := resolveShareFormat("auto"); got != "ja" {
 		t.Fatalf("resolveShareFormat(auto) = %q, want ja", got)
+	}
+}
+
+func TestBuildReceiverChannelTemplatesContract(t *testing.T) {
+	msg, ok := buildReceiverShareMessage("bundle_clientA.spkg.tgz", "en")
+	if !ok {
+		t.Fatalf("buildReceiverShareMessage returned ok=false")
+	}
+	if msg.ChannelTemplates == nil {
+		t.Fatalf("ChannelTemplates is nil")
+	}
+	if msg.ChannelTemplates.Version != "v1" {
+		t.Fatalf("ChannelTemplates.Version = %q, want v1", msg.ChannelTemplates.Version)
+	}
+	if !strings.Contains(msg.ChannelTemplates.SlackText, msg.Command) {
+		t.Fatalf("SlackText missing verify command: %q", msg.ChannelTemplates.SlackText)
+	}
+	if !strings.Contains(msg.ChannelTemplates.SlackText, msg.ReceiptHint.Command) {
+		t.Fatalf("SlackText missing receipt command: %q", msg.ChannelTemplates.SlackText)
+	}
+	if !strings.Contains(msg.ChannelTemplates.EmailSubject, "bundle_clientA.spkg.tgz") {
+		t.Fatalf("EmailSubject missing packet base: %q", msg.ChannelTemplates.EmailSubject)
+	}
+}
+
+func TestBuildReceiverChannelTemplatesRejectsNonPacketPath(t *testing.T) {
+	templates := buildReceiverChannelTemplates("artifact.zp", "ja", "", nil)
+	if templates != nil {
+		t.Fatalf("buildReceiverChannelTemplates(non-packet) = %#v, want nil", templates)
 	}
 }

@@ -44,6 +44,11 @@
     - `version` = `v1`
     - `path` = 推奨レシート出力パス
     - `command` = `zt verify --receipt-out ...`
+  - `channel_templates` (v0.9.0 additive, optional)
+    - `version` = `v1`
+    - `slack_text` = Slack投稿向けテンプレート本文
+    - `email_subject` = メール件名テンプレート
+    - `email_body` = メール本文テンプレート
 
 ### 2.4 Verification Receipt (v1)
 
