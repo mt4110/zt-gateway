@@ -91,6 +91,45 @@ actual repo ゲート（実artifact直検査）:
 - macOS は通常 `bsdtar`、GitHub Actions `ubuntu-latest` は通常 GNU tar のため、macOS で生成した `tools.lock` は CI actual repo ゲートで失敗する可能性があります
 - CI green を狙う場合は、Ubuntu/Linux 環境で `tools.lock` を生成・署名してください
 
+## 監査証跡MVP（v0.5-A）運用確認
+
+監査ログは append-only の JSONL として `events.jsonl` に記録されます。
+
+- 既定パス: `<repo>/.zt-spool/events.jsonl`
+- 変更時: `ZT_EVENT_SPOOL_DIR` を使っている場合は `<ZT_EVENT_SPOOL_DIR>/events.jsonl`
+
+最小必須フィールド（契約）:
+
+- `event_id`
+- `event_type`
+- `timestamp`
+- `result`
+- `endpoint`
+- `payload_sha256`
+
+ローカル確認例:
+
+```bash
+tail -n 20 ./.zt-spool/events.jsonl | jq .
+```
+
+`send -> verify` 監査確認例:
+
+```bash
+jq -r '.event_type' ./.zt-spool/events.jsonl | sort | uniq -c
+```
+
+## 契約テストと担保範囲（v0.5-A 追加）
+
+- `TestAuditEventsJSONL_SchemaContract`  
+  `events.jsonl` の required fields と `payload_sha256` 算出契約を担保
+- `TestAuditEventsJSONL_ResultFallbackContract`  
+  `result` 欠落時のフォールバック（`recorded`）契約を担保
+- `TestShareJSONToVerifyToReceipt_AuditE2EContract`  
+  既存 `send -> verify` 導線で監査ログに `send` / `verify` が各1件出るE2E契約を担保
+- `scripts/ci/check-zt-contract-gate.sh`  
+  上記監査契約テストを CI 実行対象として明示
+
 ## GitHub Actions Variable 配布（`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS`）
 
 fingerprint は秘密値ではない前提のため、GitHub Actions `Variables` を推奨します（`Secrets` は fallback）。
