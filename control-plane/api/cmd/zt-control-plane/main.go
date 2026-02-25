@@ -18,6 +18,7 @@ type server struct {
 	policyDir               string
 	apiKey                  string
 	eventVerifyPub          ed25519.PublicKey
+	policySigner            *policyBundleSigner
 	eventKeyRegistryEnabled bool
 	eventKeyRegistry        map[string]eventKeyRegistryEntry
 	db                      *sql.DB
@@ -81,6 +82,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid ZT_CP_EVENT_VERIFY_PUBKEY_B64: %v", err)
 	}
+	policySigner, err := loadPolicyBundleSignerFromEnv()
+	if err != nil {
+		log.Fatalf("invalid policy signer env: %v", err)
+	}
 	keyRegistry, err := loadEventKeyRegistry(cwd)
 	if err != nil {
 		log.Fatalf("failed to load event key registry: %v", err)
@@ -113,6 +118,7 @@ func main() {
 		policyDir:               policyDir,
 		apiKey:                  apiKey,
 		eventVerifyPub:          verifyPub,
+		policySigner:            policySigner,
 		eventKeyRegistryEnabled: eventKeyRegistryEnabled,
 		eventKeyRegistry:        keyRegistry,
 		db:                      db,

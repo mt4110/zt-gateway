@@ -107,7 +107,7 @@ paths:
   /v1/policies/extension/latest:
     get:
       tags: [Policies]
-      summary: Get latest extension policy TOML
+      summary: Get latest signed extension policy bundle
       responses:
         '200':
           description: OK
@@ -125,7 +125,7 @@ paths:
   /v1/policies/scan/latest:
     get:
       tags: [Policies]
-      summary: Get latest scan policy TOML
+      summary: Get latest signed scan policy bundle
       responses:
         '200':
           description: OK
@@ -583,11 +583,16 @@ components:
     PolicyResponse:
       type: object
       properties:
+        manifest_id: { type: string }
+        profile: { type: string }
         version: { type: string }
         sha256: { type: string }
-        content_toml: { type: string }
         effective_at: { type: string, format: date-time }
-      required: [sha256, content_toml]
+        expires_at: { type: string, format: date-time }
+        key_id: { type: string }
+        signature: { type: string, description: base64-encoded Ed25519 signature }
+        content_toml: { type: string }
+      required: [manifest_id, profile, version, sha256, effective_at, expires_at, key_id, signature, content_toml]
     SignedEnvelope:
       type: object
       properties:

@@ -115,7 +115,16 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 			return
 		}
-		path := filepath.Join(s.policyDir, fileName)
+		if s.policySigner == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "policy_signing_not_configured"})
+			return
+		}
+		profile, err := normalizePolicyProfile(r.URL.Query().Get("profile"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_profile"})
+			return
+		}
+		path := policyPathForProfile(s.policyDir, fileName, profile)
 		b, err := os.ReadFile(path)
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "policy_not_found", "file": fileName})
@@ -137,12 +146,21 @@ func (s *server) handlePolicyLatest(fileName string) http.HandlerFunc {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"version":      version,
-			"sha256":       contentSHA,
-			"content_toml": string(b),
-			"effective_at": effectiveAt,
+		bundle, err := s.policySigner.Sign(policyBundle{
+			ManifestID:  policyManifestID(fileName, profile, version, contentSHA),
+			Profile:     profile,
+			Version:     version,
+			SHA256:      contentSHA,
+			EffectiveAt: effectiveAt,
+			ExpiresAt:   policyExpiresAtRFC3339(info, s.policySigner.TTL),
+			KeyID:       s.policySigner.KeyID,
+			ContentTOML: string(b),
 		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "policy_signing_failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, bundle)
 	}
 }
 

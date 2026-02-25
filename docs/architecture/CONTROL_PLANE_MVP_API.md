@@ -96,7 +96,7 @@ Purpose:
 
 Response:
 - `200 OK`
-- `{ "version": "...", "sha256": "...", "content_toml": "...", "effective_at": "..." }`
+- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"..." }`
 
 ### `GET /v1/policies/scan/latest`
 
@@ -105,7 +105,7 @@ Purpose:
 
 Response:
 - `200 OK`
-- `{ "version": "...", "sha256": "...", "content_toml": "...", "effective_at": "..." }`
+- `{ "manifest_id":"...", "profile":"...", "version":"...", "sha256":"...", "effective_at":"...", "expires_at":"...", "key_id":"...", "signature":"...", "content_toml":"..." }`
 
 ## Optional (MVP+) Endpoint
 
@@ -163,4 +163,3 @@ In short:
 - WebSocket streaming
 - Multi-region anything
 - SDKs before API stabilizes
-
