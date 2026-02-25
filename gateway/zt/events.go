@@ -116,6 +116,9 @@ func emitControlPlaneEvent(endpoint string, payload any) {
 		fmt.Fprintf(os.Stderr, "[Events] WARN enqueue failed (%s): %v\n", endpoint, err)
 		return
 	}
+	if err := cpEvents.appendAuditEvent(endpoint, payload); err != nil {
+		fmt.Fprintf(os.Stderr, "[Events] WARN audit append failed (%s): %v\n", endpoint, err)
+	}
 	if cpEvents.cfg.BaseURL != "" && cpEvents.autoSync {
 		if _, err := cpEvents.Sync(false); err != nil {
 			fmt.Fprintf(os.Stderr, "[Events] WARN sync failed: %v\n", err)
