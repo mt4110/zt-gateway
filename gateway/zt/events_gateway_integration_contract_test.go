@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -152,6 +153,109 @@ func TestGatewayEventSyncContract_KeepRetryableOnServerError(t *testing.T) {
 	}
 	if !strings.Contains(pending[0].LastError, "http_503") {
 		t.Fatalf("pending[0].LastError = %q, want contains http_503", pending[0].LastError)
+	}
+}
+
+func TestGatewayEventSyncContract_FailClosedSuppressesAutoRetryLoop(t *testing.T) {
+	var postCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		postCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"envelope.key_id_required"}`))
+	}))
+	defer srv.Close()
+
+	spool := newEventSpool(t.TempDir())
+	spool.SetAutoSync(false)
+	spool.SetControlPlaneURL(srv.URL)
+	if err := spool.Enqueue("/v1/events/scan", map[string]any{"event_id": "evt_sync_no_busy_loop"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	if _, err := spool.Sync(true); err == nil {
+		t.Fatalf("Sync(force) returned nil, want fail-closed error")
+	}
+	for i := 0; i < 3; i++ {
+		res, err := spool.Sync(false)
+		if err != nil {
+			t.Fatalf("Sync(non-force #%d) returned error: %v", i+1, err)
+		}
+		if res.Skipped != 1 {
+			t.Fatalf("Sync(non-force #%d) skipped=%d, want 1", i+1, res.Skipped)
+		}
+	}
+	if got := postCount.Load(); got != 1 {
+		t.Fatalf("post count = %d, want 1 (no busy loop retries)", got)
+	}
+
+	pending, err := readQueuedEvents(spool.pendingPath())
+	if err != nil {
+		t.Fatalf("readQueuedEvents: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending len = %d, want 1", len(pending))
+	}
+	if pending[0].Attempts != 1 {
+		t.Fatalf("pending[0].Attempts = %d, want 1", pending[0].Attempts)
+	}
+	if pending[0].ErrorClass != syncErrorClassFailClosed {
+		t.Fatalf("pending[0].ErrorClass = %q, want %q", pending[0].ErrorClass, syncErrorClassFailClosed)
+	}
+	if pending[0].FirstFailedAt == "" || pending[0].LastFailedAt == "" {
+		t.Fatalf("pending failure timestamps should be set: first=%q last=%q", pending[0].FirstFailedAt, pending[0].LastFailedAt)
+	}
+}
+
+func TestGatewayEventSyncContract_FailClosedCanResendWithForceAfterRecovery(t *testing.T) {
+	var failClosed atomic.Bool
+	failClosed.Store(true)
+	var postCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		postCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if failClosed.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"envelope.key_id_required"}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"accepted"}`))
+	}))
+	defer srv.Close()
+
+	spool := newEventSpool(t.TempDir())
+	spool.SetAutoSync(false)
+	spool.SetControlPlaneURL(srv.URL)
+	if err := spool.Enqueue("/v1/events/verify", map[string]any{"event_id": "evt_sync_force_recovery"}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	if _, err := spool.Sync(true); err == nil {
+		t.Fatalf("Sync(force initial) returned nil, want fail-closed error")
+	}
+	failClosed.Store(false)
+
+	resSkip, err := spool.Sync(false)
+	if err != nil {
+		t.Fatalf("Sync(non-force) returned error after recovery: %v", err)
+	}
+	if resSkip.Skipped != 1 {
+		t.Fatalf("Sync(non-force) skipped=%d, want 1", resSkip.Skipped)
+	}
+	if got := postCount.Load(); got != 1 {
+		t.Fatalf("post count after non-force = %d, want 1", got)
+	}
+
+	resForce, err := spool.Sync(true)
+	if err != nil {
+		t.Fatalf("Sync(force recovery) returned error: %v", err)
+	}
+	if resForce.Sent != 1 || resForce.Remaining != 0 {
+		t.Fatalf("Sync(force recovery) sent=%d remaining=%d, want 1/0", resForce.Sent, resForce.Remaining)
+	}
+	if got := postCount.Load(); got != 2 {
+		t.Fatalf("post count after force recovery = %d, want 2", got)
 	}
 }
 

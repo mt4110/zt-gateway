@@ -120,7 +120,8 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 		kept := make([]queuedEvent, 0, len(pending))
 		var terminalErr error
 		for i, q := range pending {
-			if !force && !readyForRetry(q, time.Now().UTC()) {
+			now := time.Now().UTC()
+			if !force && !readyForRetry(q, now) {
 				res.Skipped++
 				kept = append(kept, q)
 				continue
@@ -129,9 +130,14 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 				q.Attempts++
 				q.LastError = err.Error()
 				info := classifySyncError(err)
+				if q.FirstFailedAt == "" {
+					q.FirstFailedAt = now.Format(time.RFC3339Nano)
+				}
+				q.LastFailedAt = now.Format(time.RFC3339Nano)
+				q.ErrorClass = info.Class
 				if isControlPlaneFailClosedSyncError(err) {
 					// Fail-closed contract: keep the event, but stop automatic retries until config is fixed.
-					q.NextRetryAt = time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+					q.NextRetryAt = now.Add(24 * time.Hour).Format(time.RFC3339Nano)
 					kept = append(kept, q)
 					if i+1 < len(pending) {
 						kept = append(kept, pending[i+1:]...)
@@ -142,7 +148,7 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 					terminalErr = err
 					break
 				}
-				q.NextRetryAt = nextRetryAt(q.Attempts, time.Now().UTC()).Format(time.RFC3339Nano)
+				q.NextRetryAt = nextRetryAt(q.Attempts, now).Format(time.RFC3339Nano)
 				kept = append(kept, q)
 				res.LastError = err.Error()
 				res.LastErrorClass = info.Class
@@ -341,6 +347,10 @@ func rewriteQueuedEvents(path string, items []queuedEvent) error {
 }
 
 func readyForRetry(q queuedEvent, now time.Time) bool {
+	if strings.EqualFold(strings.TrimSpace(q.ErrorClass), syncErrorClassFailClosed) {
+		// fail-closed events must be retried only with explicit force after operator fix.
+		return false
+	}
 	if strings.TrimSpace(q.NextRetryAt) == "" {
 		return true
 	}

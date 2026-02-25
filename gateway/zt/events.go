@@ -31,13 +31,16 @@ type eventSpool struct {
 }
 
 type queuedEvent struct {
-	QueueID     string          `json:"queue_id"`
-	Endpoint    string          `json:"endpoint"`
-	EnqueuedAt  string          `json:"enqueued_at"`
-	Attempts    int             `json:"attempts"`
-	NextRetryAt string          `json:"next_retry_at,omitempty"`
-	LastError   string          `json:"last_error,omitempty"`
-	Payload     json.RawMessage `json:"payload"`
+	QueueID       string          `json:"queue_id"`
+	Endpoint      string          `json:"endpoint"`
+	EnqueuedAt    string          `json:"enqueued_at"`
+	Attempts      int             `json:"attempts"`
+	NextRetryAt   string          `json:"next_retry_at,omitempty"`
+	FirstFailedAt string          `json:"first_failed_at,omitempty"`
+	LastFailedAt  string          `json:"last_failed_at,omitempty"`
+	ErrorClass    string          `json:"error_class,omitempty"`
+	LastError     string          `json:"last_error,omitempty"`
+	Payload       json.RawMessage `json:"payload"`
 }
 
 type syncResult struct {
