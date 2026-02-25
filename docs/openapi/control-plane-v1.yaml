@@ -329,51 +329,6 @@ paths:
                     $ref: '#/components/schemas/EventSigningKey'
         '404':
           description: Not Found
-  /v1/admin/event-keys/{key_id}/history:
-    get:
-      tags: [Admin]
-      summary: Read append-only audit history for one event signing key
-      parameters:
-        - $ref: '#/components/parameters/ApiKeyHeader'
-        - name: key_id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 50
-        - name: action
-          in: query
-          required: false
-          schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/EventSigningKeyAuditAction'
-          style: form
-          explode: true
-          description: >
-            Filter by audit action. Preferred form is repeated query parameters;
-            comma-separated values are also accepted for compatibility.
-        - name: from
-          in: query
-          required: false
-          schema: { type: string, format: date-time }
-        - name: to
-          in: query
-          required: false
-          schema: { type: string, format: date-time }
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EventSigningKeyHistoryResponse'
     put:
       tags: [Admin]
       summary: Upsert one event signing key by key_id
@@ -428,13 +383,20 @@ paths:
           description: Not Found
     delete:
       tags: [Admin]
-      summary: Disable or delete one event signing key
+      summary: Disable or delete one event signing key (rotation-guarded)
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
         - name: key_id
           in: path
           required: true
           schema: { type: string }
+        - name: replacement_key_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: >
+            Required replacement key_id for rotation guard checks.
+            Must be an enabled key different from `key_id`.
         - name: mode
           in: query
           required: false
@@ -462,8 +424,78 @@ paths:
                   status: { type: string }
                   key_id: { type: string }
                   mode: { type: string }
+        '409':
+          description: Rotation guard condition not satisfied
         '404':
           description: Not Found
+  /v1/admin/event-keys/{key_id}/rotation-status:
+    get:
+      tags: [Admin]
+      summary: Evaluate key rotation readiness and guard conditions
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: replacement_key_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventKeyRotationStatusResponse'
+        '404':
+          description: Not Found
+  /v1/admin/event-keys/{key_id}/history:
+    get:
+      tags: [Admin]
+      summary: Read append-only audit history for one event signing key
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/EventSigningKeyAuditAction'
+          style: form
+          explode: true
+          description: >
+            Filter by audit action. Preferred form is repeated query parameters;
+            comma-separated values are also accepted for compatibility.
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSigningKeyHistoryResponse'
 components:
   parameters:
     ApiKeyHeader:
@@ -656,10 +688,10 @@ components:
     EventSigningKeyAuditAction:
       type: string
       enum:
-      enum:
-      enum:
         # BEGIN GENERATED: EventSigningKeyAuditAction
         - bootstrap_upsert
+        - admin_post
+        - admin_put
         - admin_patch
         - admin_disable
         - admin_delete
@@ -701,3 +733,33 @@ components:
           items:
             $ref: '#/components/schemas/EventSigningKeyAuditRecord'
       required: [key_id, count, limit, items]
+    EventKeyRotationStatusResponse:
+      type: object
+      properties:
+        old_key_id: { type: string }
+        replacement_key_id: { type: string }
+        evaluated_at: { type: string, format: date-time }
+        policy:
+          type: object
+          properties:
+            coexistence_min_hours: { type: integer }
+            switch_quiet_hours: { type: integer }
+            delete_hold_hours: { type: integer }
+          required: [coexistence_min_hours, switch_quiet_hours, delete_hold_hours]
+        checks:
+          type: object
+          properties:
+            replacement_key_exists: { type: boolean }
+            replacement_key_enabled: { type: boolean }
+            coexistence_elapsed: { type: boolean }
+            switch_quiet_passed: { type: boolean }
+            old_key_disabled: { type: boolean }
+            delete_hold_elapsed: { type: boolean }
+            ready_disable: { type: boolean }
+            ready_delete: { type: boolean }
+          required:
+            [replacement_key_exists, replacement_key_enabled, coexistence_elapsed, switch_quiet_passed, old_key_disabled, delete_hold_elapsed, ready_disable, ready_delete]
+        observed:
+          type: object
+          additionalProperties: true
+      required: [old_key_id, replacement_key_id, evaluated_at, policy, checks, observed]

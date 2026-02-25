@@ -164,11 +164,11 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		if !jsonOut {
 			fmt.Println("[WARN] event signing key env not configured (ZT_EVENT_SIGNING_ED25519_PRIV_B64)")
 		}
-		quickFixes = append(quickFixes, "Set `ZT_EVENT_SIGNING_ED25519_PRIV_B64` (and optional `ZT_EVENT_SIGNING_KEY_ID`) to sign events sent to Control Plane.")
+		quickFixes = append(quickFixes, "Set `ZT_EVENT_SIGNING_ED25519_PRIV_B64` (and set `ZT_EVENT_SIGNING_KEY_ID` when Control Plane event key registry is enabled) to sign events sent to Control Plane.")
 	} else {
 		keyID := signer.KeyID
 		if keyID == "" {
-			keyID = "(empty)"
+			keyID = "(empty: legacy-single-key mode; CP registry may reject with envelope.key_id_required)"
 		}
 		addCheck("event_signing_key_env", "ok", "loaded key_id="+keyID)
 		if !jsonOut {

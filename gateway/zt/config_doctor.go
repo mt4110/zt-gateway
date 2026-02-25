@@ -214,7 +214,7 @@ func runConfigDoctor(repoRoot string, args []string) error {
 	} else {
 		keyID := signer.KeyID
 		if keyID == "" {
-			keyID = "(empty)"
+			keyID = "(empty: legacy-single-key mode; CP registry may reject with envelope.key_id_required)"
 		}
 		result.Checks = append(result.Checks, doctorCheck{
 			Name:    "event_signing_key_env",

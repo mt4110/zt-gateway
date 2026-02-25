@@ -26,6 +26,11 @@ jobs:
         chmod +x scripts/ci/check-zt-contract-gate.sh
         ./scripts/ci/check-zt-contract-gate.sh
 
+    - name: Control Plane Contract Gate
+      run: |
+        chmod +x scripts/ci/check-control-plane-contract-gate.sh
+        ./scripts/ci/check-control-plane-contract-gate.sh
+
     - name: Supply-Chain Setup JSON Gate (fixture)
       env:
         ZT_BIN: ${{ github.workspace }}/result/bin/zt

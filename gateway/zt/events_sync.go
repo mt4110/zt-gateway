@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,29 @@ import (
 	"strings"
 	"time"
 )
+
+type controlPlanePostError struct {
+	StatusCode  int
+	RemoteError string
+	Body        string
+	FailClosed  bool
+}
+
+func (e *controlPlanePostError) Error() string {
+	msg := strings.TrimSpace(e.RemoteError)
+	if msg == "" {
+		msg = strings.TrimSpace(e.Body)
+	}
+	if msg == "" {
+		msg = "unknown_error"
+	}
+	return fmt.Sprintf("http_%d: %s", e.StatusCode, msg)
+}
+
+func isControlPlaneFailClosedSyncError(err error) bool {
+	var e *controlPlanePostError
+	return errors.As(err, &e) && e.FailClosed
+}
 
 func (s *eventSpool) Sync(force bool) (syncResult, error) {
 	res := syncResult{}
@@ -31,7 +55,8 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 		}
 
 		kept := make([]queuedEvent, 0, len(pending))
-		for _, q := range pending {
+		var terminalErr error
+		for i, q := range pending {
 			if !force && !readyForRetry(q, time.Now().UTC()) {
 				res.Skipped++
 				kept = append(kept, q)
@@ -40,6 +65,17 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 			if err := s.post(q); err != nil {
 				q.Attempts++
 				q.LastError = err.Error()
+				if isControlPlaneFailClosedSyncError(err) {
+					// Fail-closed contract: keep the event, but stop automatic retries until config is fixed.
+					q.NextRetryAt = time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+					kept = append(kept, q)
+					if i+1 < len(pending) {
+						kept = append(kept, pending[i+1:]...)
+					}
+					res.LastError = err.Error()
+					terminalErr = err
+					break
+				}
 				q.NextRetryAt = nextRetryAt(q.Attempts, time.Now().UTC()).Format(time.RFC3339Nano)
 				kept = append(kept, q)
 				res.LastError = err.Error()
@@ -57,6 +93,9 @@ func (s *eventSpool) Sync(force bool) (syncResult, error) {
 			return err
 		}
 		res.Remaining = len(kept)
+		if terminalErr != nil {
+			return terminalErr
+		}
 		return nil
 	})
 	return res, err
@@ -79,9 +118,36 @@ func (s *eventSpool) post(q queuedEvent) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("http_%d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		remoteErr := controlPlaneErrorField(b)
+		rawBody := strings.TrimSpace(string(b))
+		return &controlPlanePostError{
+			StatusCode:  resp.StatusCode,
+			RemoteError: remoteErr,
+			Body:        rawBody,
+			FailClosed:  isControlPlaneFailClosedResponse(resp.StatusCode, remoteErr),
+		}
 	}
 	return nil
+}
+
+func controlPlaneErrorField(body []byte) string {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	v, _ := m["error"].(string)
+	return strings.TrimSpace(v)
+}
+
+func isControlPlaneFailClosedResponse(statusCode int, remoteErr string) bool {
+	if statusCode < 400 || statusCode >= 500 {
+		return false
+	}
+	remoteErr = strings.ToLower(strings.TrimSpace(remoteErr))
+	if strings.HasPrefix(remoteErr, "envelope.") {
+		return true
+	}
+	return false
 }
 
 func appendJSONLine(path string, v any) error {

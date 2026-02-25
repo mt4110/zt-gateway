@@ -47,6 +47,19 @@
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_HASH_MISMATCH`
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_VERSION_MISMATCH`
 
+## Control Plane event sync（v0.5d-5 契約）
+
+- `ZT_EVENT_SIGNING_KEY_ID` 未設定時:
+  - envelope署名自体は実施される（legacy 単一検証鍵モード）
+  - ただし Control Plane の event key registry 有効時は `envelope.key_id_required` で reject される
+- fail-closed 条件（gateway 側固定）:
+  - Control Plane から `envelope.*` の 4xx を受信した場合、`zt sync` / `--sync-now` は失敗（exit non-zero）
+  - 失敗イベントは spool に保持されるため、設定修正後に `zt sync --force` で再送する
+- 代表エラー:
+  - `envelope.required`
+  - `envelope.key_id_required`
+  - `envelope.key_id_not_allowed`
+
 ## `zt setup --json` で見るポイント（supply-chain）
 
 優先チェック:
@@ -240,6 +253,7 @@ bash ./scripts/dev/generate-secure-pack-tools-lock.sh \
 
 - root key をローテーションしない場合でも、`ROOT_PUBKEY.asc` は同時に再出力して整合性を固定する運用を推奨
 - root key をローテーションする場合は `docs/SECURE_PACK_KEY_ROTATION_RUNBOOK.md` の併記期間/切替手順に従う
+- control-plane の event envelope 署名鍵（`/v1/admin/event-keys`）をローテーションする場合は `docs/EVENT_KEY_ROTATION_RUNBOOK.md` に従う（併存72h / 切替完了24h静穏 / delete保留7日）
 
 ## commit/push 前の最終チェック（運用標準）
 

@@ -42,6 +42,14 @@ func (s *server) handleAdminEventKeys(w http.ResponseWriter, r *http.Request) {
 			s.handleAdminEventKeyHistory(w, r, parts[0])
 			return
 		}
+		if len(parts) == 2 && parts[1] == "rotation-status" {
+			if r.Method != http.MethodGet {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
+				return
+			}
+			s.handleAdminEventKeyRotationStatus(w, r, parts[0])
+			return
+		}
 		if len(parts) > 1 {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found"})
 			return

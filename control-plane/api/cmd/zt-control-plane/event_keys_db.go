@@ -16,6 +16,19 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+type eventSigningKeyState struct {
+	KeyID        string
+	TenantID     string
+	Alg          string
+	PublicKeyB64 string
+	Enabled      bool
+	Source       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	UpdatedBy    string
+	UpdateReason string
+}
+
 func hasEventSigningKeys(ctx context.Context, db *sql.DB) (bool, error) {
 	var n int64
 	if err := db.QueryRowContext(ctx, `select count(*)::bigint from event_signing_keys where enabled = true`).Scan(&n); err != nil {
@@ -48,6 +61,66 @@ where key_id = $1
 	}
 	e.publicKey = pub
 	return e, true, nil
+}
+
+func loadEventSigningKeyStateFromDB(ctx context.Context, db *sql.DB, keyID string) (eventSigningKeyState, bool, error) {
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" {
+		return eventSigningKeyState{}, false, nil
+	}
+	var s eventSigningKeyState
+	err := db.QueryRowContext(ctx, `
+select key_id, coalesce(tenant_id,''), coalesce(alg,''), public_key_b64, enabled, coalesce(source,''), created_at, updated_at, coalesce(updated_by,''), coalesce(update_reason,'')
+from event_signing_keys
+where key_id = $1
+`, keyID).Scan(&s.KeyID, &s.TenantID, &s.Alg, &s.PublicKeyB64, &s.Enabled, &s.Source, &s.CreatedAt, &s.UpdatedAt, &s.UpdatedBy, &s.UpdateReason)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return eventSigningKeyState{}, false, nil
+		}
+		return eventSigningKeyState{}, false, err
+	}
+	return s, true, nil
+}
+
+func eventIngestFirstSeenAtByEnvelopeKey(ctx context.Context, db *sql.DB, keyID string) (time.Time, bool, error) {
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" {
+		return time.Time{}, false, nil
+	}
+	var v sql.NullTime
+	if err := db.QueryRowContext(ctx, `
+select min(received_at)
+from event_ingest
+where envelope_verified = true
+  and envelope_key_id = $1
+`, keyID).Scan(&v); err != nil {
+		return time.Time{}, false, err
+	}
+	if !v.Valid {
+		return time.Time{}, false, nil
+	}
+	return v.Time.UTC(), true, nil
+}
+
+func eventIngestLastSeenAtByEnvelopeKey(ctx context.Context, db *sql.DB, keyID string) (time.Time, bool, error) {
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" {
+		return time.Time{}, false, nil
+	}
+	var v sql.NullTime
+	if err := db.QueryRowContext(ctx, `
+select max(received_at)
+from event_ingest
+where envelope_verified = true
+  and envelope_key_id = $1
+`, keyID).Scan(&v); err != nil {
+		return time.Time{}, false, err
+	}
+	if !v.Valid {
+		return time.Time{}, false, nil
+	}
+	return v.Time.UTC(), true, nil
 }
 
 func appendEventSigningKeyAudit(ctx context.Context, db *sql.DB, rec eventSigningKeyAuditRecord) error {

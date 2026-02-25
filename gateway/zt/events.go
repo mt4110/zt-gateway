@@ -103,7 +103,12 @@ func runSyncEvents(force bool) {
 	}
 	res, err := cpEvents.Sync(force)
 	if err != nil {
-		fmt.Printf("[SYNC] failed: %v\n", err)
+		if isControlPlaneFailClosedSyncError(err) {
+			fmt.Printf("[SYNC] fail-closed: %v\n", err)
+			fmt.Println("[SYNC] Fix event signing config (key_id/allowed key) and retry with `zt sync --force`.")
+		} else {
+			fmt.Printf("[SYNC] failed: %v\n", err)
+		}
 		os.Exit(1)
 	}
 	if !res.Configured {
@@ -129,7 +134,12 @@ func emitControlPlaneEvent(endpoint string, payload any) {
 	}
 	if cpEvents.cfg.BaseURL != "" && cpEvents.autoSync {
 		if _, err := cpEvents.Sync(false); err != nil {
-			fmt.Fprintf(os.Stderr, "[Events] WARN sync failed: %v\n", err)
+			if isControlPlaneFailClosedSyncError(err) {
+				fmt.Fprintf(os.Stderr, "[Events] FAIL-CLOSED sync rejected by control-plane: %v\n", err)
+				fmt.Fprintln(os.Stderr, "[Events] Fix ZT_EVENT_SIGNING_KEY_ID / key registry mapping, then run `zt sync --force`.")
+			} else {
+				fmt.Fprintf(os.Stderr, "[Events] WARN sync failed: %v\n", err)
+			}
 		}
 	}
 }
