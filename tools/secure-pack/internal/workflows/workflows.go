@@ -1,8 +1,15 @@
 package workflows
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/algo-artis/secure-pack/internal/config"
@@ -10,8 +17,241 @@ import (
 	"github.com/algo-artis/secure-pack/internal/pack"
 )
 
+const (
+	securePackRootPubKeyFingerprintEnv   = "SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS"
+	securePackRootPubKeyFingerprintZTEnv = "ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS"
+)
+
+// Optional compiled-in allowlist for distributed builds.
+var securePackRootPubKeyFingerprintPins = []string{}
+
+var verifyToolPinFunc = verifyToolPin
+
+func verifySupplyChainLock(cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("nil config")
+	}
+	lockPath := cfg.ToolsLock
+	rootPubKeyPath := cfg.RootPubKey
+	if lockPath == "" {
+		return fmt.Errorf("tools.lock path is empty")
+	}
+	if rootPubKeyPath == "" {
+		return fmt.Errorf("ROOT_PUBKEY.asc path is empty")
+	}
+	sigPath := lockPath + ".sig"
+	for _, p := range []string{lockPath, sigPath, rootPubKeyPath} {
+		if _, err := os.Stat(p); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("required supply-chain file not found: %s", filepath.Base(p))
+			}
+			return fmt.Errorf("failed to stat %s: %w", p, err)
+		}
+	}
+	lockCfg, err := config.LoadToolsLock(lockPath)
+	if err != nil {
+		return fmt.Errorf("failed to load tools.lock: %w", err)
+	}
+
+	gnupgHome, err := os.MkdirTemp("", "secure-pack-root-verify-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp gpg home: %w", err)
+	}
+	defer os.RemoveAll(gnupgHome)
+
+	gp := gpg.New(gnupgHome)
+	if err := gp.ImportKey(rootPubKeyPath); err != nil {
+		return fmt.Errorf("failed to import ROOT_PUBKEY.asc: %w", err)
+	}
+	allowedPins, err := resolveSecurePackRootPubKeyFingerprintPins()
+	if err != nil {
+		return fmt.Errorf("root key fingerprint pin configuration invalid: %w", err)
+	}
+	if len(allowedPins) == 0 {
+		return fmt.Errorf("no trusted root key fingerprint pins configured (set %s or %s)", securePackRootPubKeyFingerprintEnv, securePackRootPubKeyFingerprintZTEnv)
+	}
+	actualFingerprint, err := gpgPrimaryFingerprint(gnupgHome)
+	if err != nil {
+		return fmt.Errorf("failed to read ROOT_PUBKEY.asc fingerprint: %w", err)
+	}
+	if !fingerprintPinned(actualFingerprint, allowedPins) {
+		return fmt.Errorf("ROOT_PUBKEY.asc fingerprint mismatch: got %s, allowed=%s", actualFingerprint, strings.Join(allowedPins, ","))
+	}
+	if err := gp.VerifyFile(sigPath, lockPath); err != nil {
+		return fmt.Errorf("tools.lock signature verification failed: %w", err)
+	}
+	if err := verifyToolPinFunc("gpg", lockCfg.GpgSHA256, lockCfg.GpgVersion); err != nil {
+		return fmt.Errorf("gpg pin verification failed: %w", err)
+	}
+	if err := verifyToolPinFunc("tar", lockCfg.TarSHA256, lockCfg.TarVersion); err != nil {
+		return fmt.Errorf("tar pin verification failed: %w", err)
+	}
+	return nil
+}
+
+func gpgPrimaryFingerprint(gnupgHome string) (string, error) {
+	args := []string{"--batch", "--with-colons", "--fingerprint", "--no-autostart", "--homedir", gnupgHome, "--list-keys"}
+	out, err := exec.Command("gpg", args...).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
+		return "", err
+	}
+	return parsePrimaryFingerprintFromGPGColons(string(out))
+}
+
+func verifyToolPin(toolName, expectedSHA256, expectedVersion string) error {
+	path, err := exec.LookPath(toolName)
+	if err != nil {
+		return fmt.Errorf("%s not found in PATH: %w", toolName, err)
+	}
+
+	actualSHA256, err := fileSHA256(path)
+	if err != nil {
+		return fmt.Errorf("sha256 compute failed for %s (%s): %w", toolName, path, err)
+	}
+	if actualSHA256 != strings.ToLower(expectedSHA256) {
+		return fmt.Errorf("sha256 mismatch for %s (%s): expected %s, got %s", toolName, path, expectedSHA256, actualSHA256)
+	}
+
+	actualVersion, err := commandVersionLine(toolName)
+	if err != nil {
+		return fmt.Errorf("version check failed for %s: %w", toolName, err)
+	}
+	if actualVersion != expectedVersion {
+		return fmt.Errorf("version mismatch for %s: expected %q, got %q", toolName, expectedVersion, actualVersion)
+	}
+	return nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func commandVersionLine(toolName string) (string, error) {
+	out, err := exec.Command(toolName, "--version").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
+		return "", err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line != "" {
+			return line, nil
+		}
+	}
+	return "", fmt.Errorf("empty version output")
+}
+
+func parsePrimaryFingerprintFromGPGColons(colonOutput string) (string, error) {
+	for _, line := range strings.Split(colonOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "fpr:") {
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) <= 9 {
+			continue
+		}
+		fp, err := normalizePGPFingerprint(parts[9])
+		if err != nil {
+			return "", err
+		}
+		return fp, nil
+	}
+	return "", fmt.Errorf("no fingerprint found in gpg output")
+}
+
+func resolveSecurePackRootPubKeyFingerprintPins() ([]string, error) {
+	raw := append([]string(nil), securePackRootPubKeyFingerprintPins...)
+	if env := strings.TrimSpace(os.Getenv(securePackRootPubKeyFingerprintEnv)); env != "" {
+		raw = append(raw, splitFingerprintPins(env)...)
+	}
+	if env := strings.TrimSpace(os.Getenv(securePackRootPubKeyFingerprintZTEnv)); env != "" {
+		raw = append(raw, splitFingerprintPins(env)...)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		fp, err := normalizePGPFingerprint(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fingerprint %q: %w", strings.TrimSpace(v), err)
+		}
+		if _, ok := seen[fp]; ok {
+			continue
+		}
+		seen[fp] = struct{}{}
+		out = append(out, fp)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func splitFingerprintPins(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ',', ';', '\n', '\r':
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func normalizePGPFingerprint(s string) (string, error) {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, " ", "")
+	if s == "" {
+		return "", fmt.Errorf("empty")
+	}
+	if len(s) != 40 && len(s) != 64 {
+		return "", fmt.Errorf("must be 40 or 64 hex chars")
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'A' && r <= 'F':
+		default:
+			return "", fmt.Errorf("must be hex")
+		}
+	}
+	return s, nil
+}
+
+func fingerprintPinned(actual string, allowed []string) bool {
+	for _, v := range allowed {
+		if actual == v {
+			return true
+		}
+	}
+	return false
+}
+
 // SenderWorkflow handles the encryption and packing process
 func SenderWorkflow(cfg *config.Config, client string) (string, error) {
+	if err := verifySupplyChainLock(cfg); err != nil {
+		return "", withCode(classifySupplyChainVerifyError(err), fmt.Errorf("supply-chain verification failed: %w", err))
+	}
+
 	// 1. Env & Recipients Check
 	recipFile := fmt.Sprintf("%s/%s.txt", cfg.RecipientsDir, client)
 	recips, err := gpg.GetFingerprintsFromRecipientsFile(recipFile)

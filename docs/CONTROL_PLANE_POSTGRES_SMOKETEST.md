@@ -101,8 +101,15 @@ export ZT_CONTROL_PLANE_URL='http://127.0.0.1:8080'
 export ZT_EVENT_SIGNING_KEY_ID='dev-smoke'
 export ZT_EVENT_SIGNING_ED25519_PRIV_B64='REPLACE_WITH_BASE64_ED25519_PRIVATE_KEY_OR_SEED'
 
-go run ./gateway/zt send safe.txt
-go run ./gateway/zt verify artifact.zp
+bash ./scripts/dev/setup-secure-pack-localtest-gpg.sh
+export GNUPGHOME="$PWD/tmp/gnupg-smoketest"
+ROOT_FPR="$(gpg --show-keys --with-colons ./tools/secure-pack/ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+
+echo "control-plane smoke payload" > safe.txt
+go run ./gateway/zt send --client local-smoketest --allow-degraded-scan --force-public safe.txt
+PACKET_PATH="$(ls -t ./bundle_local-smoketest_*.spkg.tgz | head -n 1)"
+go run ./gateway/zt verify "$PACKET_PATH"
 ```
 
 ## 5. Verify JSONL + Postgres

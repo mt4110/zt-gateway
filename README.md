@@ -22,20 +22,46 @@
 
 ### 送信側（コピペ最短）
 
-1. セットアップ確認
+1. `ROOT_PUBKEY.asc` fingerprint pin を設定（必須 / fail-closed）
+
+`zt setup` / `zt send` は `ROOT_PUBKEY.asc` の fingerprint pin が未設定だと失敗します。
+まず `ROOT_PUBKEY.asc` の fingerprint を別経路で確認し、環境変数に固定してください。
+
+```bash
+# 例: repo内の ROOT_PUBKEY.asc から fingerprint を取得（表示値は別経路で照合）
+ROOT_FPR="$(gpg --show-keys --with-colons ./tools/secure-pack/ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+
+# zt（setup / send precheck）で使う pin
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+
+# 参考: secure-pack 単体実行ではこちらでも可（複数許容・ローテーション用）
+export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+```
+
+複数 fingerprint を許容する例（鍵ローテーション時）:
+
+```bash
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="OLD_FPR_40HEX,NEW_FPR_40HEX"
+```
+
+2. セットアップ確認
 
 ```bash
 go run ./gateway/zt setup
 go run ./gateway/zt setup --json   # サポート/自動化向け
 ```
 
-2. 送信（標準フロー）
+運用向け: 鍵ローテーション手順は `docs/SECURE_PACK_KEY_ROTATION_RUNBOOK.md` を参照（旧+新 pin 併記期間 / 切替日 / 削除日 / rollback を明文化）。
+
+3. 送信（標準フロー）
 
 ```bash
-go run ./gateway/zt send --copy-command ./safe.txt
+go run ./gateway/zt send --client <recipient-name> --copy-command ./safe.txt
 ```
 
-3. 新 secure-pack 経路（spkg.tgz を使う場合）
+注: `zt send` は `--client <recipient-name>` 必須になり、legacy `artifact.zp` 経路は削除されました。
+
+4. 新 secure-pack 経路（spkg.tgz を使う場合）
 
 ```bash
 go run ./gateway/zt send --client <recipient-name> --copy-command --share-format auto ./safe.txt
@@ -46,8 +72,6 @@ go run ./gateway/zt send --client <recipient-name> --copy-command --share-format
 送信側の `[SHARE TEXT]` / `[SHARE]` に表示されたコマンドをそのまま実行:
 
 ```bash
-zt verify ./artifact.zp
-# または
 zt verify ./bundle_xxx.spkg.tgz
 ```
 
@@ -67,6 +91,177 @@ go run ./gateway/zt config doctor --json
 go run ./gateway/zt setup --json
 go run ./gateway/zt --help-advanced
 ```
+
+- secure-pack のローカル smoke 手順: `docs/SECURE_PACK_SMOKETEST.md`
+- `tools.lock` pin mismatch（macOS/Homebrew 差分）運用方針: `docs/SECURE_PACK_LOCAL_EXECUTION_POLICY.md`
+- Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
+
+## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.3.x)
+
+`zt send` の `--share-json` は、受信側に渡す検証コマンド共有用の payload を **JSON 1オブジェクト** で出力します。
+
+- 対象 route: `stdout`, `file:<path>`（`clipboard`, `command-file:<path>` はコマンド文字列のみ）
+- 推奨: CI/Slack 連携では `--share-route none --share-route file:<path> --share-json` を使う
+- 理由: `zt send` 本体の進行ログは通常どおり stdout に出るため、`stdout` を丸ごとJSONとして扱わないため
+
+推奨例（CIで JSON をファイル経由で受ける）:
+
+```bash
+go run ./gateway/zt send \
+  --client <recipient-name> \
+  --share-route none \
+  --share-route file:/tmp/zt-share.json \
+  --share-json \
+  ./safe.txt
+```
+
+Slack 投稿例（shared text をそのまま使う）:
+
+```bash
+jq -r '.text' /tmp/zt-share.json
+```
+
+Slack 投稿例（コマンドだけ使う）:
+
+```bash
+jq -r '.command' /tmp/zt-share.json
+```
+
+### 固定スキーマ（現在の契約）
+
+`--share-json` の payload は次のフィールドを持ちます。
+
+- `kind` (string): 現在は固定値 `receiver_verify_hint`
+- `format` (string): `ja` または `en`（`--share-format auto` 指定時も解決後の値）
+- `command` (string): 受信側で実行する `zt verify ...` コマンド
+- `text` (string): 人間向け共有文（ローカライズ済み、末尾改行を含む）
+
+JSON 例（英語）:
+
+```json
+{
+  "kind": "receiver_verify_hint",
+  "format": "en",
+  "command": "zt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'",
+  "text": "Please run the following command on the receiver side to verify the file.\nzt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'\n"
+}
+```
+
+JSON 例（日本語）:
+
+```json
+{
+  "kind": "receiver_verify_hint",
+  "format": "ja",
+  "command": "zt verify -- './bundle_xxx.spkg.tgz'",
+  "text": "受信側で次のコマンドを実行して検証してください。\nzt verify -- './bundle_xxx.spkg.tgz'\n"
+}
+```
+
+### 互換性ルール（CI/Slack 実装向け）
+
+- `v0.3.x` では上記4フィールドを維持します
+- 将来の拡張では **フィールド追加を優先** し、既存フィールドの意味変更は避けます
+- 連携側は未知フィールドを無視し、`kind` を見て分岐してください
+- 機械処理は `command` を優先し、人間向け表示は `text` を使ってください
+- `text` はローカライズされるため、文字列一致での判定には使わないでください
+
+## 対象ユーザー（誰向けのツールか）
+
+想定ユーザー（Primary）:
+
+- 小〜中規模の開発チーム / 情シス: Slack/メール等の「信用しない経路」でファイル受け渡しをしたい
+- セキュリティ担当 / 監査対応担当: 「送った/検証した」証跡をローカル起点で残したい
+- OSS / 受託開発チーム: SaaS必須にせず、まずローカル運用から始めたい
+- CI/CD 担当: `zt setup --json` / `zt config doctor --json` / `zt send --share-json` で自動化したい
+
+現時点でまだ非推奨（Not yet）:
+
+- 全社標準の機密ファイル転送基盤として即導入（pre-release / 統合途中）
+- 全ファイル形式の CDR を前提にした運用
+- 厳格な鍵ライフサイクル管理や HSM 連携が必須の環境
+
+導入の現実的な入り口:
+
+- まずは `SCAN_ONLY` 対象（`.txt` / `.csv` / `.json` / `.pdf` など）で小さく開始
+- 受信側は `zt verify` を運用手順に固定
+- 監査/連携は `--share-json` と event spool から段階導入
+
+## なぜ安全なのか（現時点の設計意図） / どこまで安全か
+
+先に結論:
+
+- このツールは「ネットワークを信用しない」前提で、**ローカル検査 + 再構成 + 封緘 + 検証** を積み上げて安全性を上げる設計です
+- 一方で、**pre-release かつ統合途中**のため、README の [現状の安全境界](#現状の安全境界-重要) と [THREAT_MODEL.md](./THREAT_MODEL.md) / [SECURITY.md](./SECURITY.md) を前提に使ってください
+- 特に強い保証が必要な運用では、`zt send --client <name>` による `*.spkg.tgz` + `zt verify` を推奨します（legacy PoC 経路は暫定）
+
+### 安全の考え方（図）
+
+```mermaid
+flowchart LR
+    U["送信者 (ローカル端末)"] --> ZT["zt send (オーケストレータ)"]
+    ZT --> P["拡張子/サイズ ポリシー判定"]
+    P --> S["secure-scan (AV/YARA/ポリシー)"]
+    S --> R["secure-rebuild (対応形式のみ再構成)"]
+    R --> K["secure-pack (暗号化・署名・封緘)"]
+    K --> N["信用しない経路 (Slack/メール/共有ストレージ)"]
+    N --> V["zt verify / secure-pack verify"]
+    V --> OK["受信側で改ざん検知 / 署名・整合性確認"]
+
+    ZT -. event spool .-> E["ローカル証跡 (.zt-spool)"]
+    E -. optional sync .-> CP["Control Plane (任意)"]
+```
+
+### セキュリティリスクを潰している点（現状）
+
+- デフォルト拒否の拡張子ポリシー: 未知拡張子や危険な圧縮/実行形式は `DENY`（`gateway/zt/ext_policy.go`）
+- サイズ上限のポリシー適用: 過大ファイルを入口で拒否可能（`gateway/zt/ext_policy.go`）
+- `SCAN_REBUILD` と `SCAN_ONLY` の分離: 対応形式だけ再構成、その他はポリシーで明示（`gateway/zt/ext_policy.go`）
+- `zt send` / `zt scan` 入口で拡張子と MIME/magic bytes の基本整合チェックを行い、偽装（例: `*.txt` に EXE / `*.pdf` に ZIP）を block
+- `secure-scan` JSON モードで findings/errors を `deny` 扱い（`tools/secure-scan/cmd/secure-scan/json_scan.go`）
+- `extension_policy.toml` / `scan_policy.toml` の parse/load エラー時は `zt send` を fail-closed（設定破損で安全性が静かに低下しない）
+- `secure-pack send` は `tools.lock` / `tools.lock.sig` / `ROOT_PUBKEY.asc` を必須にし、送信前に root key fingerprint pin + `tools.lock` 署名検証 + `gpg`/`tar` hash/version pin 照合を実施（供給網の改ざん検知）
+- `secure-pack verify` 経路では署名検証 + SHA256 照合を実施（`tools/secure-pack/internal/pack/unpack.go`）
+- イベントはローカル spool に退避でき、Control Plane 未設定でも送信処理を止めない（運用継続性）（`gateway/zt/events.go`）
+- イベント署名（任意）: Ed25519 で envelope 署名可能（`gateway/zt/events_emit.go`）
+- `zt setup` / `zt config doctor` による事前診断（鍵ENV、spool書込、CP URL、ツール有無、ClamAV DB など）
+
+### 現在の穴・未完了の点（重要）
+
+以下は「既知ギャップ」です。運用で回避しつつ、今後潰す前提です。
+
+- legacy `artifact.zp` send/verify 経路は削除済み。運用/ドキュメント/自動化が `*.spkg.tgz` 前提に揃っているかの確認は引き続き必要（`gateway/zt/commands_flow.go`, `gateway/zt/commands_verify.go`）
+- `secure-scan` 自体は strict 未指定かつ scanner 不在時に `allow`（degraded）になり得るため、`zt send` では strict を安全デフォルトにしている（`tools/secure-scan/cmd/secure-scan/json_scan.go`, `gateway/zt/commands_flow.go`）
+- `zt` 側は厳格な `scan_policy` を前提にしているが、運用で `required_scanners` / `require_clamav_db` を弱めると degraded 許容が起こり得る（`gateway/zt/scan_policy.go`, `tools/secure-scan/cmd/secure-scan/json_scan.go`）
+- MIME/magic bytes 整合チェックは基本実装済みだが、対応形式はまだ限定的（主に text/PDF/JPEG/PNG/GIF/WebP/OOXML/一部アーカイブ署名）。Windows 日本語環境向けに Shift-JIS 系の text 判定も保守的に許容。深い形式検証や MIME 判定網羅は今後の強化項目（`gateway/zt/file_type_guard.go`, [THREAT_MODEL.md](./THREAT_MODEL.md)）
+- `ROOT_PUBKEY.asc` の fingerprint pin は env / 配布ビルドの固定値前提。pin 配布（端末/CI）を標準手順にしないと、fail-closed で `zt setup` / `zt send` / `secure-pack send` が止まる（意図どおり）
+
+### 現時点での安全な運用ガイド（推奨）
+
+- 送受信は `*.spkg.tgz` を標準手順に固定する（legacy `artifact.zp` は廃止）
+- `zt send --client <name>` を標準手順にする（legacy フォールバックを踏まない）
+- `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` はローカル検証用途に限定
+- `policy/scan_policy.toml` で `required_scanners` / `require_clamav_db=true` を維持（弱める変更はレビュー対象にする）
+- `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
+- `zt setup --json` / `zt config doctor --json` を CI に入れて設定劣化を検知（fixtureゲート: `scripts/ci/check-zt-setup-json-gate.sh`）
+- 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
+- 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
+
+補足:
+
+- `zt setup --json` は supply-chain pin の補助フィールド `resolved.actual_root_fingerprint` / `resolved.pin_source` / `resolved.pin_match_count` を出力します（CI・問い合わせ切り分け向け）
+- `zt send` precheck 失敗時は `ZT_ERROR_CODE=ZT_PRECHECK_SUPPLY_CHAIN_FAILED`、`secure-pack send` は `SECURE_PACK_ERROR_CODE=...` を出力します
+- 運用一次対応の共通参照（CI/Helpdesk/runbook）は `docs/OPERATIONS.md` を正本として使用
+
+### 運用・CIの共通参照（短縮版）
+
+詳細は `docs/OPERATIONS.md` を参照してください（正本）。
+
+- 代表エラーコード一覧（`zt` / `secure-pack`）
+- `zt setup --json` の確認ポイント（`checks[]`, `resolved.pin_*`）
+- CI ゲート（fixture / actual repo）の使い分け
+- GitHub Actions Variable 配布（`gh variable set` / `gh api` / `curl`）
+- 実artifact配置 -> actual repo ゲート通過の手順
 
 ## 何を自動でやるのか（利用者に見せたい体験）
 

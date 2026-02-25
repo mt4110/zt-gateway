@@ -6,6 +6,7 @@ import (
 
 	"github.com/algo-artis/secure-pack/internal/config"
 	"github.com/algo-artis/secure-pack/internal/ui"
+	"github.com/algo-artis/secure-pack/internal/workflows"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
@@ -25,7 +26,10 @@ for transfer over insecure channels like Slack.`,
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		if code := workflows.ErrorCode(err); code != "" {
+			fmt.Fprintf(os.Stderr, "SECURE_PACK_ERROR_CODE=%s\n", code)
+		}
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -40,7 +44,7 @@ func runInteractive() {
 	cfg := config.NewConfig(cwd)
 	p := tea.NewProgram(ui.InitialModel(cfg))
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }

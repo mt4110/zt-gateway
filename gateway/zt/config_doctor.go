@@ -29,6 +29,7 @@ type doctorResolved struct {
 
 type doctorResult struct {
 	OK            bool           `json:"ok"`
+	ErrorCode     string         `json:"error_code,omitempty"`
 	SchemaVersion int            `json:"schema_version"`
 	GeneratedAt   string         `json:"generated_at"`
 	Command       string         `json:"command"`
@@ -49,12 +50,26 @@ func runConfigDoctor(repoRoot string, args []string) error {
 	var jsonOut bool
 	fs.BoolVar(&jsonOut, "json", false, "Emit machine-readable JSON output")
 	if err := fs.Parse(args); err != nil {
+		printZTErrorCode(ztErrorCodeConfigUsage)
 		return err
 	}
 	if len(fs.Args()) != 0 {
 		if jsonOut {
+			result := doctorResult{
+				OK:            false,
+				ErrorCode:     ztErrorCodeConfigUsage,
+				SchemaVersion: 1,
+				GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+				Command:       "zt config doctor",
+				Argv:          append([]string(nil), os.Args...),
+				ExitCode:      1,
+				Version:       ztVersion,
+				RepoRoot:      repoRoot,
+			}
+			emitDoctorJSON(result)
 			return fmt.Errorf("config doctor failed")
 		}
+		printZTErrorCode(ztErrorCodeConfigUsage)
 		return fmt.Errorf("Usage: zt config doctor [--json]")
 	}
 
@@ -78,9 +93,11 @@ func runConfigDoctor(repoRoot string, args []string) error {
 		if jsonOut {
 			result.OK = false
 			result.ExitCode = 1
+			result.ErrorCode = ztErrorCodeConfigDoctorFailed
 			emitDoctorJSON(result)
 			return fmt.Errorf("config doctor failed")
 		}
+		printZTErrorCode(ztErrorCodeConfigDoctorFailed)
 		fmt.Printf("[FAIL] zt_client.toml parse error: %v\n", cfgErr)
 		return fmt.Errorf("config doctor failed")
 	}
@@ -211,6 +228,7 @@ func runConfigDoctor(repoRoot string, args []string) error {
 		result.ExitCode = 0
 	} else {
 		result.ExitCode = 1
+		result.ErrorCode = ztErrorCodeConfigDoctorFailed
 	}
 	if jsonOut {
 		emitDoctorJSON(result)
@@ -242,6 +260,7 @@ func runConfigDoctor(repoRoot string, args []string) error {
 	}
 	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
 	if result.Failures > 0 {
+		printZTErrorCode(ztErrorCodeConfigDoctorFailed)
 		return fmt.Errorf("config doctor failed")
 	}
 	return nil

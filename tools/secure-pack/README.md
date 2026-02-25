@@ -46,6 +46,28 @@ nix develop
 
 ## 使い方 (CLI)
 
+### 事前準備: `ROOT_PUBKEY.asc` fingerprint pin（必須 / fail-closed）
+
+`secure-pack send` は `ROOT_PUBKEY.asc` の fingerprint pin が未設定だと失敗します。
+`tools.lock` 署名検証の前に、root key 自体の正当性を確認するためです。
+
+```bash
+# fingerprint を取得（表示値は別経路で照合してから使用）
+ROOT_FPR="$(gpg --show-keys --with-colons ./ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+
+# secure-pack 単体CLIで使う pin（推奨）
+export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+
+# zt と共通化したい場合はこの env 名でも可（secure-pack 側も受理）
+export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
+```
+
+鍵ローテーション時は複数 fingerprint を許容できます（`,` または改行区切り）:
+
+```bash
+export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="OLD_FPR_40HEX,NEW_FPR_40HEX"
+```
+
 ### 1. 送信者 (Sender)
 ファイルを暗号化して、送信用のパケットを作成します。
 内部処理: `tar` (アーカイブ) -> `gpg` (暗号化) -> `gpg` (署名) -> `tar` (パッケージング)

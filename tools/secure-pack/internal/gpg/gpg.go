@@ -1,6 +1,7 @@
 package gpg
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -20,20 +21,25 @@ func (g *GPGWrapper) run(args ...string) error {
 	if g.HomeDir != "" {
 		cmd.Env = append(os.Environ(), "GNUPGHOME="+g.HomeDir)
 	}
-	// For now, let's inherit stderr to see errors, stdout captured if needed
-	// cmd.Stderr = os.Stderr
-	// In TUI apps, we shouldn't write to stderr directly.
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // ImportKey imports a public key file
 func (g *GPGWrapper) ImportKey(path string) error {
-	return g.run("--batch", "--quiet", "--import", path)
+	return g.run("--batch", "--quiet", "--no-autostart", "--import", path)
 }
 
 // VerifyFile verifies a signature
 func (g *GPGWrapper) VerifyFile(sigFile, dataFile string) error {
-	return g.run("--batch", "--quiet", "--verify", sigFile, dataFile)
+	return g.run("--batch", "--quiet", "--no-autostart", "--verify", sigFile, dataFile)
 }
 
 // Encrypt encrypts data for recipients
