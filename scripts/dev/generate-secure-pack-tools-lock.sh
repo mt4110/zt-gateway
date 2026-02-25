@@ -110,6 +110,7 @@ echo "  gpg_path=${gpg_path}"
 echo "  tar_path=${tar_path}"
 echo
 echo "Next:"
-echo "  1. Update GitHub Actions Variable: ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS=${root_fpr}"
+echo "  1. Update GitHub Actions Variable (recommended):"
+echo "     bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins \"${root_fpr}\""
 echo "  2. Run: bash ./scripts/ci/check-zt-setup-json-actual-gate.sh"
 echo "  3. Run: bash ./scripts/ci/check-pre-push-readiness.sh"

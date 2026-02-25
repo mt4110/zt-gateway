@@ -308,7 +308,17 @@ jq -r '.event_type' ./.zt-spool/events.jsonl | sort | uniq -c
 
 fingerprint は秘密値ではない前提のため、GitHub Actions `Variables` を推奨します（`Secrets` は fallback）。
 
-`gh` CLI（推奨: expected pins 経由の自動bootstrap）:
+1コマンド bootstrap（推奨）:
+
+```bash
+# 推奨: 承認済み pins を明示
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX"
+
+# One-trust（ローカル ROOT_PUBKEY 依存）
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+```
+
+`gh` CLI（手動運用時）:
 
 ```bash
 gh variable set ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED \

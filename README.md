@@ -43,6 +43,16 @@ CIでの zero-trust 寄り運用（推奨）:
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を保護変数として配布
 - `scripts/ci/check-zt-setup-json-actual-gate.sh` が `ROOT_PUBKEY.asc` の fingerprint 一致を検証後、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
 
+1コマンド登録（GitHub Variables）:
+
+```bash
+# 推奨: 承認済み pin を明示（鍵ローテーション時は old,new）
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX"
+
+# One-trust: ローカル ROOT_PUBKEY.asc をそのまま登録
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+```
+
 複数 fingerprint を許容する例（鍵ローテーション時）:
 
 ```bash
@@ -321,7 +331,7 @@ flowchart LR
 - v0.8.0 実装チケット分割は `docs/architecture/V0.8.0_IMPLEMENTATION_TICKETS.md`
 - v0.9.0 設計正本は `docs/architecture/V0.9.0_DESIGN.md`
 - v0.9.0 実装チケット分割は `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`
-- 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
+- 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
 補足:

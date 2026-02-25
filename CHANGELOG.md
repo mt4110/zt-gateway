@@ -26,6 +26,7 @@
 - v0.9.0 architecture baseline docs (`docs/architecture/V0.9.0_DESIGN.md`, `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`)
 - expected-pin bootstrap for `check-zt-setup-json-actual-gate.sh` (`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED`)
 - v1 blueprint freeze decisions for receipt ID / audit retention / trust profile thresholds / OS fix priority
+- one-command CI variable bootstrap script (`scripts/dev/bootstrap-ci-root-pin-expected.sh`)
 
 ### Changed
 
