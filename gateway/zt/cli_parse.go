@@ -41,7 +41,7 @@ func parseSendArgs(args []string) (sendOptions, error) {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return sendOptions{}, fmt.Errorf("Usage: zt send --client <name> [--profile public|internal|confidential|regulated] [--strict | --allow-degraded-scan] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-json] [--share-format auto|ja|en] <file>")
+		return sendOptions{}, fmt.Errorf(cliSendUsage)
 	}
 	if strings.TrimSpace(client) == "" {
 		return sendOptions{}, fmt.Errorf("zt send requires --client <name> (legacy artifact.zp path was removed)")
@@ -100,7 +100,7 @@ func parseSetupArgs(args []string) (setupOptions, error) {
 	}
 	opts.Profile = profile
 	if len(fs.Args()) != 0 {
-		return setupOptions{}, fmt.Errorf("Usage: zt setup [--json] [--profile public|internal|confidential|regulated]")
+		return setupOptions{}, fmt.Errorf(cliSetupUsage)
 	}
 	return opts, nil
 }
@@ -121,7 +121,7 @@ func parseScanArgs(args []string) (scanOptions, error) {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return scanOptions{}, fmt.Errorf("Usage: zt scan [--tui] [--force-public] [--update] [--strict] [--no-auto-sync] <path>")
+		return scanOptions{}, fmt.Errorf(cliScanUsage)
 	}
 	opts.Target = rest[0]
 	return opts, nil
@@ -136,7 +136,7 @@ func parseSyncArgs(args []string) (syncOptions, error) {
 		return syncOptions{}, err
 	}
 	if len(fs.Args()) != 0 {
-		return syncOptions{}, fmt.Errorf("Usage: zt sync [--force]")
+		return syncOptions{}, fmt.Errorf(cliSyncUsage)
 	}
 	return opts, nil
 }
@@ -153,7 +153,7 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		return verifyOptions{}, fmt.Errorf("Usage: zt verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>")
+		return verifyOptions{}, fmt.Errorf(cliVerifyUsage)
 	}
 	opts.ArtifactPath = rest[0]
 	return opts, nil

@@ -70,7 +70,7 @@ func runConfigDoctor(repoRoot string, args []string) error {
 			return fmt.Errorf("config doctor failed")
 		}
 		printZTErrorCode(ztErrorCodeConfigUsage)
-		return fmt.Errorf("Usage: zt config doctor [--json]")
+		return fmt.Errorf(cliConfigUsage)
 	}
 
 	result := doctorResult{
