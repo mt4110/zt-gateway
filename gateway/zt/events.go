@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -40,11 +41,13 @@ type queuedEvent struct {
 }
 
 type syncResult struct {
-	Sent       int
-	Remaining  int
-	Skipped    int
-	LastError  string
-	Configured bool
+	Sent           int
+	Remaining      int
+	Skipped        int
+	LastError      string
+	LastErrorClass string
+	LastErrorCode  string
+	Configured     bool
 }
 
 type eventEnvelopeSigner struct {
@@ -97,28 +100,112 @@ func newEventSpool(repoRoot string) *eventSpool {
 }
 
 func runSyncEvents(force bool) {
-	if cpEvents == nil {
-		fmt.Println("[SYNC] event spool is not initialized")
-		os.Exit(1)
+	runSyncEventsWithOptions(syncOptions{Force: force})
+}
+
+type syncCommandJSONResult struct {
+	OK          bool     `json:"ok"`
+	SchemaVer   int      `json:"schema_version"`
+	GeneratedAt string   `json:"generated_at"`
+	Command     string   `json:"command"`
+	Argv        []string `json:"argv"`
+	Force       bool     `json:"force"`
+	Configured  bool     `json:"configured"`
+	Sent        int      `json:"sent"`
+	Remaining   int      `json:"remaining"`
+	Skipped     int      `json:"skipped"`
+	ErrorClass  string   `json:"error_class"`
+	ErrorCode   string   `json:"error_code"`
+	LastError   string   `json:"last_error,omitempty"`
+	ExitCode    int      `json:"exit_code"`
+}
+
+func runSyncEventsWithOptions(opts syncOptions) {
+	exitCode := runSyncEventsCommand(opts, append([]string(nil), os.Args...), os.Stdout)
+	if exitCode != 0 {
+		os.Exit(exitCode)
 	}
-	res, err := cpEvents.Sync(force)
-	if err != nil {
-		if isControlPlaneFailClosedSyncError(err) {
-			fmt.Printf("[SYNC] fail-closed: %v\n", err)
-			fmt.Println("[SYNC] Fix event signing config (key_id/allowed key) and retry with `zt sync --force`.")
+}
+
+func runSyncEventsCommand(opts syncOptions, argv []string, out io.Writer) int {
+	if out == nil {
+		out = os.Stdout
+	}
+	result := syncCommandJSONResult{
+		OK:          true,
+		SchemaVer:   1,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Command:     "zt sync",
+		Argv:        append([]string(nil), argv...),
+		Force:       opts.Force,
+		ErrorClass:  syncErrorClassNone,
+		ErrorCode:   syncErrorCodeNone,
+	}
+
+	if cpEvents == nil {
+		result.OK = false
+		result.ExitCode = 1
+		result.ErrorClass = syncErrorClassInternal
+		result.ErrorCode = syncErrorCodeSyncNotInitialized
+		result.LastError = "event spool is not initialized"
+		if opts.JSON {
+			emitSyncJSON(out, result)
 		} else {
-			fmt.Printf("[SYNC] failed: %v\n", err)
+			fmt.Fprintln(out, "[SYNC] event spool is not initialized")
 		}
-		os.Exit(1)
+		return result.ExitCode
+	}
+
+	res, err := cpEvents.Sync(opts.Force)
+	result.Configured = res.Configured
+	result.Sent = res.Sent
+	result.Remaining = res.Remaining
+	result.Skipped = res.Skipped
+	result.LastError = res.LastError
+	result.ErrorClass = normalizeSyncErrorClass(res.LastErrorClass)
+	result.ErrorCode = normalizeSyncErrorCode(res.LastErrorCode)
+
+	if err != nil {
+		result.OK = false
+		result.ExitCode = 1
+		if result.LastError == "" {
+			result.LastError = err.Error()
+		}
+		if result.ErrorClass == syncErrorClassNone || result.ErrorCode == syncErrorCodeNone {
+			info := classifySyncError(err)
+			result.ErrorClass = normalizeSyncErrorClass(info.Class)
+			result.ErrorCode = normalizeSyncErrorCode(info.Code)
+		}
+		if opts.JSON {
+			emitSyncJSON(out, result)
+		} else if isControlPlaneFailClosedSyncError(err) {
+			fmt.Fprintf(out, "[SYNC] fail-closed: %v\n", err)
+			fmt.Fprintln(out, "[SYNC] Fix event signing config (key_id/allowed key) and retry with `zt sync --force`.")
+		} else {
+			fmt.Fprintf(out, "[SYNC] failed: %v\n", err)
+		}
+		return result.ExitCode
+	}
+
+	if opts.JSON {
+		emitSyncJSON(out, result)
+		return 0
 	}
 	if !res.Configured {
-		fmt.Printf("[SYNC] no control-plane URL configured. pending=%d (spooled locally)\n", res.Remaining)
-		return
+		fmt.Fprintf(out, "[SYNC] no control-plane URL configured. pending=%d (spooled locally)\n", res.Remaining)
+		return 0
 	}
-	fmt.Printf("[SYNC] sent=%d remaining=%d skipped=%d force=%t\n", res.Sent, res.Remaining, res.Skipped, force)
+	fmt.Fprintf(out, "[SYNC] sent=%d remaining=%d skipped=%d force=%t\n", res.Sent, res.Remaining, res.Skipped, opts.Force)
 	if res.LastError != "" {
-		fmt.Printf("[SYNC] last_error=%s\n", res.LastError)
+		fmt.Fprintf(out, "[SYNC] last_error=%s\n", res.LastError)
 	}
+	return 0
+}
+
+func emitSyncJSON(w io.Writer, v syncCommandJSONResult) {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
 }
 
 func emitControlPlaneEvent(endpoint string, payload any) {

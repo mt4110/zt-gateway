@@ -39,6 +39,7 @@ type scanOptions struct {
 
 type syncOptions struct {
 	Force bool
+	JSON  bool
 }
 
 type setupOptions struct {
@@ -173,7 +174,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		runSyncEvents(opts.Force)
+		runSyncEventsWithOptions(opts)
 	case "config":
 		if err := runConfigCommand(repoRoot, os.Args[2:]); err != nil {
 			if !isConfigDoctorJSONMode(os.Args[1:]) {

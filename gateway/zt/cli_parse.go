@@ -132,6 +132,7 @@ func parseSyncArgs(args []string) (syncOptions, error) {
 	fs.SetOutput(os.Stderr)
 	var opts syncOptions
 	fs.BoolVar(&opts.Force, "force", false, "Ignore next_retry_at and retry all pending events now")
+	fs.BoolVar(&opts.JSON, "json", false, "Emit machine-readable JSON output")
 	if err := fs.Parse(args); err != nil {
 		return syncOptions{}, err
 	}

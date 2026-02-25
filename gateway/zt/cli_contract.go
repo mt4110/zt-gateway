@@ -8,7 +8,7 @@ const (
 	cliScanSignature   = "scan [--tui] [--force-public] [--update] [--strict] [--no-auto-sync] <path>"
 	cliVerifySignature = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>"
 	cliAuditSignature  = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
-	cliSyncSignature   = "sync [--force]"
+	cliSyncSignature   = "sync [--force] [--json]"
 	cliConfigSignature = "config doctor [--json]"
 	cliDoctorSignature = "doctor [--json]"
 	cliHelpSignature   = "help [advanced]"

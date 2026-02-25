@@ -146,3 +146,16 @@ func TestParseSetupArgs_WithProfile(t *testing.T) {
 		t.Fatalf("Profile = %q, want %q", opts.Profile, trustProfileConfidential)
 	}
 }
+
+func TestParseSyncArgs_JSON(t *testing.T) {
+	opts, err := parseSyncArgs([]string{"--force", "--json"})
+	if err != nil {
+		t.Fatalf("parseSyncArgs returned error: %v", err)
+	}
+	if !opts.Force {
+		t.Fatalf("Force = false, want true")
+	}
+	if !opts.JSON {
+		t.Fatalf("JSON = false, want true")
+	}
+}
