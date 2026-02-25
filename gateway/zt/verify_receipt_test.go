@@ -72,3 +72,43 @@ func TestBuildAndWriteVerificationReceipt(t *testing.T) {
 		t.Fatalf("Verification.PolicyResult = %q", got.Verification.PolicyResult)
 	}
 }
+
+func TestVerificationReceipt_JSONContractV1(t *testing.T) {
+	tmp := t.TempDir()
+	artifact := filepath.Join(tmp, "bundle_clientA_20260225T000000Z.spkg.tgz")
+	if err := os.WriteFile(artifact, []byte("packet"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	receipt := buildVerificationReceipt(artifact)
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if got["receipt_version"] != "v1" {
+		t.Fatalf("receipt_version = %v", got["receipt_version"])
+	}
+	requiredTopLevel := []string{"receipt_id", "verified_at", "artifact", "verification", "provenance", "tooling"}
+	for _, k := range requiredTopLevel {
+		if _, ok := got[k]; !ok {
+			t.Fatalf("missing top-level key: %s", k)
+		}
+	}
+	artifactMap, ok := got["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact is invalid: %#v", got["artifact"])
+	}
+	if artifactMap["path"] != artifact {
+		t.Fatalf("artifact.path = %v, want %s", artifactMap["path"], artifact)
+	}
+	verificationMap, ok := got["verification"].(map[string]any)
+	if !ok {
+		t.Fatalf("verification is invalid: %#v", got["verification"])
+	}
+	if verificationMap["policy_result"] != "pass" {
+		t.Fatalf("verification.policy_result = %v", verificationMap["policy_result"])
+	}
+}

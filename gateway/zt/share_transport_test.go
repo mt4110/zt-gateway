@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +87,74 @@ func TestRenderReceiverShareTextEnglish(t *testing.T) {
 	}
 	if !strings.Contains(got, msg.Command) {
 		t.Fatalf("missing command in share text: %q", got)
+	}
+}
+
+func TestRenderReceiverShareJSON_Contract(t *testing.T) {
+	msg := receiverShareMessage{
+		Command: "zt verify -- './bundle.spkg.tgz'",
+		Format:  "en",
+	}
+	raw := renderReceiverShareJSON(msg)
+	if !strings.HasSuffix(raw, "\n") {
+		t.Fatalf("JSON payload should end with newline: %q", raw)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &got); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("top-level keys = %d, want 4", len(got))
+	}
+	if got["kind"] != "receiver_verify_hint" {
+		t.Fatalf("kind = %v", got["kind"])
+	}
+	if got["format"] != "en" {
+		t.Fatalf("format = %v", got["format"])
+	}
+	if got["command"] != msg.Command {
+		t.Fatalf("command = %v, want %q", got["command"], msg.Command)
+	}
+	wantText := "Please run the following command on the receiver side to verify the file.\n" + msg.Command + "\n"
+	if got["text"] != wantText {
+		t.Fatalf("text = %q, want %q", got["text"], wantText)
+	}
+}
+
+func TestStdoutShareTransport_TextContract(t *testing.T) {
+	var out bytes.Buffer
+	msg := receiverShareMessage{
+		Command: "zt verify -- './bundle.spkg.tgz'",
+		Format:  "ja",
+	}
+	if err := (stdoutShareTransport{w: &out, jsonMode: false}).Deliver(msg); err != nil {
+		t.Fatalf("Deliver returned error: %v", err)
+	}
+	want := "[SHARE TEXT]\n受信側で次のコマンドを実行して検証してください。\nzt verify -- './bundle.spkg.tgz'\n[SHARE] Receiver command example: zt verify -- './bundle.spkg.tgz'\n"
+	if out.String() != want {
+		t.Fatalf("stdout text contract mismatch\n--- got ---\n%s--- want ---\n%s", out.String(), want)
+	}
+}
+
+func TestStdoutShareTransport_JSONContract(t *testing.T) {
+	var out bytes.Buffer
+	msg := receiverShareMessage{
+		Command: "zt verify -- './bundle.spkg.tgz'",
+		Format:  "ja",
+	}
+	if err := (stdoutShareTransport{w: &out, jsonMode: true}).Deliver(msg); err != nil {
+		t.Fatalf("Deliver returned error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "[SHARE") {
+		t.Fatalf("json mode must not emit share text markers: %q", got)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(got)), &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if payload["kind"] != "receiver_verify_hint" {
+		t.Fatalf("kind = %v", payload["kind"])
 	}
 }
 
