@@ -50,7 +50,7 @@ func runSendSecurePackPrecheck(repoRoot string) (bool, []string) {
 	}
 
 	if ok {
-		fmt.Println("[Precheck] secure-pack supply-chain OK (root key fingerprint pinned; tools.lock signature verified)")
+		fmt.Println("[Precheck] secure-pack root key + tools.lock signature OK (tool pins such as gpg/tar are verified in secure-pack send)")
 		return true, nil
 	}
 

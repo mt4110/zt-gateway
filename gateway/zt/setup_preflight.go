@@ -475,13 +475,13 @@ func resolveSecurePackRootPubKeyFingerprintPinsWithSource() ([]string, string, e
 	source := "none"
 	if len(securePackRootPubKeyFingerprintPins) > 0 {
 		raw = append(raw, securePackRootPubKeyFingerprintPins...)
-		source = "build-in"
+		source = "built-in"
 	}
 	if env := strings.TrimSpace(os.Getenv(securePackRootPubKeyFingerprintEnv)); env != "" {
 		raw = append(raw, splitFingerprintPins(env)...)
 		switch source {
-		case "build-in":
-			source = "env+build-in"
+		case "built-in":
+			source = "env+built-in"
 		default:
 			source = "env"
 		}

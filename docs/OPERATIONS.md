@@ -58,7 +58,7 @@
 補助フィールド（`resolved`）:
 
 - `actual_root_fingerprint`
-- `pin_source` (`env` / `build-in` / `env+build-in` / `none` / `invalid`)
+- `pin_source` (`env` / `built-in` / `env+built-in` / `none` / `invalid`)
 - `pin_match_count`
 
 ## CI ゲート（標準）

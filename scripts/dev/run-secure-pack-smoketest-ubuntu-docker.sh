@@ -76,8 +76,10 @@ docker run --rm \
   --platform "${PLATFORM}" \
   -v "${NIX_STORE_VOLUME}:/nix" \
   -v "${REPO_ROOT}:/src:ro" \
+  -e DIAGNOSE_ONLY="${DIAGNOSE_ONLY}" \
+  -e CLIENT_NAME="${CLIENT_NAME}" \
   "${IMAGE}" \
-  bash -lc "
+  bash -se <<'INNER'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null
@@ -95,27 +97,27 @@ apt-get install -y --no-install-recommends \
 if ! getent group nixbld >/dev/null; then
   groupadd -r nixbld
 fi
-for i in \$(seq 1 10); do
-  if ! id -u nixbld\$i >/dev/null 2>&1; then
-    useradd -r -g nixbld -G nixbld -d /var/empty -s /usr/sbin/nologin nixbld\$i
+for i in $(seq 1 10); do
+  if ! id -u "nixbld${i}" >/dev/null 2>&1; then
+    useradd -r -g nixbld -G nixbld -d /var/empty -s /usr/sbin/nologin "nixbld${i}"
   else
-    usermod -a -G nixbld nixbld\$i || true
+    usermod -a -G nixbld "nixbld${i}" || true
   fi
 done
 
 rm -rf /homeless-shelter || true
 export HOME=/root
-export NIX_CONFIG=\$'experimental-features = nix-command flakes\nsandbox = false\n'
+export NIX_CONFIG=$'experimental-features = nix-command flakes\nsandbox = false\n'
 
 mkdir -p /work
 rsync -a /src/ /work/
 cd /work
 
-if [[ \"${DIAGNOSE_ONLY}\" = \"1\" ]]; then
+if [[ "${DIAGNOSE_ONLY}" = "1" ]]; then
   exec bash ./scripts/dev/run-secure-pack-smoketest.sh --diagnose-only
 fi
 
 # zt adapter currently executes secure-scan/secure-pack via go run in send flow.
 # Ensure a recent Go toolchain is available in PATH inside the container.
-exec nix shell nixpkgs#go --command bash ./scripts/dev/run-secure-pack-smoketest.sh --client \"${CLIENT_NAME}\"
-"
+exec nix shell nixpkgs#go --command bash ./scripts/dev/run-secure-pack-smoketest.sh --client "${CLIENT_NAME}"
+INNER

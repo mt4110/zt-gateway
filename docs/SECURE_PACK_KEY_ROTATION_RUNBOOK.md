@@ -71,7 +71,7 @@ export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="OLD_FPR_40HEX,NEW_FPR_40HEX"
 ## `zt setup --json` の machine-readable 補助フィールド（supply-chain pin）
 
 - `resolved.actual_root_fingerprint`
-- `resolved.pin_source` (`env` / `build-in` / `env+build-in` / `none` / `invalid`)
+- `resolved.pin_source` (`env` / `built-in` / `env+built-in` / `none` / `invalid`)
 - `resolved.pin_match_count`
 
 ## エラーコード（運用問い合わせ向け）
