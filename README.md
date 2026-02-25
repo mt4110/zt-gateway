@@ -49,6 +49,8 @@ export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="OLD_FPR_40HEX,NEW_FPR_40HEX"
 ```bash
 go run ./gateway/zt setup
 go run ./gateway/zt setup --json   # サポート/自動化向け
+# trust profile を切り替える場合
+go run ./gateway/zt setup --profile confidential --json
 ```
 
 運用向け: 鍵ローテーション手順は `docs/SECURE_PACK_KEY_ROTATION_RUNBOOK.md` を参照（旧+新 pin 併記期間 / 切替日 / 削除日 / rollback を明文化）。
@@ -57,6 +59,8 @@ go run ./gateway/zt setup --json   # サポート/自動化向け
 
 ```bash
 go run ./gateway/zt send --client <recipient-name> --copy-command ./safe.txt
+# trust profile を切り替える場合
+go run ./gateway/zt send --client <recipient-name> --profile regulated --copy-command ./safe.txt
 ```
 
 注: `zt send` は `--client <recipient-name>` 必須になり、legacy `artifact.zp` 経路は削除されました。
@@ -240,6 +244,7 @@ flowchart LR
 
 - 送受信は `*.spkg.tgz` を標準手順に固定する（legacy `artifact.zp` は廃止）
 - `zt send --client <name>` を標準手順にする（legacy フォールバックを踏まない）
+- trust posture は `--profile public|internal|confidential|regulated` で固定し、業務区分ごとに使い分ける
 - `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` はローカル検証用途に限定
 - `policy/scan_policy.toml` で `required_scanners` / `require_clamav_db=true` を維持（弱める変更はレビュー対象にする）
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
@@ -249,7 +254,7 @@ flowchart LR
 
 補足:
 
-- `zt setup --json` は supply-chain pin の補助フィールド `resolved.actual_root_fingerprint` / `resolved.pin_source` / `resolved.pin_match_count` を出力します（CI・問い合わせ切り分け向け）
+- `zt setup --json` は補助フィールド `resolved.profile` / `resolved.actual_root_fingerprint` / `resolved.pin_source` / `resolved.pin_match_count` と `compatibility`（原因カテゴリ・環境情報・修復候補）を出力します（CI・問い合わせ切り分け向け）
 - `zt send` precheck 失敗時は `ZT_ERROR_CODE=ZT_PRECHECK_SUPPLY_CHAIN_FAILED`、`secure-pack send` は `SECURE_PACK_ERROR_CODE=...` を出力します
 - 運用一次対応の共通参照（CI/Helpdesk/runbook）は `docs/OPERATIONS.md` を正本として使用
 

@@ -1,0 +1,42 @@
+# Trust profile: regulated (tightest size envelope in v1 baseline)
+
+max_size_mb = 10
+force_rebuild = false
+
+force_rebuild_extensions = [
+  ".jpg",
+  ".jpeg",
+  ".png"
+]
+
+deny_extensions = [
+  ".exe",
+  ".bat",
+  ".cmd",
+  ".com",
+  ".scr",
+  ".ps1",
+  ".zip",
+  ".7z",
+  ".rar",
+  ".tar",
+  ".gz",
+  ".tgz"
+]
+
+scan_only_extensions = [
+  ".txt",
+  ".md",
+  ".csv",
+  ".json",
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".pptx"
+]
+
+scan_rebuild_extensions = [
+  ".jpg",
+  ".jpeg",
+  ".png"
+]

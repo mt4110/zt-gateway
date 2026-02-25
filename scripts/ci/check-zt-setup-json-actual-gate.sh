@@ -78,6 +78,7 @@ resolved = data.get("resolved") or {}
 pin_match_count = int(resolved.get("pin_match_count") or 0)
 actual_fpr = resolved.get("actual_root_fingerprint")
 pin_source = resolved.get("pin_source")
+profile = resolved.get("profile")
 
 if bad:
     raise SystemExit("zt setup actual repo gate failed checks: " + ", ".join(f"{k}={v}" for k, v in bad))
@@ -86,10 +87,13 @@ if pin_match_count < 1:
         "zt setup actual repo gate failed: resolved.pin_match_count < 1 "
         f"(pin_match_count={pin_match_count}, actual_root_fingerprint={actual_fpr}, pin_source={pin_source})"
     )
+if profile != "internal":
+    raise SystemExit(f"zt setup actual repo gate failed: resolved.profile={profile!r} (want 'internal')")
 
 print("zt setup --json actual repo gate OK")
 print(f"setup_ok={data.get('ok')} error_code={data.get('error_code')}")
 print(f"actual_root_fingerprint={actual_fpr}")
 print(f"pin_source={pin_source}")
 print(f"pin_match_count={pin_match_count}")
+print(f"profile={profile}")
 PY

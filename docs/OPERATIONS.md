@@ -57,9 +57,17 @@
 
 補助フィールド（`resolved`）:
 
+- `profile`
 - `actual_root_fingerprint`
 - `pin_source` (`env` / `built-in` / `env+built-in` / `none` / `invalid`)
 - `pin_match_count`
+
+互換性リゾルバ（`compatibility`）:
+
+- `status` (`ok` / `warn`)
+- `category`（例: `root_pin_mismatch`, `tool_version_mismatch`）
+- `environment.os` / `environment.package_source` / `environment.pin_source`
+- `fix_candidates[]`（優先順の修復コマンド候補）
 
 ## CI ゲート（標準）
 

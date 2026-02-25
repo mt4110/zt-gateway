@@ -11,6 +11,19 @@ import (
 
 func runSetup(repoRoot string, opts setupOptions) error {
 	jsonOut := opts.JSON
+	profileName, err := validateTrustProfile(opts.Profile)
+	if err != nil {
+		return err
+	}
+	profileSelection, profileErr := resolveTrustProfilePolicySelection(repoRoot, profileName)
+	if profileErr != nil {
+		profileSelection = trustProfilePolicySelection{
+			Name:                profileName,
+			Source:              "unresolved",
+			ExtensionPolicyPath: filepath.Join(repoRoot, "policy", "extension_policy.toml"),
+			ScanPolicyPath:      filepath.Join(repoRoot, "policy", "scan_policy.toml"),
+		}
+	}
 	if !jsonOut {
 		fmt.Println("[SETUP] zt quick setup check")
 		fmt.Println("This checks local config, signing key env, required tools, and control-plane reachability.")
@@ -66,6 +79,25 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		APIKeySet:       cpAPIKey != "",
 		APIKeySource:    cpAPIKeySrc,
 		SpoolDir:        spoolDir,
+		Profile:         profileSelection.Name,
+		ProfileSource:   profileSelection.Source,
+	}
+	if profileErr != nil {
+		addCheck("trust_profile", "fail", profileErr.Error())
+		quickFixes = append(quickFixes,
+			fmt.Sprintf("Create `%s` and `%s` for profile `%s`, or rerun with `--profile %s`.",
+				profileSelection.ExtensionPolicyPath,
+				profileSelection.ScanPolicyPath,
+				profileName,
+				trustProfileInternal))
+		if !jsonOut {
+			fmt.Printf("[FAIL] trust profile resolution failed: %v\n", profileErr)
+		}
+	} else {
+		addCheck("trust_profile", "ok", fmt.Sprintf("resolved=%s source=%s", profileSelection.Name, profileSelection.Source))
+		if !jsonOut {
+			fmt.Printf("[OK]   trust profile resolved (%s via %s)\n", profileSelection.Name, profileSelection.Source)
+		}
 	}
 	if pinInfo := collectSetupRootPinJSONInfo(repoRoot); pinInfo != nil {
 		result.Resolved.ActualRootFingerprint = pinInfo.ActualRootFingerprint
@@ -178,7 +210,7 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	checkTool("freshclam", false, "needed when using --update for ClamAV definitions")
 	checkTool("yara", false, "recommended for rule-based scanning")
 
-	preflight := collectSetupPreflightChecks(repoRoot)
+	preflight := collectSetupPreflightChecksWithPolicy(repoRoot, profileSelection)
 	for _, c := range preflight.Checks {
 		addCheck(c.Name, c.Status, c.Message)
 		if !jsonOut {
@@ -186,6 +218,7 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		}
 	}
 	quickFixes = append(quickFixes, preflight.QuickFixes...)
+	result.Compatibility = preflight.Compatibility
 
 	if cpURL != "" {
 		if !jsonOut {
@@ -215,6 +248,21 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	result.OK = result.Failures == 0
 	if !result.OK {
 		result.ErrorCode = ztErrorCodeSetupChecksFailed
+		result.Summary = "setup checks failed"
+		result.TrustStatus = newTrustStatusFailure(result.ErrorCode)
+	} else {
+		result.Summary = "setup checks passed"
+		result.TrustStatus = newTrustStatusSuccess("none")
+	}
+	retryCommand := "zt setup"
+	if profileName != trustProfileInternal {
+		retryCommand += " --profile " + profileName
+	}
+	if jsonOut {
+		retryCommand += " --json"
+	}
+	if len(result.QuickFixes) > 0 || !result.OK {
+		result.QuickFixBundle = buildQuickFixBundle(result.Summary, result.QuickFixes, retryCommand)
 	}
 
 	if jsonOut {
@@ -241,8 +289,10 @@ func runSetup(repoRoot string, opts setupOptions) error {
 	fmt.Printf("[RESULT] failures=%d warnings=%d\n", result.Failures, result.Warnings)
 	if !result.OK {
 		printZTErrorCode(result.ErrorCode)
+		printTrustStatusLine(result.TrustStatus)
 		return fmt.Errorf("setup checks failed")
 	}
+	printTrustStatusLine(result.TrustStatus)
 	return nil
 }
 

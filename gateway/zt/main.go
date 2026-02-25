@@ -15,6 +15,7 @@ type ScanResult struct {
 type sendOptions struct {
 	InputFile         string
 	Client            string
+	Profile           string
 	AllowDegradedScan bool
 	Strict            bool
 	ForcePublic       bool
@@ -41,11 +42,13 @@ type syncOptions struct {
 }
 
 type setupOptions struct {
-	JSON bool
+	JSON    bool
+	Profile string
 }
 
 type verifyOptions struct {
 	ArtifactPath string
+	ReceiptOut   string
 	SyncNow      bool
 	NoAutoSync   bool
 }

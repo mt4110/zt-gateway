@@ -11,6 +11,7 @@ const (
 	ztErrorCodeVerifyInvalidPath   = "ZT_VERIFY_INVALID_PATH"
 	ztErrorCodeVerifyPacketFailed  = "ZT_VERIFY_PACKET_FAILED"
 	ztErrorCodeVerifyUnsupported   = "ZT_VERIFY_UNSUPPORTED_INPUT"
+	ztErrorCodeVerifyReceiptWrite  = "ZT_VERIFY_RECEIPT_WRITE_FAILED"
 	ztErrorCodeScanInvalidPath     = "ZT_SCAN_INVALID_PATH"
 	ztErrorCodeScanStatFailed      = "ZT_SCAN_STAT_FAILED"
 	ztErrorCodeScanInputRejected   = "ZT_SCAN_INPUT_REJECTED"

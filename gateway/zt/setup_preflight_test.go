@@ -367,7 +367,19 @@ func TestEmitSetupJSON_IncludesErrorCodeField(t *testing.T) {
 	os.Stdout = f
 	defer func() { os.Stdout = origStdout }()
 
-	emitSetupJSON(setupResult{OK: false, ErrorCode: ztErrorCodeSetupChecksFailed, SchemaVersion: 1})
+	emitSetupJSON(setupResult{
+		OK:            false,
+		ErrorCode:     ztErrorCodeSetupChecksFailed,
+		Summary:       "setup checks failed",
+		SchemaVersion: 1,
+		TrustStatus:   newTrustStatusFailure(ztErrorCodeSetupChecksFailed),
+		QuickFixBundle: &quickFixBundle{
+			Why:      "setup checks failed",
+			Commands: []string{"zt setup --json"},
+			Runbook:  "docs/OPERATIONS.md",
+			Retry:    "zt setup --json",
+		},
+	})
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -381,5 +393,22 @@ func TestEmitSetupJSON_IncludesErrorCodeField(t *testing.T) {
 	}
 	if got["error_code"] != ztErrorCodeSetupChecksFailed {
 		t.Fatalf("error_code = %v", got["error_code"])
+	}
+	if got["summary"] != "setup checks failed" {
+		t.Fatalf("summary = %v", got["summary"])
+	}
+	ts, ok := got["trust_status"].(map[string]any)
+	if !ok {
+		t.Fatalf("trust_status type = %T", got["trust_status"])
+	}
+	if ts["line"] == "" {
+		t.Fatalf("trust_status.line is empty")
+	}
+	qfb, ok := got["quick_fix_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("quick_fix_bundle type = %T", got["quick_fix_bundle"])
+	}
+	if qfb["runbook"] != "docs/OPERATIONS.md" {
+		t.Fatalf("quick_fix_bundle.runbook = %v", qfb["runbook"])
 	}
 }

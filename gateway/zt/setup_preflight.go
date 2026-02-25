@@ -16,14 +16,31 @@ const securePackRootPubKeyFingerprintEnv = "ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRI
 var securePackRootPubKeyFingerprintPins = []string{}
 
 type setupPreflightResult struct {
-	Checks     []setupCheck
-	QuickFixes []string
+	Checks        []setupCheck
+	QuickFixes    []string
+	Compatibility *setupCompatibilityResolver
 }
 
 func collectSetupPreflightChecks(repoRoot string) setupPreflightResult {
+	selection, err := resolveTrustProfilePolicySelection(repoRoot, trustProfileInternal)
+	if err != nil {
+		selection = trustProfilePolicySelection{
+			Name:                trustProfileInternal,
+			Source:              "policy/default",
+			ExtensionPolicyPath: filepath.Join(repoRoot, "policy", "extension_policy.toml"),
+			ScanPolicyPath:      filepath.Join(repoRoot, "policy", "scan_policy.toml"),
+		}
+	}
+	return collectSetupPreflightChecksWithPolicy(repoRoot, selection)
+}
+
+func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfilePolicySelection) setupPreflightResult {
 	var out setupPreflightResult
 
-	extPolicyPath := filepath.Join(repoRoot, "policy", "extension_policy.toml")
+	extPolicyPath := selection.ExtensionPolicyPath
+	if strings.TrimSpace(extPolicyPath) == "" {
+		extPolicyPath = filepath.Join(repoRoot, "policy", "extension_policy.toml")
+	}
 	extPol, err := loadExtensionPolicy(extPolicyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -49,7 +66,10 @@ func collectSetupPreflightChecks(repoRoot string) setupPreflightResult {
 		})
 	}
 
-	scanPolicyPath := filepath.Join(repoRoot, "policy", "scan_policy.toml")
+	scanPolicyPath := selection.ScanPolicyPath
+	if strings.TrimSpace(scanPolicyPath) == "" {
+		scanPolicyPath = filepath.Join(repoRoot, "policy", "scan_policy.toml")
+	}
 	scanPol, err := loadScanPolicy(scanPolicyPath)
 	if err != nil {
 		out.Checks = append(out.Checks, setupCheck{
@@ -80,6 +100,11 @@ func collectSetupPreflightChecks(repoRoot string) setupPreflightResult {
 	scFilesCheck, scRootPinCheck, scSigCheck, scFixes := buildSecurePackSupplyChainSetupChecks(repoRoot)
 	out.Checks = append(out.Checks, scFilesCheck, scRootPinCheck, scSigCheck)
 	out.QuickFixes = append(out.QuickFixes, scFixes...)
+
+	compatCheck, compatibility, compatFixes := buildSetupCompatibilityResolverReport(repoRoot, scRootPinCheck, scSigCheck)
+	out.Checks = append(out.Checks, compatCheck)
+	out.Compatibility = compatibility
+	out.QuickFixes = append(out.QuickFixes, compatFixes...)
 
 	return out
 }
