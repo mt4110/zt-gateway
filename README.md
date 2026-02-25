@@ -92,6 +92,10 @@ go run ./gateway/zt setup --json
 go run ./gateway/zt --help-advanced
 ```
 
+- secure-pack のローカル smoke 手順: `docs/SECURE_PACK_SMOKETEST.md`
+- `tools.lock` pin mismatch（macOS/Homebrew 差分）運用方針: `docs/SECURE_PACK_LOCAL_EXECUTION_POLICY.md`
+- Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
+
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.3.x)
 
 `zt send` の `--share-json` は、受信側に渡す検証コマンド共有用の payload を **JSON 1オブジェクト** で出力します。

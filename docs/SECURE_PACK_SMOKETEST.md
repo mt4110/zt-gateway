@@ -8,6 +8,8 @@
 - `.spkg.tgz` を生成する
 - `zt verify <packet.spkg.tgz>` を通す
 
+運用方針（CI canonical / ローカル mismatch 対策）は `docs/SECURE_PACK_LOCAL_EXECUTION_POLICY.md` を参照してください。
+
 ## 前提
 
 - `gpg` がインストール済み
@@ -61,6 +63,44 @@ go run ./gateway/zt send --client local-smoketest safe.txt
 go run ./gateway/zt verify ./bundle_local-smoketest_*.spkg.tgz
 ```
 
+## 推奨実行（pin mismatch を先に診断してから実行）
+
+`tools.lock` を CI canonical として維持するため、まず補助スクリプトで `gpg` / `tar` pin 一致を確認してから smoke を実行します。
+
+```bash
+# 診断のみ（mismatch 時は exit 3）
+bash ./scripts/dev/run-secure-pack-smoketest.sh --diagnose-only
+
+# pin 一致時のみ smoke 実行
+bash ./scripts/dev/run-secure-pack-smoketest.sh --client local-smoketest
+```
+
+このスクリプトは以下を行います。
+
+- `tools/secure-pack/tools.lock` の `gpg` / `tar` version + sha256 pin を読み取り
+- 現在の `PATH` 上の `gpg` / `tar` と比較
+- 一致時のみ `./test/integration.sh --client local-smoketest` を実行
+- mismatch 時は fail-closed で停止し、CI canonical 運用の参照先を表示
+
+## Ubuntu/Linux 実行を固定化する Docker wrapper（推奨）
+
+macOS ローカルから Ubuntu runner 相当で再現したい場合は、専用 wrapper を使うと再現条件を揃えやすくなります。
+
+```bash
+# 診断のみ
+bash ./scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh --diagnose-only
+
+# フル実行
+bash ./scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh --client local-smoketest
+```
+
+この wrapper は以下を固定化します。
+
+- `ubuntu:24.04` コンテナで実行
+- `gpg/tar` と `tools.lock` pin の一致確認
+- `nix` + `nixbld` ビルドユーザー設定
+- `go` ツールチェーン（`nix shell nixpkgs#go`）を使った `zt send` adapter 実行
+
 ## strict スキャン確認（任意）
 
 スキャナ未導入環境では `secure-scan --json` が既定で degraded allow を返します。厳密運用を試す場合:
@@ -74,6 +114,10 @@ go run ./gateway/zt send --client local-smoketest safe.txt
 
 ## 注意
 
+- `zt send --client local-smoketest` が supply-chain pin 検証で止まる典型原因は、`tools/secure-pack/tools.lock` の `gpg` / `tar` pin とローカル環境（例: Homebrew の `gpg`）の不一致です
+- `tools.lock` は CI の基準値として扱い、ローカル smoke はまず CI 相当環境（Ubuntu/Linux runner 相当）での実行を推奨します
+- `Nix` は `zt` 実行には便利ですが、pin 一致は最終的に `PATH` 上の `gpg` / `tar` 実バイナリ（version + hash）に依存します
+- Docker Desktop（macOS bind mount）では `GNUPGHOME` の socket 作成で `gpg-agent` が不安定になることがあるため、wrapper はコンテナ内ローカル FS（`/work`）へ rsync して実行します
 - `local-smoketest.txt` はローカル検証用の recipient 設定です
 - 実運用の fingerprint や鍵はコミットしないでください
 - `GNUPGHOME` はローカル検証用ディレクトリに限定してください
