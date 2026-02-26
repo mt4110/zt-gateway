@@ -421,6 +421,7 @@ go run ./gateway/zt relay auto-drive \
 `relay hook` は、将来の OS 拡張・ブラウザ拡張と繋ぐためのローカルブリッジです。
 
 - `relay hook wrap`: 単発ファイルをCLIからラップ
+- `relay hook finder-quick-action`: Finderで選択した複数ファイルを一括ラップ
 - `relay hook serve`: HTTP API (`/v1/wrap`) を公開
 
 起動例:
@@ -438,6 +439,52 @@ curl -sS -X POST http://127.0.0.1:8791/v1/wrap \
   -H "content-type: application/json" \
   -d '{"path":"./sample.txt","client":"clientA","share_format":"ja"}'
 ```
+
+Finder Quick Action (macOS) 運用:
+
+1. Quick Action 自動登録を実行
+
+```bash
+go run ./gateway/zt relay hook install-finder \
+  --client clientA \
+  --share-format auto \
+  --force \
+  --json
+```
+
+2. 設定だけ更新したい場合は `configure-finder` を実行（workflow再作成なし）
+
+```bash
+go run ./gateway/zt relay hook configure-finder \
+  --client clientA \
+  --share-format auto \
+  --json
+```
+
+3. 生成物を確認
+
+```bash
+ls -la ~/.config/zt/finder-quick-action.env
+ls -la ~/.local/share/zt/finder-quick-action/run.sh
+ls -la ~/Library/Services/"ZT Wrap via Relay Hook.workflow"
+```
+
+`/v1/wrap` API 固定契約（v1）:
+
+- Request JSON: `path`(required), `client`(optional if default), `share_format`(auto|ja|en)
+- Success JSON: `api_version`, `ok`, `source_path`, `packet_path`, `share_format`, `verify_command`, `receipt_out?`, `receipt_command?`
+- Error JSON: `api_version`, `ok=false`, `error_code`, `error`, `input?`
+
+エラーコード runbook:
+
+- `method_not_allowed`: 呼び出しメソッドを `POST /v1/wrap` に修正
+- `unauthorized`: `Authorization: Bearer <token>` と `ZT_RELAY_HOOK_TOKEN` の一致確認
+- `invalid_json`: JSON構文、未知フィールド、末尾ゴミを除去
+- `missing_path`: request body に `path` を設定
+- `missing_client`: request body `client` か、serve起動時 `--client` を設定
+- `invalid_share_format`: `share_format` を `auto|ja|en` のいずれかに修正
+- `wrap_failed`: `zt send` 相当の失敗。`zt send --client <name> <file>` を単体実行して原因切り分け
+- `local_lock_active`: `zt dashboard` または `zt unlock` runbookで lock 状態を解消
 
 注意:
 

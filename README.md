@@ -248,6 +248,48 @@ go run ./gateway/zt relay hook wrap \
   --json
 ```
 
+Finder Quick Action向けに複数ファイルを一括ラップ:
+
+```bash
+go run ./gateway/zt relay hook finder-quick-action \
+  --client clientA \
+  --share-format auto \
+  --json \
+  ./sample1.txt ./sample2.txt
+```
+
+Finder Quick Action をコマンドで自動登録（推奨）:
+
+```bash
+go run ./gateway/zt relay hook install-finder \
+  --client clientA \
+  --share-format auto \
+  --force \
+  --json
+```
+
+設定だけ更新（Quick Actionを再作成せず、client/bin/pathだけ更新）:
+
+```bash
+go run ./gateway/zt relay hook configure-finder \
+  --client clientA \
+  --share-format auto \
+  --json
+```
+
+生成される主ファイル:
+
+- config: `~/.config/zt/finder-quick-action.env`
+- runner: `~/.local/share/zt/finder-quick-action/run.sh`
+- workflow: `~/Library/Services/ZT Wrap via Relay Hook.workflow`
+
+手動運用したい場合のみ補助スクリプト:
+
+```bash
+export ZT_RELAY_HOOK_CLIENT="clientA"
+scripts/dev/zt-finder-quick-action.sh ./sample1.txt ./sample2.txt
+```
+
 ローカルHTTP APIを起動（将来の拡張連携向け）:
 
 ```bash
@@ -263,6 +305,12 @@ curl -sS -X POST http://127.0.0.1:8791/v1/wrap \
   -H "content-type: application/json" \
   -d '{"path":"./sample.txt","share_format":"ja"}'
 ```
+
+`/v1/wrap` API 契約（v1）:
+
+- 成功レスポンス: `api_version`, `ok`, `source_path`, `packet_path`, `share_format`, `verify_command`, `receipt_out?`, `receipt_command?`
+- 失敗レスポンス: `api_version`, `ok=false`, `error_code`, `error`, `input?`
+- 主な `error_code`: `method_not_allowed`, `unauthorized`, `invalid_json`, `missing_path`, `missing_client`, `invalid_share_format`, `wrap_failed`, `local_lock_active`
 
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.9.0 additive)
 

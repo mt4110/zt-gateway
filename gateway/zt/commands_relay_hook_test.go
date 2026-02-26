@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -62,5 +63,249 @@ func TestRunRelayHookWrapCommand_JSON(t *testing.T) {
 	}
 	if !got.OK || strings.TrimSpace(got.PacketPath) == "" {
 		t.Fatalf("unexpected wrap result: %#v", got)
+	}
+}
+
+func TestRunRelayHookFinderQuickActionCommand_JSON(t *testing.T) {
+	prev := relayHookWrapRunner
+	t.Cleanup(func() { relayHookWrapRunner = prev })
+	relayHookWrapRunner = func(repoRoot, sourcePath, client, shareFormat string) (relayHookWrapResult, error) {
+		return relayHookWrapResult{
+			OK:            true,
+			SourcePath:    sourcePath,
+			PacketPath:    "/tmp/" + sourcePath + ".spkg.tgz",
+			ShareFormat:   shareFormat,
+			VerifyCommand: "zt verify -- '/tmp/file.spkg.tgz'",
+		}, nil
+	}
+
+	out := captureStdout(t, func() {
+		err := runRelayHookFinderQuickActionCommand(t.TempDir(), []string{
+			"--client", "clientA",
+			"--share-format", "ja",
+			"--json",
+			"/tmp/a.txt",
+			"/tmp/b.txt",
+		})
+		if err != nil {
+			t.Fatalf("runRelayHookFinderQuickActionCommand returned error: %v", err)
+		}
+	})
+	var got relayHookFinderQuickActionResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("JSON unmarshal failed: %v\nout=%s", err, out)
+	}
+	if got.APIVersion != relayHookAPIVersion {
+		t.Fatalf("api_version=%q, want %q", got.APIVersion, relayHookAPIVersion)
+	}
+	if got.Action != relayHookActionFinder {
+		t.Fatalf("action=%q, want %q", got.Action, relayHookActionFinder)
+	}
+	if !got.OK || got.Requested != 2 || got.Processed != 2 || len(got.Results) != 2 {
+		t.Fatalf("unexpected finder quick action result: %#v", got)
+	}
+}
+
+func TestRunRelayHookFinderQuickActionCommand_PartialFailure(t *testing.T) {
+	prev := relayHookWrapRunner
+	t.Cleanup(func() { relayHookWrapRunner = prev })
+	relayHookWrapRunner = func(repoRoot, sourcePath, client, shareFormat string) (relayHookWrapResult, error) {
+		if strings.Contains(sourcePath, "bad") {
+			return relayHookWrapResult{OK: false}, errRelayHookTestWrapFailed
+		}
+		return relayHookWrapResult{
+			OK:            true,
+			SourcePath:    sourcePath,
+			PacketPath:    "/tmp/ok.spkg.tgz",
+			ShareFormat:   "ja",
+			VerifyCommand: "zt verify -- '/tmp/ok.spkg.tgz'",
+		}, nil
+	}
+
+	out := captureStdout(t, func() {
+		err := runRelayHookFinderQuickActionCommand(t.TempDir(), []string{
+			"--client", "clientA",
+			"--json",
+			"/tmp/good.txt",
+			"/tmp/bad.txt",
+		})
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+		if !strings.Contains(err.Error(), "finder quick action failed") {
+			t.Fatalf("error=%q", err.Error())
+		}
+	})
+
+	var got relayHookFinderQuickActionResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("JSON unmarshal failed: %v\nout=%s", err, out)
+	}
+	if got.OK {
+		t.Fatalf("ok=true, want false")
+	}
+	if got.Processed != 1 || len(got.Errors) != 1 {
+		t.Fatalf("processed=%d errors=%d", got.Processed, len(got.Errors))
+	}
+	if got.Errors[0].ErrorCode != "wrap_failed" {
+		t.Fatalf("error_code=%q, want wrap_failed", got.Errors[0].ErrorCode)
+	}
+}
+
+func TestRunRelayHookFinderQuickActionCommand_InvalidShareFormat(t *testing.T) {
+	err := runRelayHookFinderQuickActionCommand(t.TempDir(), []string{
+		"--client", "clientA",
+		"--share-format", "fr",
+		"/tmp/a.txt",
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got, want := err.Error(), "--share-format must be auto, ja or en"; got != want {
+		t.Fatalf("error=%q, want %q", got, want)
+	}
+}
+
+var errRelayHookTestWrapFailed = &relayHookTestError{msg: "wrap failed"}
+
+type relayHookTestError struct {
+	msg string
+}
+
+func (e *relayHookTestError) Error() string {
+	return e.msg
+}
+
+func TestRelayHookServeWrapAPI_ContractSuccess(t *testing.T) {
+	prev := relayHookWrapRunner
+	t.Cleanup(func() { relayHookWrapRunner = prev })
+	relayHookWrapRunner = func(repoRoot, sourcePath, client, shareFormat string) (relayHookWrapResult, error) {
+		if client != "default-client" {
+			t.Fatalf("client=%q, want default-client", client)
+		}
+		return relayHookWrapResult{
+			OK:            true,
+			SourcePath:    sourcePath,
+			PacketPath:    "/tmp/file.spkg.tgz",
+			ShareFormat:   "ja",
+			VerifyCommand: "zt verify -- '/tmp/file.spkg.tgz'",
+		}, nil
+	}
+
+	mux := newRelayHookServeMux(t.TempDir(), "default-client", "ja", "test-token")
+	req := httptest.NewRequest(http.MethodPost, relayHookPathWrap, strings.NewReader(`{"path":"./sample.txt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type=%q", ct)
+	}
+	var got relayHookWrapAPIResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	if got.APIVersion != relayHookAPIVersion || !got.OK {
+		t.Fatalf("unexpected api response: %#v", got)
+	}
+	if got.SourcePath != "./sample.txt" {
+		t.Fatalf("source_path=%q, want ./sample.txt", got.SourcePath)
+	}
+}
+
+func TestRelayHookServeWrapAPI_ContractErrors(t *testing.T) {
+	prev := relayHookWrapRunner
+	t.Cleanup(func() { relayHookWrapRunner = prev })
+	relayHookWrapRunner = func(repoRoot, sourcePath, client, shareFormat string) (relayHookWrapResult, error) {
+		return relayHookWrapResult{OK: true}, nil
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		auth       string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "method not allowed",
+			method:     http.MethodGet,
+			body:       "",
+			auth:       "",
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCode:   "method_not_allowed",
+		},
+		{
+			name:       "unauthorized",
+			method:     http.MethodPost,
+			body:       `{"path":"./sample.txt"}`,
+			auth:       "",
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "unauthorized",
+		},
+		{
+			name:       "invalid json",
+			method:     http.MethodPost,
+			body:       `{"path":"./sample.txt","unknown":1}`,
+			auth:       "Bearer token-1",
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_json",
+		},
+		{
+			name:       "missing client",
+			method:     http.MethodPost,
+			body:       `{"path":"./sample.txt"}`,
+			auth:       "Bearer token-1",
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "missing_client",
+		},
+		{
+			name:       "invalid share format",
+			method:     http.MethodPost,
+			body:       `{"path":"./sample.txt","client":"clientA","share_format":"fr"}`,
+			auth:       "Bearer token-1",
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_share_format",
+		},
+		{
+			name:       "missing path",
+			method:     http.MethodPost,
+			body:       `{"client":"clientA"}`,
+			auth:       "Bearer token-1",
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "missing_path",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := newRelayHookServeMux(t.TempDir(), "", "auto", "token-1")
+			req := httptest.NewRequest(tc.method, relayHookPathWrap, strings.NewReader(tc.body))
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			if tc.auth != "" {
+				req.Header.Set("Authorization", tc.auth)
+			}
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d, want %d body=%s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			var got relayHookWrapAPIResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+			}
+			if got.APIVersion != relayHookAPIVersion {
+				t.Fatalf("api_version=%q, want %q", got.APIVersion, relayHookAPIVersion)
+			}
+			if got.ErrorCode != tc.wantCode {
+				t.Fatalf("error_code=%q, want %q", got.ErrorCode, tc.wantCode)
+			}
+		})
 	}
 }
