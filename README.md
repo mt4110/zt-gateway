@@ -202,6 +202,29 @@ go run ./gateway/zt relay drive \
 - 受信者向け verify 手順 (`*.verify.txt`)
 - 共有JSON (`*.share.json`, `--write-json=true` 時)
 
+### 4) relay auto-drive（watchフォルダ自動化）
+
+送信元フォルダを監視し、`zt send` -> `relay drive` を自動実行できます。  
+処理済み原本は `watch-dir/.zt-done/`、失敗原本は `watch-dir/.zt-error/` へ移動します。
+
+```bash
+go run ./gateway/zt relay auto-drive \
+  --client clientA \
+  --watch-dir ./dropbox/send-queue \
+  --folder "$HOME/Google Drive/My Drive/zt-share" \
+  --poll-interval 5s
+```
+
+1回だけ処理して終了:
+
+```bash
+go run ./gateway/zt relay auto-drive \
+  --client clientA \
+  --watch-dir ./dropbox/send-queue \
+  --folder "$HOME/Google Drive/My Drive/zt-share" \
+  --once
+```
+
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.9.0 additive)
 
 `zt send` の `--share-json` は、受信側に渡す検証コマンド共有用の payload を **JSON 1オブジェクト** で出力します。
