@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +13,11 @@ import (
 )
 
 const (
-	relayHookTokenEnv = "ZT_RELAY_HOOK_TOKEN"
+	relayHookTokenEnv     = "ZT_RELAY_HOOK_TOKEN"
+	relayHookAPIVersion   = "v1"
+	relayHookActionFinder = "finder_quick_action"
+	relayHookPathWrap     = "/v1/wrap"
+	relayHookPathHealthz  = "/healthz"
 )
 
 type relayHookWrapResult struct {
@@ -21,6 +26,42 @@ type relayHookWrapResult struct {
 	PacketPath    string `json:"packet_path"`
 	ShareFormat   string `json:"share_format"`
 	VerifyCommand string `json:"verify_command"`
+	ReceiptOut    string `json:"receipt_out,omitempty"`
+	ReceiptCmd    string `json:"receipt_command,omitempty"`
+}
+
+type relayHookFinderQuickActionResult struct {
+	APIVersion string                `json:"api_version"`
+	Action     string                `json:"action"`
+	OK         bool                  `json:"ok"`
+	Requested  int                   `json:"requested"`
+	Processed  int                   `json:"processed"`
+	Results    []relayHookWrapResult `json:"results,omitempty"`
+	Errors     []relayHookWrapError  `json:"errors,omitempty"`
+}
+
+type relayHookWrapError struct {
+	Path      string `json:"path"`
+	Error     string `json:"error"`
+	ErrorCode string `json:"error_code,omitempty"`
+}
+
+type relayHookWrapRequest struct {
+	Path        string `json:"path"`
+	Client      string `json:"client"`
+	ShareFormat string `json:"share_format"`
+}
+
+type relayHookWrapAPIResponse struct {
+	APIVersion    string `json:"api_version"`
+	OK            bool   `json:"ok"`
+	ErrorCode     string `json:"error_code,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Input         string `json:"input,omitempty"`
+	SourcePath    string `json:"source_path,omitempty"`
+	PacketPath    string `json:"packet_path,omitempty"`
+	ShareFormat   string `json:"share_format,omitempty"`
+	VerifyCommand string `json:"verify_command,omitempty"`
 	ReceiptOut    string `json:"receipt_out,omitempty"`
 	ReceiptCmd    string `json:"receipt_command,omitempty"`
 }
@@ -36,6 +77,12 @@ func runRelayHookCommand(repoRoot string, args []string) error {
 		return runRelayHookWrapCommand(repoRoot, args[1:])
 	case "serve":
 		return runRelayHookServeCommand(repoRoot, args[1:])
+	case "finder-quick-action", "finder", "quick-action":
+		return runRelayHookFinderQuickActionCommand(repoRoot, args[1:])
+	case "install-finder":
+		return runRelayHookInstallFinderCommand(repoRoot, args[1:])
+	case "configure-finder":
+		return runRelayHookConfigureFinderCommand(repoRoot, args[1:])
 	default:
 		return fmt.Errorf(cliRelayHookUsage)
 	}
@@ -76,6 +123,74 @@ func runRelayHookWrapCommand(repoRoot string, args []string) error {
 	fmt.Printf("[RELAY-HOOK] verify=%s\n", res.VerifyCommand)
 	if strings.TrimSpace(res.ReceiptCmd) != "" {
 		fmt.Printf("[RELAY-HOOK] receipt=%s\n", res.ReceiptCmd)
+	}
+	return nil
+}
+
+func runRelayHookFinderQuickActionCommand(repoRoot string, args []string) error {
+	fs := flagSet("relay hook finder-quick-action")
+	var client string
+	var shareFormat string
+	var jsonOut bool
+	fs.StringVar(&client, "client", "", "Recipient client name")
+	fs.StringVar(&shareFormat, "share-format", "auto", "share format: auto|ja|en")
+	fs.BoolVar(&jsonOut, "json", true, "Emit JSON result")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	client = strings.TrimSpace(client)
+	if client == "" {
+		return fmt.Errorf("--client is required")
+	}
+	if !isValidRelayHookShareFormat(shareFormat) {
+		return fmt.Errorf("--share-format must be auto, ja or en")
+	}
+	paths := fs.Args()
+	if len(paths) == 0 {
+		return fmt.Errorf("at least one file path is required")
+	}
+
+	out := relayHookFinderQuickActionResult{
+		APIVersion: relayHookAPIVersion,
+		Action:     relayHookActionFinder,
+		Requested:  len(paths),
+		Results:    make([]relayHookWrapResult, 0, len(paths)),
+	}
+	var failed bool
+	for _, p := range paths {
+		res, err := relayHookWrapRunner(repoRoot, p, client, shareFormat)
+		if err != nil {
+			failed = true
+			out.Errors = append(out.Errors, relayHookWrapError{
+				Path:      strings.TrimSpace(p),
+				Error:     err.Error(),
+				ErrorCode: "wrap_failed",
+			})
+			continue
+		}
+		out.Processed++
+		out.Results = append(out.Results, res)
+	}
+	out.OK = !failed
+
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
+	} else {
+		for _, res := range out.Results {
+			fmt.Printf("[RELAY-HOOK] source=%s packet=%s\n", res.SourcePath, res.PacketPath)
+			fmt.Printf("[RELAY-HOOK] verify=%s\n", res.VerifyCommand)
+			if strings.TrimSpace(res.ReceiptCmd) != "" {
+				fmt.Printf("[RELAY-HOOK] receipt=%s\n", res.ReceiptCmd)
+			}
+		}
+		for _, ferr := range out.Errors {
+			fmt.Printf("[RELAY-HOOK][ERROR] path=%s error=%s\n", ferr.Path, ferr.Error)
+		}
+	}
+	if failed {
+		return fmt.Errorf("finder quick action failed for %d/%d file(s)", len(out.Errors), out.Requested)
 	}
 	return nil
 }
@@ -136,40 +251,55 @@ func runRelayHookServeCommand(repoRoot string, args []string) error {
 	}
 	token = resolveRelayHookToken(token)
 
+	if strings.TrimSpace(addr) == "" {
+		addr = "127.0.0.1:8791"
+	}
+	mux := newRelayHookServeMux(repoRoot, strings.TrimSpace(defaultClient), strings.TrimSpace(defaultShareFormat), token)
+	fmt.Printf("[RELAY-HOOK] listening on http://%s token=%t default_client=%s\n", addr, token != "", strings.TrimSpace(defaultClient))
+	return http.ListenAndServe(addr, mux)
+}
+
+func newRelayHookServeMux(repoRoot string, defaultClient string, defaultShareFormat string, token string) *http.ServeMux {
+	if strings.TrimSpace(defaultShareFormat) == "" {
+		defaultShareFormat = "auto"
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":   true,
-			"time": time.Now().UTC().Format(time.RFC3339),
+	mux.HandleFunc(relayHookPathHealthz, func(w http.ResponseWriter, r *http.Request) {
+		addRelayHookCORS(w)
+		writeRelayHookJSON(w, http.StatusOK, map[string]any{
+			"api_version": relayHookAPIVersion,
+			"ok":          true,
+			"time":        time.Now().UTC().Format(time.RFC3339),
 		})
 	})
-	mux.HandleFunc("/v1/wrap", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(relayHookPathWrap, func(w http.ResponseWriter, r *http.Request) {
 		addRelayHookCORS(w)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			writeRelayHookWrapError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
 			return
 		}
 		if !relayHookAuthorized(r, token) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeRelayHookWrapError(w, http.StatusUnauthorized, "unauthorized", "unauthorized", "")
 			return
 		}
 		if _, err := ensureOperationUnlocked(repoRoot, "relay-hook-wrap"); err != nil {
 			printZTErrorCode(ztErrorCodeLocalLockActive)
-			http.Error(w, err.Error(), http.StatusLocked)
+			writeRelayHookWrapError(w, http.StatusLocked, ztErrorCodeLocalLockActive, err.Error(), "")
 			return
 		}
 		defer r.Body.Close()
-		var req struct {
-			Path        string `json:"path"`
-			Client      string `json:"client"`
-			ShareFormat string `json:"share_format"`
+		req, err := decodeRelayHookWrapRequest(r.Body)
+		if err != nil {
+			writeRelayHookWrapError(w, http.StatusBadRequest, "invalid_json", err.Error(), "")
+			return
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		path := strings.TrimSpace(req.Path)
+		if path == "" {
+			writeRelayHookWrapError(w, http.StatusBadRequest, "missing_path", "path is required", "")
 			return
 		}
 		client := strings.TrimSpace(req.Client)
@@ -177,33 +307,74 @@ func runRelayHookServeCommand(repoRoot string, args []string) error {
 			client = strings.TrimSpace(defaultClient)
 		}
 		if client == "" {
-			http.Error(w, "client is required", http.StatusBadRequest)
+			writeRelayHookWrapError(w, http.StatusBadRequest, "missing_client", "client is required", path)
 			return
 		}
 		shareFormat := strings.TrimSpace(req.ShareFormat)
 		if shareFormat == "" {
 			shareFormat = strings.TrimSpace(defaultShareFormat)
 		}
-		res, err := relayHookWrapRunner(repoRoot, req.Path, client, shareFormat)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":    false,
-				"error": err.Error(),
-				"input": req.Path,
-			})
+		if !isValidRelayHookShareFormat(shareFormat) {
+			writeRelayHookWrapError(w, http.StatusBadRequest, "invalid_share_format", "share_format must be auto, ja or en", path)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(res)
+		res, err := relayHookWrapRunner(repoRoot, path, client, shareFormat)
+		if err != nil {
+			writeRelayHookWrapError(w, http.StatusBadRequest, "wrap_failed", err.Error(), path)
+			return
+		}
+		writeRelayHookJSON(w, http.StatusOK, relayHookWrapAPIResponse{
+			APIVersion:    relayHookAPIVersion,
+			OK:            res.OK,
+			SourcePath:    res.SourcePath,
+			PacketPath:    res.PacketPath,
+			ShareFormat:   res.ShareFormat,
+			VerifyCommand: res.VerifyCommand,
+			ReceiptOut:    res.ReceiptOut,
+			ReceiptCmd:    res.ReceiptCmd,
+		})
 	})
-	if strings.TrimSpace(addr) == "" {
-		addr = "127.0.0.1:8791"
+	return mux
+}
+
+func decodeRelayHookWrapRequest(body io.Reader) (relayHookWrapRequest, error) {
+	dec := json.NewDecoder(io.LimitReader(body, 64*1024))
+	dec.DisallowUnknownFields()
+	var req relayHookWrapRequest
+	if err := dec.Decode(&req); err != nil {
+		return relayHookWrapRequest{}, fmt.Errorf("invalid JSON: %w", err)
 	}
-	fmt.Printf("[RELAY-HOOK] listening on http://%s token=%t default_client=%s\n", addr, token != "", strings.TrimSpace(defaultClient))
-	return http.ListenAndServe(addr, mux)
+	if err := dec.Decode(&struct{}{}); err != nil && !errors.Is(err, io.EOF) {
+		return relayHookWrapRequest{}, fmt.Errorf("invalid JSON: trailing data")
+	}
+	return req, nil
+}
+
+func isValidRelayHookShareFormat(shareFormat string) bool {
+	switch strings.ToLower(strings.TrimSpace(shareFormat)) {
+	case "auto", "ja", "en":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeRelayHookWrapError(w http.ResponseWriter, status int, errorCode string, msg string, input string) {
+	writeRelayHookJSON(w, status, relayHookWrapAPIResponse{
+		APIVersion: relayHookAPIVersion,
+		OK:         false,
+		ErrorCode:  strings.TrimSpace(errorCode),
+		Error:      strings.TrimSpace(msg),
+		Input:      strings.TrimSpace(input),
+	})
+}
+
+func writeRelayHookJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(payload)
 }
 
 func resolveRelayHookToken(flagValue string) string {
