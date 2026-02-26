@@ -157,7 +157,6 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 		} else {
 			fmt.Printf("[RECEIPT] id=%s verified_at=%s\n", receipt.ReceiptID, receipt.VerifiedAt)
 		}
-		fmt.Println("[VERIFIED] Trust established.")
 		emitPolicyDecisionCLI(decision)
 		emitVerifyEvent(resolvedPath, true, "packet.verified", strings.TrimSpace(string(out)), decision)
 		if auditFail := consumeAuditAppendFailureState(); auditFail != nil {
@@ -170,6 +169,7 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 		if opts.SyncNow {
 			runSyncEvents(true)
 		}
+		fmt.Println("[VERIFIED] Trust established.")
 		printTrustStatusLine(newTrustStatusSuccess(receipt.ReceiptID))
 		return
 	}

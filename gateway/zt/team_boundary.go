@@ -897,13 +897,19 @@ func buildVerifySignerPinReadinessCheck(repoRoot string) (setupCheck, []string) 
 		check.Status = "fail"
 		check.Code = teamBoundarySignerPinConfigInvalidCode
 		check.Message = fmt.Sprintf("signer pin resolution failed: %v", err)
-		return check, nil
+		return check, []string{
+			fmt.Sprintf("Fix `%s` / `%s` / `%s` fingerprint formats (40/64 hex).", securePackSignerFingerprintEnv, securePackSignerFingerprintZTEnv, securePackSignersAllowlistFile),
+			"Run `zt config doctor --json` and confirm `team_boundary_signer_pin_consistency` is `ok`.",
+		}
 	}
 	if len(verifyPins) == 0 {
-		check.Status = "warn"
+		check.Status = "fail"
 		check.Code = teamBoundarySignerPinMissingCode
-		check.Message = fmt.Sprintf("verify signer pins are empty (source=%s); `zt verify` will fail until signer pins are configured", source)
-		return check, nil
+		check.Message = fmt.Sprintf("verify signer pins are empty (source=%s); `zt verify` fails closed until signer pins are configured", source)
+		return check, []string{
+			"Set signer pins via `ZT_SECURE_PACK_SIGNER_FINGERPRINTS` (or `SECURE_PACK_SIGNER_FINGERPRINTS`), or provide `tools/secure-pack/SIGNERS_ALLOWLIST.txt`.",
+			"Run `zt config doctor --json` and confirm `team_boundary_signer_pin_consistency` is `ok` before production `zt verify`.",
+		}
 	}
 	check.Status = "ok"
 	check.Message = fmt.Sprintf("verify signer pins configured count=%d source=%s", len(verifyPins), source)
