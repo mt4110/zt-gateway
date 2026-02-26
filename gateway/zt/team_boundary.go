@@ -381,7 +381,6 @@ func enforceTeamBoundaryForSend(pol teamBoundaryPolicy, opts sendOptions) (bool,
 	if client == "" {
 		return false, "", fmt.Errorf("recipient boundary: empty client")
 	}
-	recipientViolation := false
 	routeViolation := false
 	allowedRecipients := map[string]struct{}{}
 	for _, v := range pol.AllowedRecipients {
@@ -389,7 +388,6 @@ func enforceTeamBoundaryForSend(pol teamBoundaryPolicy, opts sendOptions) (bool,
 	}
 	violations := make([]string, 0, 2)
 	if _, ok := allowedRecipients[client]; !ok {
-		recipientViolation = true
 		violations = append(violations, fmt.Sprintf("recipient %q is outside team boundary", opts.Client))
 	}
 
@@ -416,8 +414,6 @@ func enforceTeamBoundaryForSend(pol teamBoundaryPolicy, opts sendOptions) (bool,
 		reasonCode := teamBoundaryRecipientDeniedCode
 		if routeViolation {
 			reasonCode = teamBoundaryShareRouteDeniedCode
-		} else if !recipientViolation {
-			reasonCode = teamBoundaryRecipientDeniedCode
 		}
 		return false, "", &teamBoundaryEnforceError{
 			Code:    reasonCode,
