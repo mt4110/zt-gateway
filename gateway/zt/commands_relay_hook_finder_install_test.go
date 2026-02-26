@@ -29,6 +29,7 @@ func TestBuildRelayHookFinderConfigFileContent(t *testing.T) {
 	content := buildRelayHookFinderConfigFileContent(relayHookFinderConfig{
 		Client:      "clientA",
 		ShareFormat: "auto",
+		ForcePublic: true,
 		RepoRoot:    "/repo/root",
 		ZTBin:       "/usr/local/bin/zt",
 		Token:       "tok-1",
@@ -36,6 +37,7 @@ func TestBuildRelayHookFinderConfigFileContent(t *testing.T) {
 	wants := []string{
 		"export ZT_RELAY_HOOK_CLIENT='clientA'",
 		"export ZT_RELAY_HOOK_SHARE_FORMAT='auto'",
+		"export ZT_RELAY_HOOK_FORCE_PUBLIC='1'",
 		"export ZT_RELAY_HOOK_REPO_ROOT='/repo/root'",
 		"export ZT_BIN='/usr/local/bin/zt'",
 		"export ZT_RELAY_HOOK_TOKEN='tok-1'",
@@ -126,7 +128,10 @@ func TestConfigureRelayHookFinderQuickAction_WritesRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read runner: %v", err)
 	}
-	if !strings.Contains(string(runner), "relay hook finder-quick-action") {
+	if !strings.Contains(string(runner), "finder-quick-action") {
 		t.Fatalf("runner missing finder quick action command")
+	}
+	if !strings.Contains(string(runner), "--force-public") {
+		t.Fatalf("runner missing force-public branch")
 	}
 }

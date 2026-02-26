@@ -448,6 +448,7 @@ Finder Quick Action (macOS) 運用:
 go run ./gateway/zt relay hook install-finder \
   --client clientA \
   --share-format auto \
+  --force-public \
   --force \
   --json
 ```
@@ -458,6 +459,7 @@ go run ./gateway/zt relay hook install-finder \
 go run ./gateway/zt relay hook configure-finder \
   --client clientA \
   --share-format auto \
+  --force-public \
   --json
 ```
 

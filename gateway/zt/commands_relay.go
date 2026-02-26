@@ -534,9 +534,11 @@ func runRelayAutoSendAndExtractPacket(repoRoot, client, shareFormat, srcPath str
 		"--share-route", "file:" + shareJSONPath,
 		"--share-json",
 		"--share-format", strings.TrimSpace(shareFormat),
-		"--",
-		srcPath,
 	}
+	if envBool(relayHookForcePubEnv) {
+		args = append(args, "--force-public")
+	}
+	args = append(args, "--", srcPath)
 	cmd := exec.Command(exePath, args...)
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()

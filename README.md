@@ -254,6 +254,7 @@ Finder Quick Action向けに複数ファイルを一括ラップ:
 go run ./gateway/zt relay hook finder-quick-action \
   --client clientA \
   --share-format auto \
+  --force-public \
   --json \
   ./sample1.txt ./sample2.txt
 ```
@@ -264,6 +265,7 @@ Finder Quick Action をコマンドで自動登録（推奨）:
 go run ./gateway/zt relay hook install-finder \
   --client clientA \
   --share-format auto \
+  --force-public \
   --force \
   --json
 ```
@@ -274,6 +276,7 @@ go run ./gateway/zt relay hook install-finder \
 go run ./gateway/zt relay hook configure-finder \
   --client clientA \
   --share-format auto \
+  --force-public \
   --json
 ```
 
@@ -287,6 +290,7 @@ go run ./gateway/zt relay hook configure-finder \
 
 ```bash
 export ZT_RELAY_HOOK_CLIENT="clientA"
+export ZT_RELAY_HOOK_FORCE_PUBLIC="1"
 scripts/dev/zt-finder-quick-action.sh ./sample1.txt ./sample2.txt
 ```
 
@@ -649,7 +653,8 @@ README の Quick Start は「導入と流れの理解」を目的にしたもの
 
 ### Colima (Docker Desktop を使わない前提)
 
-Control Plane の Postgres 検証は、Docker Desktop ではなく **Colima 前提** を推奨します。
+Control Plane の Postgres 検証と secure-pack Ubuntu smoke は、Docker Desktop ではなく **Colima 前提** を推奨します。
+（Docker Desktop は企業ライセンス条件に注意）
 
 最小オンボーディング:
 
@@ -665,9 +670,24 @@ docker ps
 colima stop
 ```
 
+secure-pack の Ubuntu/Linux smoke（Colima daemon 使用）:
+
+```bash
+colima start --cpu 4 --memory 8 --disk 60
+docker context use colima
+
+# Docker Desktop 由来の credential helper 設定が残っている環境向け（安全な一時回避）
+tmpdc="$(mktemp -d)"
+printf '{"auths":{}}\n' > "${tmpdc}/config.json"
+DOCKER_CONFIG="${tmpdc}" \
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" \
+bash ./scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh --client local-smoketest
+```
+
 補足:
 
 - `docker compose` プラグインが無い環境では `docker-compose` を使ってください
+- `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh` は `docker run -i` を使い、コンテナ内実行スクリプトを stdin で渡します
 - Postgres dual-write の検証手順は `docs/CONTROL_PLANE_POSTGRES_SMOKETEST.md` を参照
 - `zt` のイベント送信運用は `--no-auto-sync`（ローカル spool のみ）と `--sync-now`（コマンド終了時に強制同期）を使い分けできます
 - `zt` のイベント自動同期デフォルトは `policy/zt_client.toml` の `auto_sync` で設定できます（優先順位: `CLI --no-auto-sync` > `ENV (ZT_NO_AUTO_SYNC / ZT_EVENT_AUTO_SYNC)` > `zt_client.toml` > built-in）

@@ -14,6 +14,7 @@ import (
 
 const (
 	relayHookTokenEnv     = "ZT_RELAY_HOOK_TOKEN"
+	relayHookForcePubEnv  = "ZT_RELAY_HOOK_FORCE_PUBLIC"
 	relayHookAPIVersion   = "v1"
 	relayHookActionFinder = "finder_quick_action"
 	relayHookPathWrap     = "/v1/wrap"
@@ -132,8 +133,10 @@ func runRelayHookFinderQuickActionCommand(repoRoot string, args []string) error 
 	var client string
 	var shareFormat string
 	var jsonOut bool
+	var forcePublic bool
 	fs.StringVar(&client, "client", "", "Recipient client name")
 	fs.StringVar(&shareFormat, "share-format", "auto", "share format: auto|ja|en")
+	fs.BoolVar(&forcePublic, "force-public", false, "Pass --force-public to zt send for secure-scan repo guard override")
 	fs.BoolVar(&jsonOut, "json", true, "Emit JSON result")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -156,6 +159,9 @@ func runRelayHookFinderQuickActionCommand(repoRoot string, args []string) error 
 		Requested:  len(paths),
 		Results:    make([]relayHookWrapResult, 0, len(paths)),
 	}
+	restoreForcePublicEnv := withRelayHookForcePublicEnv(forcePublic)
+	defer restoreForcePublicEnv()
+
 	var failed bool
 	for _, p := range paths {
 		res, err := relayHookWrapRunner(repoRoot, p, client, shareFormat)
@@ -193,6 +199,21 @@ func runRelayHookFinderQuickActionCommand(repoRoot string, args []string) error 
 		return fmt.Errorf("finder quick action failed for %d/%d file(s)", len(out.Errors), out.Requested)
 	}
 	return nil
+}
+
+func withRelayHookForcePublicEnv(enabled bool) func() {
+	if !enabled {
+		return func() {}
+	}
+	prev, had := os.LookupEnv(relayHookForcePubEnv)
+	_ = os.Setenv(relayHookForcePubEnv, "1")
+	return func() {
+		if had {
+			_ = os.Setenv(relayHookForcePubEnv, prev)
+			return
+		}
+		_ = os.Unsetenv(relayHookForcePubEnv)
+	}
 }
 
 func runRelayHookWrapExecute(repoRoot string, sourcePath string, client string, shareFormat string) (relayHookWrapResult, error) {

@@ -25,9 +25,9 @@ const (
 	cliRelayHookSignature    = "relay hook <wrap|serve|finder-quick-action|install-finder|configure-finder> [...]"
 	cliRelayHookWrapSig      = "relay hook wrap --path <file> --client <name> [--share-format auto|ja|en] [--json]"
 	cliRelayHookServeSig     = "relay hook serve [--addr <host:port>] [--client <name>] [--share-format auto|ja|en] [--token <token>]"
-	cliRelayHookFinderSig    = "relay hook finder-quick-action --client <name> [--share-format auto|ja|en] [--json] <file> [<file> ...]"
-	cliRelayHookInstallSig   = "relay hook install-finder [--name <quick-action-name>] [--workflow-dir <path>] [--config-path <path>] [--runner-path <path>] --client <name> [--share-format auto|ja|en] [--repo-root <path>] [--zt-bin <path>] [--json] [--force]"
-	cliRelayHookConfigSig    = "relay hook configure-finder [--config-path <path>] --client <name> [--share-format auto|ja|en] [--repo-root <path>] [--zt-bin <path>] [--json]"
+	cliRelayHookFinderSig    = "relay hook finder-quick-action --client <name> [--share-format auto|ja|en] [--force-public] [--json] <file> [<file> ...]"
+	cliRelayHookInstallSig   = "relay hook install-finder [--name <quick-action-name>] [--workflow-dir <path>] [--config-path <path>] [--runner-path <path>] --client <name> [--share-format auto|ja|en] [--force-public] [--repo-root <path>] [--zt-bin <path>] [--json] [--force]"
+	cliRelayHookConfigSig    = "relay hook configure-finder [--config-path <path>] --client <name> [--share-format auto|ja|en] [--force-public] [--repo-root <path>] [--zt-bin <path>] [--json]"
 	cliHelpSignature         = "help [advanced]"
 
 	cliSetupUsage            = "Usage: zt " + cliSetupSignature
