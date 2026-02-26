@@ -72,7 +72,8 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-docker run --rm \
+docker run --rm -i \
+  --security-opt seccomp=unconfined \
   --platform "${PLATFORM}" \
   -v "${NIX_STORE_VOLUME}:/nix" \
   -v "${REPO_ROOT}:/src:ro" \
@@ -107,7 +108,7 @@ done
 
 rm -rf /homeless-shelter || true
 export HOME=/root
-export NIX_CONFIG=$'experimental-features = nix-command flakes\nsandbox = false\n'
+export NIX_CONFIG=$'experimental-features = nix-command flakes\nsandbox = false\nfilter-syscalls = false\n'
 
 mkdir -p /work
 rsync -a /src/ /work/

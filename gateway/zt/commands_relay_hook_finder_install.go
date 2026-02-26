@@ -20,6 +20,7 @@ const (
 type relayHookFinderConfig struct {
 	Client      string
 	ShareFormat string
+	ForcePublic bool
 	RepoRoot    string
 	ZTBin       string
 	Token       string
@@ -59,6 +60,7 @@ func runRelayHookInstallFinderCommand(repoRoot string, args []string) error {
 	fs.StringVar(&opts.RunnerPath, "runner-path", "", "Runner script path used by Quick Action")
 	fs.StringVar(&opts.Config.Client, "client", "", "Recipient client name")
 	fs.StringVar(&opts.Config.ShareFormat, "share-format", "auto", "share format: auto|ja|en")
+	fs.BoolVar(&opts.Config.ForcePublic, "force-public", false, "Pass --force-public in Finder quick action send flow")
 	fs.StringVar(&opts.Config.RepoRoot, "repo-root", repoRoot, "Repo root path used when ZT_BIN is unset")
 	fs.StringVar(&opts.Config.ZTBin, "zt-bin", "", "zt binary path (optional; default uses `go run <repo>/gateway/zt`)")
 	fs.StringVar(&opts.Config.Token, "token", "", "Optional token persisted in config as ZT_RELAY_HOOK_TOKEN")
@@ -92,6 +94,7 @@ func runRelayHookConfigureFinderCommand(repoRoot string, args []string) error {
 	fs.StringVar(&opts.RunnerPath, "runner-path", "", "Runner script path to write/update")
 	fs.StringVar(&opts.Config.Client, "client", "", "Recipient client name")
 	fs.StringVar(&opts.Config.ShareFormat, "share-format", "auto", "share format: auto|ja|en")
+	fs.BoolVar(&opts.Config.ForcePublic, "force-public", false, "Pass --force-public in Finder quick action send flow")
 	fs.StringVar(&opts.Config.RepoRoot, "repo-root", repoRoot, "Repo root path used when ZT_BIN is unset")
 	fs.StringVar(&opts.Config.ZTBin, "zt-bin", "", "zt binary path (optional; default uses `go run <repo>/gateway/zt`)")
 	fs.StringVar(&opts.Config.Token, "token", "", "Optional token persisted in config as ZT_RELAY_HOOK_TOKEN")
@@ -314,6 +317,9 @@ func buildRelayHookFinderConfigFileContent(cfg relayHookFinderConfig) string {
 		"export ZT_RELAY_HOOK_REPO_ROOT=" + shellSingleQuote(cfg.RepoRoot),
 		"export ZT_RELAY_HOOK_JSON='1'",
 	}
+	if cfg.ForcePublic {
+		lines = append(lines, "export "+relayHookForcePubEnv+"='1'")
+	}
 	if strings.TrimSpace(cfg.ZTBin) != "" {
 		lines = append(lines, "export ZT_BIN="+shellSingleQuote(cfg.ZTBin))
 	}
@@ -351,6 +357,8 @@ func buildRelayHookFinderRunnerScript(configPath string, defaultRepoRoot string)
 		"  exit 64",
 		"fi",
 		"",
+		"FORCE_PUBLIC=\"${" + relayHookForcePubEnv + ":-0}\"",
+		"",
 		"REPO_ROOT=\"${ZT_RELAY_HOOK_REPO_ROOT:-" + escapeShellDoubleQuoted(defaultRepoRoot) + "}\"",
 		"cd \"${REPO_ROOT}\"",
 		"if [[ -n \"${ZT_BIN:-}\" ]]; then",
@@ -359,7 +367,13 @@ func buildRelayHookFinderRunnerScript(configPath string, defaultRepoRoot string)
 		"  cmd=(\"go\" \"run\" \"./gateway/zt\")",
 		"fi",
 		"",
-		"exec \"${cmd[@]}\" relay hook finder-quick-action --client \"${CLIENT}\" --share-format \"${SHARE_FORMAT}\" --json \"$@\"",
+		"args=(\"relay\" \"hook\" \"finder-quick-action\" \"--client\" \"${CLIENT}\" \"--share-format\" \"${SHARE_FORMAT}\" \"--json\")",
+		"force_public_lc=\"${FORCE_PUBLIC,,}\"",
+		"if [[ \"${force_public_lc}\" == \"1\" || \"${force_public_lc}\" == \"true\" || \"${force_public_lc}\" == \"yes\" || \"${force_public_lc}\" == \"on\" ]]; then",
+		"  args+=(\"--force-public\")",
+		"fi",
+		"",
+		"exec \"${cmd[@]}\" \"${args[@]}\" \"$@\"",
 	}, "\n") + "\n"
 }
 
