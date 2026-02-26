@@ -99,6 +99,21 @@ else
         echo "[WARN] GNUPGHOME is not set. secure-pack signing will use your default GPG keyring." >&2
     fi
 fi
+
+# Verify is fail-closed when signer pins are missing.
+# Reuse recipient fingerprints for local integration smoke tests so CI can verify packets.
+RECIP_FILE="tools/secure-pack/recipients/${CLIENT_NAME}.txt"
+if [ ! -f "$RECIP_FILE" ]; then
+    echo "[FAIL] Recipient file not found for signer pin setup: $RECIP_FILE" >&2
+    exit 1
+fi
+SIGNER_PINS="$(awk 'NF && $1 !~ /^#/ {print $1}' "$RECIP_FILE" | paste -sd, -)"
+if [ -z "$SIGNER_PINS" ]; then
+    echo "[FAIL] No signer fingerprints found in $RECIP_FILE" >&2
+    exit 1
+fi
+export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="$SIGNER_PINS"
+
 cat > "$SCAN_POLICY_FILE" <<'EOF'
 required_scanners = []
 require_clamav_db = false
