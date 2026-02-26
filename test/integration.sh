@@ -100,16 +100,20 @@ else
     fi
 fi
 
-# Verify is fail-closed when signer pins are missing.
-# Reuse recipient fingerprints for local integration smoke tests so CI can verify packets.
-RECIP_FILE="tools/secure-pack/recipients/${CLIENT_NAME}.txt"
-if [ ! -f "$RECIP_FILE" ]; then
-    echo "[FAIL] Recipient file not found for signer pin setup: $RECIP_FILE" >&2
-    exit 1
-fi
-SIGNER_PINS="$(awk 'NF && $1 !~ /^#/ {print $1}' "$RECIP_FILE" | paste -sd, -)"
+# Verify is fail-closed when signer pins are missing/mismatched.
+# Prefer active secret-key fingerprints (actual packet signer candidates).
+# Fallback to recipient file when no secret key is discoverable.
+SIGNER_PINS="$(gpg --batch --with-colons --list-secret-keys 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | paste -sd, - || true)"
 if [ -z "$SIGNER_PINS" ]; then
-    echo "[FAIL] No signer fingerprints found in $RECIP_FILE" >&2
+    RECIP_FILE="tools/secure-pack/recipients/${CLIENT_NAME}.txt"
+    if [ ! -f "$RECIP_FILE" ]; then
+        echo "[FAIL] Recipient file not found for signer pin setup: $RECIP_FILE" >&2
+        exit 1
+    fi
+    SIGNER_PINS="$(awk 'NF && $1 !~ /^#/ {print $1}' "$RECIP_FILE" | paste -sd, -)"
+fi
+if [ -z "$SIGNER_PINS" ]; then
+    echo "[FAIL] No signer fingerprints available for verify pinning." >&2
     exit 1
 fi
 export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="$SIGNER_PINS"
