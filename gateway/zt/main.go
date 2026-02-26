@@ -180,6 +180,21 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "dashboard":
+		if err := runDashboardCommand(repoRoot, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "unlock", "breakglass":
+		if err := runUnlockCommand(repoRoot, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "relay":
+		if err := runRelayCommand(repoRoot, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "config":
 		if err := runConfigCommand(repoRoot, os.Args[2:]); err != nil {
 			if !isConfigDoctorJSONMode(os.Args[1:]) {

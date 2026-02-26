@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const securePackRootPubKeyFingerprintEnv = "ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS"
@@ -100,6 +101,12 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 	scFilesCheck, scRootPinCheck, scSigCheck, scFixes := buildSecurePackSupplyChainSetupChecks(repoRoot)
 	out.Checks = append(out.Checks, scFilesCheck, scRootPinCheck, scSigCheck)
 	out.QuickFixes = append(out.QuickFixes, scFixes...)
+
+	breakglassCheck, breakglassFix := buildBreakglassTrustedSignersSetupCheck(repoRoot)
+	out.Checks = append(out.Checks, breakglassCheck)
+	if breakglassFix != "" {
+		out.QuickFixes = append(out.QuickFixes, breakglassFix)
+	}
 
 	compatCheck, compatibility, compatFixes := buildSetupCompatibilityResolverReport(repoRoot, scRootPinCheck, scSigCheck)
 	out.Checks = append(out.Checks, compatCheck)
@@ -322,7 +329,7 @@ func buildSecurePackSupplyChainSetupChecks(repoRoot string) (setupCheck, setupCh
 			}, fixes
 	}
 
-	allowedPins, pinErr := resolveSecurePackRootPubKeyFingerprintPins()
+	allowedPins, pinSource, pinErr := resolveSecurePackRootPubKeyFingerprintPinsWithSource()
 	if pinErr != nil {
 		fixes = append(fixes, fmt.Sprintf("Fix `%s` format (comma/newline-separated hex fingerprints; multiple allowed for key rotation).", securePackRootPubKeyFingerprintEnv))
 		return filesCheck, setupCheck{
@@ -335,12 +342,21 @@ func buildSecurePackSupplyChainSetupChecks(repoRoot string) (setupCheck, setupCh
 				Message: "skipped (root key fingerprint pin configuration invalid)",
 			}, fixes
 	}
+	allowedPins, pinSource, unlockState := mergeRootPinsWithUnlockToken(repoRoot, allowedPins, pinSource, time.Now().UTC())
+	if unlockState != nil && unlockState.Present && !unlockState.Active {
+		fixes = append(fixes, fmt.Sprintf("Fix or revoke unlock token at `%s` (reason=%s).", unlockState.Path, unlockState.Reason))
+	}
+
 	if len(allowedPins) == 0 {
 		fixes = append(fixes, fmt.Sprintf("Set `%s` to the trusted `ROOT_PUBKEY.asc` fingerprint(s) (comma/newline-separated; multiple allowed for key rotation) and confirm out-of-band.", securePackRootPubKeyFingerprintEnv))
+		msg := fmt.Sprintf("no trusted root key fingerprint pins configured (set %s)", securePackRootPubKeyFingerprintEnv)
+		if unlockState != nil && unlockState.Present && !unlockState.Active {
+			msg = msg + fmt.Sprintf("; unlock token inactive: %s", unlockState.Reason)
+		}
 		return filesCheck, setupCheck{
 				Name:    "secure_pack_root_pubkey_fingerprint",
 				Status:  "fail",
-				Message: fmt.Sprintf("no trusted root key fingerprint pins configured (set %s)", securePackRootPubKeyFingerprintEnv),
+				Message: msg,
 			}, setupCheck{
 				Name:    "secure_pack_tools_lock_signature",
 				Status:  "warn",
@@ -363,6 +379,9 @@ func buildSecurePackSupplyChainSetupChecks(repoRoot string) (setupCheck, setupCh
 	}
 	if !fingerprintPinned(actualFingerprint, allowedPins) {
 		fixes = append(fixes, fmt.Sprintf("Confirm the root key fingerprint out-of-band and update `%s` if this is an approved key rotation.", securePackRootPubKeyFingerprintEnv))
+		if unlockState != nil && unlockState.Present && !unlockState.Active {
+			fixes = append(fixes, fmt.Sprintf("Unlock token exists but is inactive (%s). Re-issue with at least %d valid approvals.", unlockState.Reason, unlockTokenMinApprovals))
+		}
 		return filesCheck, setupCheck{
 				Name:    "secure_pack_root_pubkey_fingerprint",
 				Status:  "fail",
@@ -376,10 +395,14 @@ func buildSecurePackSupplyChainSetupChecks(repoRoot string) (setupCheck, setupCh
 
 	if err := verifySecurePackToolsLockSignature(info.ToolsLockSig, info.ToolsLock, info.RootPubKey); err != nil {
 		fixes = append(fixes, "Re-generate/sign `tools/secure-pack/tools.lock` with the trusted root key and verify locally with `gpg --verify tools.lock.sig tools.lock`.")
+		pinMsg := fmt.Sprintf("pinned match: %s (allowed=%d)", actualFingerprint, len(allowedPins))
+		if pinSource != "" {
+			pinMsg += fmt.Sprintf(" source=%s", pinSource)
+		}
 		return filesCheck, setupCheck{
 				Name:    "secure_pack_root_pubkey_fingerprint",
 				Status:  "ok",
-				Message: fmt.Sprintf("pinned match: %s (allowed=%d)", actualFingerprint, len(allowedPins)),
+				Message: pinMsg,
 			}, setupCheck{
 				Name:    "secure_pack_tools_lock_signature",
 				Status:  "fail",
@@ -387,10 +410,14 @@ func buildSecurePackSupplyChainSetupChecks(repoRoot string) (setupCheck, setupCh
 			}, fixes
 	}
 
+	pinMsg := fmt.Sprintf("pinned match: %s (allowed=%d)", actualFingerprint, len(allowedPins))
+	if pinSource != "" {
+		pinMsg += fmt.Sprintf(" source=%s", pinSource)
+	}
 	return filesCheck, setupCheck{
 			Name:    "secure_pack_root_pubkey_fingerprint",
 			Status:  "ok",
-			Message: fmt.Sprintf("pinned match: %s (allowed=%d)", actualFingerprint, len(allowedPins)),
+			Message: pinMsg,
 		}, setupCheck{
 			Name:    "secure_pack_tools_lock_signature",
 			Status:  "ok",
@@ -428,6 +455,42 @@ func inspectSecurePackSupplyChainFiles(repoRoot string) (securePackSupplyChainIn
 	}
 	sort.Strings(out.Missing)
 	return out, nil
+}
+
+func buildBreakglassTrustedSignersSetupCheck(repoRoot string) (setupCheck, string) {
+	tokenPath := resolveUnlockTokenPath(repoRoot)
+	_, tokenErr := os.Stat(tokenPath)
+	tokenPresent := tokenErr == nil
+
+	signers, source, err := loadUnlockTrustedSignersFromEnv()
+	if err != nil {
+		return setupCheck{
+				Name:    "breakglass_trusted_signers",
+				Status:  "fail",
+				Message: err.Error(),
+			},
+			fmt.Sprintf("Set `%s` as `<signer_id>:<pubkey_b64>` list to pin break-glass approvers.", unlockTrustedSignersEnv)
+	}
+	if len(signers) == 0 {
+		if tokenPresent {
+			return setupCheck{
+					Name:    "breakglass_trusted_signers",
+					Status:  "fail",
+					Message: fmt.Sprintf("unlock token exists at %s but %s is not configured", tokenPath, unlockTrustedSignersEnv),
+				},
+				fmt.Sprintf("Set `%s` to activate unlock token verification by fixed trusted signers.", unlockTrustedSignersEnv)
+		}
+		return setupCheck{
+			Name:    "breakglass_trusted_signers",
+			Status:  "warn",
+			Message: fmt.Sprintf("not configured (%s). unlock tokens stay inactive unless %s is set.", unlockTrustedSignersEnv, unlockTrustedSignersEnv),
+		}, ""
+	}
+	return setupCheck{
+		Name:    "breakglass_trusted_signers",
+		Status:  "ok",
+		Message: fmt.Sprintf("trusted signers=%d source=%s", len(signers), source),
+	}, ""
 }
 
 func verifySecurePackToolsLockSignature(sigPath, lockPath, rootPubKeyPath string) error {

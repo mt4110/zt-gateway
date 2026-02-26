@@ -3,16 +3,25 @@ package main
 const (
 	cliUsageRoot = "Usage: zt <command> [args]"
 
-	cliSetupSignature  = "setup [--json] [--profile public|internal|confidential|regulated]"
-	cliSendSignature   = "send --client <name> [--profile public|internal|confidential|regulated] [--strict | --allow-degraded-scan] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-json] [--share-format auto|ja|en] [--share-route none|stdout|clipboard|file:<path>|command-file:<path>] <file>"
-	cliScanSignature   = "scan [--tui] [--force-public] [--update] [--strict] [--no-auto-sync] <path>"
-	cliVerifySignature = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>"
-	cliAuditSignature  = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
-	cliSyncSignature   = "sync [--force] [--json]"
-	cliPolicySignature = "policy status [--json] [--kind extension|scan|all]"
-	cliConfigSignature = "config doctor [--json]"
-	cliDoctorSignature = "doctor [--json]"
-	cliHelpSignature   = "help [advanced]"
+	cliSetupSignature        = "setup [--json] [--profile public|internal|confidential|regulated]"
+	cliSendSignature         = "send --client <name> [--profile public|internal|confidential|regulated] [--strict | --allow-degraded-scan] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-json] [--share-format auto|ja|en] [--share-route none|stdout|clipboard|file:<path>|command-file:<path>] <file>"
+	cliScanSignature         = "scan [--tui] [--force-public] [--update] [--strict] [--no-auto-sync] <path>"
+	cliVerifySignature       = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>"
+	cliAuditSignature        = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
+	cliSyncSignature         = "sync [--force] [--json]"
+	cliPolicySignature       = "policy status [--json] [--kind extension|scan|all]"
+	cliConfigSignature       = "config doctor [--json]"
+	cliDoctorSignature       = "doctor [--json]"
+	cliDashboardSignature    = "dashboard [--addr <host:port>] [--json]"
+	cliUnlockSignature       = "unlock <issue|verify|revoke> [...]"
+	cliRelaySignature        = "relay <slack|discord|drive> [...]"
+	cliUnlockIssueSignature  = "unlock issue --reason <text> --allow-root-fingerprint <fp> [--allow-root-fingerprint <fp> ...] [--expires-in <duration> | --expires-at <rfc3339>] [--signer <id:b64> | --signer-file <id:path>]... [--out <path>]"
+	cliUnlockVerifySignature = "unlock verify [--file <path>] [--json]"
+	cliUnlockRevokeSignature = "unlock revoke [--file <path>]"
+	cliRelaySlackSignature   = "relay slack --packet <packet.spkg.tgz> [--format auto|ja|en] [--webhook-url <url>] [--json]"
+	cliRelayDiscordSignature = "relay discord --packet <packet.spkg.tgz> [--format auto|ja|en] [--webhook-url <url>] [--json]"
+	cliRelayDriveSignature   = "relay drive --packet <packet.spkg.tgz> [--folder <path>] [--format auto|ja|en] [--write-json] [--api-upload] [--drive-folder-id <id>] [--oauth-token <token>]"
+	cliHelpSignature         = "help [advanced]"
 
 	cliSetupUsage        = "Usage: zt " + cliSetupSignature
 	cliSendUsage         = "Usage: zt " + cliSendSignature
@@ -23,6 +32,15 @@ const (
 	cliPolicyUsage       = "Usage: zt " + cliPolicySignature
 	cliPolicyStatusUsage = "Usage: zt " + cliPolicySignature
 	cliConfigUsage       = "Usage: zt " + cliConfigSignature
+	cliDashboardUsage    = "Usage: zt " + cliDashboardSignature
+	cliUnlockUsage       = "Usage: zt " + cliUnlockSignature
+	cliUnlockIssueUsage  = "Usage: zt " + cliUnlockIssueSignature
+	cliUnlockVerifyUsage = "Usage: zt " + cliUnlockVerifySignature
+	cliUnlockRevokeUsage = "Usage: zt " + cliUnlockRevokeSignature
+	cliRelayUsage        = "Usage: zt " + cliRelaySignature
+	cliRelaySlackUsage   = "Usage: zt " + cliRelaySlackSignature
+	cliRelayDiscordUsage = "Usage: zt " + cliRelayDiscordSignature
+	cliRelayDriveUsage   = "Usage: zt " + cliRelayDriveSignature
 
 	setupNextSender   = "Sender: zt send --client <name> <file>"
 	setupNextReceiver = "Receiver: zt verify <packet.spkg.tgz>"

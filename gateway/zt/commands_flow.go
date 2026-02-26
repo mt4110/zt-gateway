@@ -170,6 +170,12 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	trustFail := func(code string) {
 		printTrustStatusLine(newTrustStatusFailure(code))
 	}
+	if _, err := ensureOperationUnlocked(adapters.repoRoot, "send"); err != nil {
+		printZTErrorCode(ztErrorCodeLocalLockActive)
+		fmt.Printf("[LOCKED] %v\n", err)
+		trustFail(ztErrorCodeLocalLockActive)
+		os.Exit(1)
+	}
 
 	if cpEvents != nil {
 		if opts.NoAutoSync {

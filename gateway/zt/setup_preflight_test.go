@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCandidateClamAVDBDirsFromValues(t *testing.T) {
@@ -410,5 +411,28 @@ func TestEmitSetupJSON_IncludesErrorCodeField(t *testing.T) {
 	}
 	if qfb["runbook"] != "docs/OPERATIONS.md" {
 		t.Fatalf("quick_fix_bundle.runbook = %v", qfb["runbook"])
+	}
+}
+
+func TestBuildBreakglassTrustedSignersSetupCheck_NoConfigWarn(t *testing.T) {
+	repoRoot := t.TempDir()
+	check, _ := buildBreakglassTrustedSignersSetupCheck(repoRoot)
+	if check.Status != "warn" {
+		t.Fatalf("check.Status = %q, want warn", check.Status)
+	}
+}
+
+func TestBuildBreakglassTrustedSignersSetupCheck_TokenWithoutSignersFails(t *testing.T) {
+	repoRoot := t.TempDir()
+	token := testUnlockToken(t, "0123456789ABCDEF0123456789ABCDEF01234567", time.Now().UTC().Add(-1*time.Minute), time.Now().UTC().Add(1*time.Hour))
+	if err := writeUnlockTokenFile(defaultUnlockTokenPath(repoRoot), token); err != nil {
+		t.Fatal(err)
+	}
+	check, fix := buildBreakglassTrustedSignersSetupCheck(repoRoot)
+	if check.Status != "fail" {
+		t.Fatalf("check.Status = %q, want fail", check.Status)
+	}
+	if fix == "" {
+		t.Fatalf("expected quick fix")
 	}
 }
