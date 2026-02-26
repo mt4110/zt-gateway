@@ -150,13 +150,13 @@ func parseSHAFile(path string) (string, error) {
 	return parts[0], nil
 }
 
-// VerifyPacket verifies a secure packet without extracting
+// VerifyPacketWithSigner verifies a secure packet and returns signer fingerprint.
 // It extracts to a temp dir, verifies signature and checksum, then cleans up.
-func VerifyPacket(inputPath string) error {
+func VerifyPacketWithSigner(inputPath string) (string, error) {
 	// 1. Create temp workspace
 	tmpDir, err := os.MkdirTemp("", "secure-verify-*")
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
+		return "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -164,13 +164,13 @@ func VerifyPacket(inputPath string) error {
 	// Since we are in `pack` package, we can use RunTar (if exported or in same package).
 	// RunTar is in pack.go, package pack. So it is accessible.
 	if err := RunTar("-xzf", inputPath, "-C", tmpDir); err != nil {
-		return fmt.Errorf("failed to extract packet: %w", err)
+		return "", fmt.Errorf("failed to extract packet: %w", err)
 	}
 
 	// 3. Identify files
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	var encFile, sigFile, shaFile string
@@ -186,33 +186,40 @@ func VerifyPacket(inputPath string) error {
 	}
 
 	if encFile == "" {
-		return fmt.Errorf("encrypted archive (*.tar.gz.gpg) not found in packet")
+		return "", fmt.Errorf("encrypted archive (*.tar.gz.gpg) not found in packet")
 	}
 	if sigFile == "" {
-		return fmt.Errorf("signature (*.sig) not found in packet")
+		return "", fmt.Errorf("signature (*.sig) not found in packet")
 	}
 	if shaFile == "" {
-		return fmt.Errorf("checksum file (*.sha256) not found in packet")
+		return "", fmt.Errorf("checksum file (*.sha256) not found in packet")
 	}
 
 	// 4. Verify Signature
 	gp := gpg.New("")
-	if err := gp.VerifyFile(sigFile, encFile); err != nil {
-		return fmt.Errorf("signature verification failed: %w", err)
+	signerFingerprint, err := gp.VerifyFileAndSigner(sigFile, encFile)
+	if err != nil {
+		return "", fmt.Errorf("signature verification failed: %w", err)
 	}
 
 	// 5. Verify SHA256
 	expectedSHA, err := parseSHAFile(shaFile)
 	if err != nil {
-		return fmt.Errorf("failed to parse sha256 file: %w", err)
+		return "", fmt.Errorf("failed to parse sha256 file: %w", err)
 	}
 	actualSHA, err := CalculateSHA256(encFile)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if expectedSHA != actualSHA {
-		return fmt.Errorf("checksum mismatch! Expected %s, got %s", expectedSHA, actualSHA)
+		return "", fmt.Errorf("checksum mismatch! Expected %s, got %s", expectedSHA, actualSHA)
 	}
 
-	return nil
+	return signerFingerprint, nil
+}
+
+// VerifyPacket verifies a secure packet without extracting.
+func VerifyPacket(inputPath string) error {
+	_, err := VerifyPacketWithSigner(inputPath)
+	return err
 }

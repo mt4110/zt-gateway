@@ -43,8 +43,33 @@ func runVerify(adapters *toolAdapters, opts verifyOptions) {
 		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
 			fmt.Printf("[DETAIL] %s\n", trimmed)
 		}
+		signerFingerprint, signerErr := extractVerifiedSignerFingerprint(string(out))
+		if signerErr != nil {
+			decision := decisionForVerify(false, "policy_verify_provenance_binding_failed")
+			emitPolicyDecisionCLI(decision)
+			emitVerifyEvent(resolvedPath, false, "packet.verify_provenance_binding_failed", signerErr.Error(), decision)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			printZTErrorCode(ztErrorCodeVerifyProvenance)
+			fmt.Printf("[FAIL] Could not bind verify provenance: %v\n", signerErr)
+			printTrustStatusLine(newTrustStatusFailure(ztErrorCodeVerifyProvenance))
+			os.Exit(1)
+		}
 		decision := decisionForVerify(true, "policy_verify_pass")
-		receipt := buildVerificationReceipt(resolvedPath, decision)
+		receipt, receiptErr := buildVerificationReceipt(resolvedPath, decision, signerFingerprint)
+		if receiptErr != nil {
+			failDecision := decisionForVerify(false, "policy_verify_provenance_binding_failed")
+			emitPolicyDecisionCLI(failDecision)
+			emitVerifyEvent(resolvedPath, false, "packet.verify_provenance_binding_failed", receiptErr.Error(), failDecision)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			printZTErrorCode(ztErrorCodeVerifyProvenance)
+			fmt.Printf("[FAIL] Could not build provenance-bound receipt: %v\n", receiptErr)
+			printTrustStatusLine(newTrustStatusFailure(ztErrorCodeVerifyProvenance))
+			os.Exit(1)
+		}
 		if strings.TrimSpace(opts.ReceiptOut) != "" {
 			receiptPath, err := filepath.Abs(opts.ReceiptOut)
 			if err != nil {

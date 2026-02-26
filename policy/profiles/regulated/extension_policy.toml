@@ -6,7 +6,11 @@ force_rebuild = false
 force_rebuild_extensions = [
   ".jpg",
   ".jpeg",
-  ".png"
+  ".png",
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".pptx"
 ]
 
 deny_extensions = [
@@ -28,15 +32,15 @@ scan_only_extensions = [
   ".txt",
   ".md",
   ".csv",
-  ".json",
-  ".pdf",
-  ".docx",
-  ".xlsx",
-  ".pptx"
+  ".json"
 ]
 
 scan_rebuild_extensions = [
   ".jpg",
   ".jpeg",
-  ".png"
+  ".png",
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".pptx"
 ]

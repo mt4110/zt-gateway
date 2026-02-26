@@ -19,6 +19,13 @@ cat > "${tmp_repo}/policy/policy.toml" <<'EOF'
 name = "ci-fixture"
 EOF
 
+cat > "${tmp_repo}/policy/extension_policy.toml" <<'EOF'
+scan_only_extensions = [".txt"]
+scan_rebuild_extensions = [".jpg", ".jpeg", ".png"]
+deny_extensions = [".exe", ".zip", ".7z", ".rar", ".tar", ".gz", ".tgz"]
+max_size_mb = 50
+EOF
+
 cat > "${tmp_repo}/policy/scan_policy.toml" <<'EOF'
 required_scanners = []
 require_clamav_db = false

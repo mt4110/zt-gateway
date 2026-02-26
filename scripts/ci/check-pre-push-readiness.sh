@@ -47,6 +47,21 @@ echo "[14/15] actual repo supply-chain gate"
 if [[ "${SKIP_ACTUAL_GATE:-0}" == "1" ]]; then
   echo "skipped (SKIP_ACTUAL_GATE=1)"
 else
+  if [[ "${ZT_PREPUSH_AUTO_EXPECTED_PIN_BOOTSTRAP:-0}" == "1" ]] && \
+     [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]] && \
+     [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED:-}" ]] && \
+     [[ -f "./tools/secure-pack/ROOT_PUBKEY.asc" ]] && \
+     command -v gpg >/dev/null 2>&1; then
+    resolved_fpr="$(gpg --show-keys --with-colons ./tools/secure-pack/ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+    resolved_fpr="$(printf '%s' "${resolved_fpr}" | tr '[:lower:]' '[:upper:]' | tr -cd '0-9A-F')"
+    if [[ ${#resolved_fpr} -eq 40 ]]; then
+      export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED="${resolved_fpr}"
+      echo "[pre-push] local expected-pin bootstrap enabled (ZT_PREPUSH_AUTO_EXPECTED_PIN_BOOTSTRAP=1)"
+      echo "[pre-push] exported ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED from ROOT_PUBKEY.asc"
+    else
+      echo "[pre-push] WARN could not resolve valid ROOT_PUBKEY fingerprint for auto bootstrap"
+    fi
+  fi
   bash ./scripts/ci/check-zt-setup-json-actual-gate.sh
 fi
 

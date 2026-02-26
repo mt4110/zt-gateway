@@ -10,6 +10,7 @@ const (
 	ztErrorCodeConfigUnknownSubcmd = "ZT_CONFIG_UNKNOWN_SUBCOMMAND"
 	ztErrorCodeVerifyInvalidPath   = "ZT_VERIFY_INVALID_PATH"
 	ztErrorCodeVerifyPacketFailed  = "ZT_VERIFY_PACKET_FAILED"
+	ztErrorCodeVerifyProvenance    = "ZT_VERIFY_PROVENANCE_BINDING_FAILED"
 	ztErrorCodeVerifyUnsupported   = "ZT_VERIFY_UNSUPPORTED_INPUT"
 	ztErrorCodeVerifyReceiptWrite  = "ZT_VERIFY_RECEIPT_WRITE_FAILED"
 	ztErrorCodeAuditUsage          = "ZT_AUDIT_USAGE"

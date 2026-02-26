@@ -241,6 +241,8 @@ actual repo ゲート（実artifact直検査）:
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` が設定されている場合:
   - `ROOT_PUBKEY.asc` から解決した fingerprint が expected pins に含まれることを検証
   - 検証成功時のみ `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
+- ローカル pre-push では `ZT_PREPUSH_AUTO_EXPECTED_PIN_BOOTSTRAP=1` を付けると、
+  `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS*` 未設定時に `ROOT_PUBKEY.asc` から expected pin を一時自動設定できる（one-trust 簡易運用）
 - `ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP=1` はローカル簡易運用向け（同一repo起点のため zero-trust 強度は下がる）
 - `zt setup --json` の全体 `ok` は参考値（supply-chain 以外の失敗に影響されるため）
 - `resolved.pin_match_count >= 1` を必須化
@@ -316,6 +318,15 @@ bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40
 
 # One-trust（ローカル ROOT_PUBKEY 依存）
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+
+# ローカル shell へ export だけしたい場合（gh 不要）
+eval "$(bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key --print-env)"
+```
+
+ローカル pre-push で毎回 export を省略する場合:
+
+```bash
+ZT_PREPUSH_AUTO_EXPECTED_PIN_BOOTSTRAP=1 bash ./scripts/ci/check-pre-push-readiness.sh
 ```
 
 `gh` CLI（手動運用時）:

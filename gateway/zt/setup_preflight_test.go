@@ -120,6 +120,30 @@ func TestCollectSetupPreflightChecks_ExtensionPolicyParseErrorIsFail(t *testing.
 	t.Fatalf("extension_policy check not found")
 }
 
+func TestCollectSetupPreflightChecks_MissingExtensionPolicyIsFail(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "tools", "secure-pack", "recipients"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "scan_policy.toml"), []byte("required_scanners=[\"ClamAV\"]\nrequire_clamav_db=false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectSetupPreflightChecks(repoRoot)
+	for _, c := range got.Checks {
+		if c.Name == "extension_policy" {
+			if c.Status != "fail" {
+				t.Fatalf("extension_policy status = %q, want fail", c.Status)
+			}
+			return
+		}
+	}
+	t.Fatalf("extension_policy check not found")
+}
+
 func TestInspectSecurePackSupplyChainFiles(t *testing.T) {
 	repoRoot := t.TempDir()
 	spDir := filepath.Join(repoRoot, "tools", "secure-pack")

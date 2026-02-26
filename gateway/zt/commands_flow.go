@@ -35,9 +35,6 @@ func resolveSendScanStrict(opts sendOptions, envZTScanStrict bool) (bool, string
 	if opts.Strict {
 		return true, "[Scan] strict mode enabled (--strict; default for zt send)"
 	}
-	if profile == trustProfilePublic {
-		return false, "[Scan] degraded scan default enabled by profile=public (shared-priority posture)"
-	}
 	if envZTScanStrict {
 		return true, "[Scan] strict mode enabled by default (`ZT_SCAN_STRICT=1` is redundant for zt send)"
 	}
@@ -203,36 +200,26 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	policyFile := profileSelection.ExtensionPolicyPath
 	extPolicy, policyErr := loadExtensionPolicy(policyFile)
 	if policyErr != nil {
-		if os.IsNotExist(policyErr) && profileSelection.Name == trustProfileInternal {
-			fmt.Printf("[Policy] WARN %s not found, using secure defaults: %v\n", policyFile, policyErr)
-			extPolicy = defaultExtensionPolicy()
-		} else {
-			printZTErrorCode(ztErrorCodeSendExtPolicyLoad)
-			fmt.Printf("[BLOCKED] Failed to load %s: %v\n", policyFile, policyErr)
-			fmt.Println("Reason: extension policy parse/load failure is treated as fail-closed to avoid unsafe routing defaults.")
-			if opts.SyncNow {
-				runSyncEvents(true)
-			}
-			trustFail(ztErrorCodeSendExtPolicyLoad)
-			os.Exit(1)
+		printZTErrorCode(ztErrorCodeSendExtPolicyLoad)
+		fmt.Printf("[BLOCKED] Failed to load %s: %v\n", policyFile, policyErr)
+		fmt.Println("Reason: extension policy files are mandatory; missing/invalid policy is fail-closed.")
+		if opts.SyncNow {
+			runSyncEvents(true)
 		}
+		trustFail(ztErrorCodeSendExtPolicyLoad)
+		os.Exit(1)
 	}
 	scanPolicyFile := profileSelection.ScanPolicyPath
 	scanPol, scanPolicyErr := loadScanPolicy(scanPolicyFile)
 	if scanPolicyErr != nil {
-		if os.IsNotExist(scanPolicyErr) && profileSelection.Name == trustProfileInternal {
-			fmt.Printf("[Policy] WARN %s not found, using secure defaults: %v\n", scanPolicyFile, scanPolicyErr)
-			scanPol = defaultScanPolicy()
-		} else {
-			printZTErrorCode(ztErrorCodeSendScanPolicyLoad)
-			fmt.Printf("[BLOCKED] Failed to load %s: %v\n", scanPolicyFile, scanPolicyErr)
-			fmt.Println("Reason: scan policy parse/load failure is treated as fail-closed to avoid degraded scanning requirements.")
-			if opts.SyncNow {
-				runSyncEvents(true)
-			}
-			trustFail(ztErrorCodeSendScanPolicyLoad)
-			os.Exit(1)
+		printZTErrorCode(ztErrorCodeSendScanPolicyLoad)
+		fmt.Printf("[BLOCKED] Failed to load %s: %v\n", scanPolicyFile, scanPolicyErr)
+		fmt.Println("Reason: scan policy files are mandatory; missing/invalid policy is fail-closed.")
+		if opts.SyncNow {
+			runSyncEvents(true)
 		}
+		trustFail(ztErrorCodeSendScanPolicyLoad)
+		os.Exit(1)
 	}
 	mode, policyReason := resolveExtensionMode(inputPath, extPolicy)
 	fmt.Printf("[Policy] %s (%s) source=%s\n", mode, policyReason, extPolicy.Source)

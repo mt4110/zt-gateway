@@ -46,10 +46,10 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 		if os.IsNotExist(err) {
 			out.Checks = append(out.Checks, setupCheck{
 				Name:    "extension_policy",
-				Status:  "warn",
-				Message: fmt.Sprintf("missing %s; zt send uses built-in secure defaults", extPolicyPath),
+				Status:  "fail",
+				Message: fmt.Sprintf("missing %s; zt send fails closed", extPolicyPath),
 			})
-			out.QuickFixes = append(out.QuickFixes, "Create `policy/extension_policy.toml` (or restore it) to make extension routing explicit and reviewable.")
+			out.QuickFixes = append(out.QuickFixes, "Create `policy/extension_policy.toml` (or restore it); zt send requires explicit extension policy artifacts.")
 		} else {
 			out.Checks = append(out.Checks, setupCheck{
 				Name:    "extension_policy",

@@ -19,9 +19,11 @@ var verifyCmd = &cobra.Command{
 	Use:   "verify",
 	Short: "Verify signature and integrity only",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := workflows.VerifyWorkflow(verifyInputPath); err != nil {
+		signerFingerprint, err := workflows.VerifyWorkflowWithSigner(verifyInputPath)
+		if err != nil {
 			return err
 		}
+		fmt.Printf("SIGNER_FINGERPRINT=%s\n", signerFingerprint)
 		fmt.Println("OK: Signature and checksum verified.")
 		return nil
 	},

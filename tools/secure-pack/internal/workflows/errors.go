@@ -14,6 +14,9 @@ const (
 	ErrCodeToolHashMismatch          = "SP_TOOL_HASH_MISMATCH"
 	ErrCodeToolVersionMismatch       = "SP_TOOL_VERSION_MISMATCH"
 	ErrCodeSupplyChainVerifyFailed   = "SP_SUPPLY_CHAIN_VERIFY_FAILED"
+	ErrCodeSignerPinConfigInvalid    = "SP_SIGNER_PIN_CONFIG_INVALID"
+	ErrCodeSignerPinMissing          = "SP_SIGNER_PIN_MISSING"
+	ErrCodeSignerPinMismatch         = "SP_SIGNER_PIN_MISMATCH"
 )
 
 type codedError struct {
