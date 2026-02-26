@@ -43,6 +43,8 @@ func runRelayCommand(repoRoot string, args []string) error {
 		return runRelayDriveCommand(repoRoot, args[1:])
 	case "auto-drive", "autodrive":
 		return runRelayAutoDriveCommand(repoRoot, args[1:])
+	case "hook":
+		return runRelayHookCommand(repoRoot, args[1:])
 	default:
 		return fmt.Errorf(cliRelayUsage)
 	}
@@ -260,13 +262,17 @@ func runRelayDriveWithOptions(repoRoot string, opts relayDriveOptions) error {
 }
 
 type relayAutoDriveOptions struct {
-	Client       string
-	WatchDir     string
-	DoneDir      string
-	ErrorDir     string
-	PollInterval time.Duration
-	Once         bool
-	Drive        relayDriveOptions
+	Client          string
+	WatchDir        string
+	DoneDir         string
+	ErrorDir        string
+	PollInterval    time.Duration
+	StableWindow    time.Duration
+	MaxRetries      int
+	RetryBackoff    time.Duration
+	DedupLedgerPath string
+	Once            bool
+	Drive           relayDriveOptions
 }
 
 func runRelayAutoDriveCommand(repoRoot string, args []string) error {
@@ -301,16 +307,33 @@ func runRelayAutoDriveCommand(repoRoot string, args []string) error {
 	if err := os.MkdirAll(errorDir, 0o755); err != nil {
 		return err
 	}
+	dedupPath := strings.TrimSpace(opts.DedupLedgerPath)
+	if dedupPath == "" {
+		dedupPath = filepath.Join(repoRoot, ".zt-spool", "relay-auto-drive-dedup.jsonl")
+	}
+	if abs, err := filepath.Abs(dedupPath); err == nil {
+		dedupPath = abs
+	}
 	opts.WatchDir = watchDir
 	opts.DoneDir = doneDir
 	opts.ErrorDir = errorDir
+	opts.DedupLedgerPath = dedupPath
 
-	fmt.Printf("[RELAY-AUTO] watch_dir=%s client=%s done_dir=%s error_dir=%s poll=%s\n", opts.WatchDir, opts.Client, opts.DoneDir, opts.ErrorDir, opts.PollInterval)
+	dedupStore, err := loadRelayAutoDedupStore(opts.DedupLedgerPath)
+	if err != nil {
+		return fmt.Errorf("load dedup ledger failed: %w", err)
+	}
+	stabilities := map[string]relayAutoFileStability{}
+	retries := map[string]relayAutoRetryState{}
+
+	fmt.Printf("[RELAY-AUTO] watch_dir=%s client=%s done_dir=%s error_dir=%s poll=%s stable_window=%s max_retries=%d retry_backoff=%s dedup_ledger=%s\n",
+		opts.WatchDir, opts.Client, opts.DoneDir, opts.ErrorDir, opts.PollInterval, opts.StableWindow, opts.MaxRetries, opts.RetryBackoff, opts.DedupLedgerPath)
 	for {
 		files, err := listRelayAutoCandidates(opts.WatchDir)
 		if err != nil {
 			return err
 		}
+		cleanupRelayAutoStateMaps(files, stabilities, retries)
 		if len(files) == 0 {
 			if opts.Once {
 				fmt.Println("[RELAY-AUTO] no pending files")
@@ -320,30 +343,67 @@ func runRelayAutoDriveCommand(repoRoot string, args []string) error {
 			continue
 		}
 		for _, src := range files {
-			fmt.Printf("[RELAY-AUTO] processing file=%s\n", src)
+			now := time.Now().UTC()
+			if retry, ok := retries[src]; ok && !retry.NextRetryAt.IsZero() && now.Before(retry.NextRetryAt) {
+				continue
+			}
+			ready, reason, stableErr := relayAutoFileReady(src, now, opts.StableWindow, stabilities)
+			if stableErr != nil {
+				fmt.Printf("[RELAY-AUTO] skip file=%s reason=%s err=%v\n", src, reason, stableErr)
+				continue
+			}
+			if !ready {
+				fmt.Printf("[RELAY-AUTO] waiting file=%s reason=%s\n", src, reason)
+				continue
+			}
+
+			sha, size, err := computeRelayAutoFileDigest(src)
+			if err != nil {
+				fmt.Printf("[RELAY-AUTO] digest failed file=%s err=%v\n", src, err)
+				continue
+			}
+			dedupKey := relayAutoDedupKey(opts.Client, sha, size)
+			if prev, ok := dedupStore.Seen[dedupKey]; ok {
+				dst, moveErr := moveFileToDir(src, opts.DoneDir)
+				if moveErr != nil {
+					return fmt.Errorf("duplicate source move failed (%s): %w", src, moveErr)
+				}
+				delete(retries, src)
+				delete(stabilities, src)
+				fmt.Printf("[RELAY-AUTO] duplicate skipped source=%s archived=%s previous_packet=%s completed_at=%s\n", src, dst, prev.PacketPath, prev.CompletedAt)
+				continue
+			}
+
+			fmt.Printf("[RELAY-AUTO] processing file=%s sha256=%s\n", src, sha)
 			packetPath, err := runRelayAutoSendAndExtractPacket(repoRoot, opts.Client, opts.Drive.Format, src)
 			if err != nil {
-				_, moveErr := moveFileToDir(src, opts.ErrorDir)
-				if moveErr != nil {
-					fmt.Printf("[RELAY-AUTO] failed to move errored source: %v\n", moveErr)
-				}
-				fmt.Printf("[RELAY-AUTO] send failed file=%s err=%v\n", src, err)
+				handleRelayAutoFailure(src, err, opts, retries, now)
 				continue
 			}
 			driveOpts := opts.Drive
 			driveOpts.PacketPath = packetPath
 			if err := runRelayDriveWithOptions(repoRoot, driveOpts); err != nil {
-				_, moveErr := moveFileToDir(src, opts.ErrorDir)
-				if moveErr != nil {
-					fmt.Printf("[RELAY-AUTO] failed to move errored source: %v\n", moveErr)
-				}
-				fmt.Printf("[RELAY-AUTO] relay failed file=%s packet=%s err=%v\n", src, packetPath, err)
+				handleRelayAutoFailure(src, fmt.Errorf("relay failed packet=%s: %w", packetPath, err), opts, retries, now)
 				continue
 			}
 			dst, moveErr := moveFileToDir(src, opts.DoneDir)
 			if moveErr != nil {
 				return fmt.Errorf("auto-drive moved packet but failed to archive source %s: %w", src, moveErr)
 			}
+			record := relayAutoDedupRecord{
+				Key:         dedupKey,
+				Client:      opts.Client,
+				SHA256:      sha,
+				SizeBytes:   size,
+				SourcePath:  src,
+				PacketPath:  packetPath,
+				CompletedAt: now.Format(time.RFC3339),
+			}
+			if err := appendRelayAutoDedupRecord(&dedupStore, record); err != nil {
+				fmt.Printf("[RELAY-AUTO] WARN dedup ledger append failed: %v\n", err)
+			}
+			delete(retries, src)
+			delete(stabilities, src)
 			fmt.Printf("[RELAY-AUTO] completed source=%s archived=%s packet=%s\n", src, dst, packetPath)
 		}
 		if opts.Once {
@@ -361,6 +421,10 @@ func parseRelayAutoDriveArgs(args []string) (relayAutoDriveOptions, error) {
 	fs.StringVar(&opts.DoneDir, "done-dir", "", "Directory to move processed source files")
 	fs.StringVar(&opts.ErrorDir, "error-dir", "", "Directory to move failed source files")
 	fs.DurationVar(&opts.PollInterval, "poll-interval", 5*time.Second, "Polling interval (e.g. 5s)")
+	fs.DurationVar(&opts.StableWindow, "stable-window", 3*time.Second, "Minimum stable window before processing a file")
+	fs.IntVar(&opts.MaxRetries, "max-retries", 3, "Max retries before moving source file to error-dir")
+	fs.DurationVar(&opts.RetryBackoff, "retry-backoff", 5*time.Second, "Base retry backoff duration (exponential)")
+	fs.StringVar(&opts.DedupLedgerPath, "dedup-ledger", "", "Dedup ledger JSONL path (default: .zt-spool/relay-auto-drive-dedup.jsonl)")
 	fs.BoolVar(&opts.Once, "once", false, "Process current queue once and exit")
 	fs.StringVar(&opts.Drive.Format, "format", "auto", "share format: auto|ja|en")
 	fs.StringVar(&opts.Drive.FolderPath, "folder", "", "Drive sync folder path (local sync client folder)")
@@ -388,7 +452,37 @@ func parseRelayAutoDriveArgs(args []string) (relayAutoDriveOptions, error) {
 	if opts.PollInterval <= 0 {
 		return relayAutoDriveOptions{}, fmt.Errorf("--poll-interval must be positive")
 	}
+	if opts.StableWindow < 0 {
+		return relayAutoDriveOptions{}, fmt.Errorf("--stable-window must be >= 0")
+	}
+	if opts.MaxRetries < 0 {
+		return relayAutoDriveOptions{}, fmt.Errorf("--max-retries must be >= 0")
+	}
+	if opts.RetryBackoff <= 0 {
+		return relayAutoDriveOptions{}, fmt.Errorf("--retry-backoff must be positive")
+	}
 	return opts, nil
+}
+
+func handleRelayAutoFailure(src string, failure error, opts relayAutoDriveOptions, retries map[string]relayAutoRetryState, now time.Time) {
+	state := retries[src]
+	state.Attempts++
+	state.LastError = strings.TrimSpace(failure.Error())
+	if state.Attempts <= opts.MaxRetries {
+		delay := relayAutoBackoffDelay(opts.RetryBackoff, state.Attempts)
+		state.NextRetryAt = now.Add(delay)
+		retries[src] = state
+		fmt.Printf("[RELAY-AUTO] retry scheduled file=%s attempt=%d/%d next_retry_at=%s err=%v\n",
+			src, state.Attempts, opts.MaxRetries, state.NextRetryAt.Format(time.RFC3339), failure)
+		return
+	}
+	delete(retries, src)
+	dst, moveErr := moveFileToDir(src, opts.ErrorDir)
+	if moveErr != nil {
+		fmt.Printf("[RELAY-AUTO] failed to move errored source file=%s err=%v (root=%v)\n", src, moveErr, failure)
+		return
+	}
+	fmt.Printf("[RELAY-AUTO] moved to error source=%s archived=%s attempts=%d err=%v\n", src, dst, state.Attempts, failure)
 }
 
 func listRelayAutoCandidates(watchDir string) ([]string, error) {

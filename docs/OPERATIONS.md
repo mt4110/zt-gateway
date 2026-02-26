@@ -383,6 +383,9 @@ go run ./gateway/zt relay drive \
 - 実行: `zt send --share-json` で packet 生成、続けて `relay drive` 実行
 - 成功時: 元ファイルを `.zt-done/` へ移動
 - 失敗時: 元ファイルを `.zt-error/` へ移動
+- 部分書き込み対策: `--stable-window` 経過後のみ処理開始
+- 再試行: `--max-retries` / `--retry-backoff` で指数バックオフ
+- 重複送信抑止: `--dedup-ledger`（既定: `.zt-spool/relay-auto-drive-dedup.jsonl`）
 
 最小実行:
 
@@ -391,7 +394,10 @@ go run ./gateway/zt relay auto-drive \
   --client clientA \
   --watch-dir ./dropbox/send-queue \
   --folder "$HOME/Google Drive/My Drive/zt-share" \
-  --poll-interval 5s
+  --poll-interval 5s \
+  --stable-window 3s \
+  --max-retries 3 \
+  --retry-backoff 5s
 ```
 
 バッチ1回実行:
@@ -408,6 +414,35 @@ go run ./gateway/zt relay auto-drive \
 
 - `zt send` が実行されるため、local lock が有効なら fail-closed で停止
 - `*.spkg.tgz` / `*.verify.txt` / `*.share.json` は watch 対象から除外
+- `--max-retries` を超えたファイルは `.zt-error/` へ移動
+
+## relay hook 運用（拡張/外部連携）
+
+`relay hook` は、将来の OS 拡張・ブラウザ拡張と繋ぐためのローカルブリッジです。
+
+- `relay hook wrap`: 単発ファイルをCLIからラップ
+- `relay hook serve`: HTTP API (`/v1/wrap`) を公開
+
+起動例:
+
+```bash
+export ZT_RELAY_HOOK_TOKEN="<long_random_token>"
+go run ./gateway/zt relay hook serve --client clientA --addr 127.0.0.1:8791
+```
+
+API 呼び出し例:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8791/v1/wrap \
+  -H "Authorization: Bearer ${ZT_RELAY_HOOK_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"path":"./sample.txt","client":"clientA","share_format":"ja"}'
+```
+
+注意:
+
+- token 未設定時は無認証になるため、本番運用では `ZT_RELAY_HOOK_TOKEN` を必須化
+- local lock 有効時は `/v1/wrap` も fail-closed で `423 Locked`
 
 ## CI ゲート（標準）
 
