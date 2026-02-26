@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -163,6 +164,36 @@ func TestRunRelayHookFinderQuickActionCommand_InvalidShareFormat(t *testing.T) {
 	}
 	if got, want := err.Error(), "--share-format must be auto, ja or en"; got != want {
 		t.Fatalf("error=%q, want %q", got, want)
+	}
+}
+
+func TestRunRelayHookFinderQuickActionCommand_ForcePublicEnv(t *testing.T) {
+	t.Setenv(relayHookForcePubEnv, "0")
+	prev := relayHookWrapRunner
+	t.Cleanup(func() { relayHookWrapRunner = prev })
+	relayHookWrapRunner = func(repoRoot, sourcePath, client, shareFormat string) (relayHookWrapResult, error) {
+		if got, want := os.Getenv(relayHookForcePubEnv), "1"; got != want {
+			t.Fatalf("%s=%q, want %q", relayHookForcePubEnv, got, want)
+		}
+		return relayHookWrapResult{
+			OK:            true,
+			SourcePath:    sourcePath,
+			PacketPath:    "/tmp/ok.spkg.tgz",
+			ShareFormat:   shareFormat,
+			VerifyCommand: "zt verify -- '/tmp/ok.spkg.tgz'",
+		}, nil
+	}
+
+	err := runRelayHookFinderQuickActionCommand(t.TempDir(), []string{
+		"--client", "clientA",
+		"--force-public",
+		"/tmp/a.txt",
+	})
+	if err != nil {
+		t.Fatalf("runRelayHookFinderQuickActionCommand returned error: %v", err)
+	}
+	if got, want := os.Getenv(relayHookForcePubEnv), "0"; got != want {
+		t.Fatalf("%s restored=%q, want %q", relayHookForcePubEnv, got, want)
 	}
 }
 

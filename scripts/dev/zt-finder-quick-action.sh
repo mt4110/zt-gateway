@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLIENT="${ZT_RELAY_HOOK_CLIENT:-}"
 SHARE_FORMAT="${ZT_RELAY_HOOK_SHARE_FORMAT:-auto}"
 JSON_FLAG="${ZT_RELAY_HOOK_JSON:-1}"
+FORCE_PUBLIC="${ZT_RELAY_HOOK_FORCE_PUBLIC:-0}"
 ZT_BIN="${ZT_BIN:-}"
 
 if [[ -z "${CLIENT}" ]]; then
@@ -27,6 +28,10 @@ fi
 args=("relay" "hook" "finder-quick-action" "--client" "${CLIENT}" "--share-format" "${SHARE_FORMAT}")
 if [[ "${JSON_FLAG}" == "1" || "${JSON_FLAG}" == "true" ]]; then
   args+=("--json")
+fi
+force_public_lc="${FORCE_PUBLIC,,}"
+if [[ "${force_public_lc}" == "1" || "${force_public_lc}" == "true" || "${force_public_lc}" == "yes" || "${force_public_lc}" == "on" ]]; then
+  args+=("--force-public")
 fi
 
 (

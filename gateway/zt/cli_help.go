@@ -52,7 +52,7 @@ func printAdvancedUsage() {
 	fmt.Println("  - Add `--share-json` to emit structured share payload JSON (stdout/file routes).")
 	fmt.Println("  - `relay drive` supports local sync-folder handoff and optional direct Google Drive API upload (`--api-upload`).")
 	fmt.Println("  - `relay auto-drive` adds stable-window, retry/backoff and dedup ledger for unattended handoff.")
-	fmt.Println("  - `relay hook finder-quick-action` can wrap multiple Finder-selected files in one command.")
+	fmt.Println("  - `relay hook finder-quick-action` can wrap multiple Finder-selected files in one command (`--force-public` for secure-scan repo guard override).")
 	fmt.Println("  - `relay hook install-finder` auto-registers a Finder Quick Action and writes stable config.")
 	fmt.Println("  - `dashboard` shows danger signals and can toggle local lock to block `send` / `relay` during incidents.")
 	fmt.Println("  - Add `--profile` to select trust posture presets (`internal` by default).")
