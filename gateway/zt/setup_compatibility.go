@@ -295,10 +295,12 @@ func buildCompatibilityFixCandidates(category string, env setupCompatibilityEnvi
 		add(2, "bash ./scripts/ci/check-zt-setup-json-actual-gate.sh", "Re-check root pin resolution and signature checks.")
 	case setupCompatCategoryRootPinMissing:
 		add(1, "export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS=\"$(gpg --show-keys --with-colons ./tools/secure-pack/ROOT_PUBKEY.asc | awk -F: '/^fpr:/ {print $10; exit}')\"", "Set root key fingerprint pin (fail-closed prerequisite).")
-		add(2, "bash ./scripts/ci/check-zt-setup-json-actual-gate.sh", "Validate `resolved.pin_match_count >= 1`.")
+		add(2, "bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key", "Bootstrap GitHub Actions variable for actual gate (one-trust mode).")
+		add(3, "bash ./scripts/ci/check-zt-setup-json-actual-gate.sh", "Validate `resolved.pin_match_count >= 1`.")
 	case setupCompatCategoryRootPinMismatch:
 		add(1, "export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS='OLD_FPR_40HEX,NEW_FPR_40HEX'", "Update approved root fingerprint pins (use dual pins during rotation).")
-		add(2, "bash ./scripts/ci/check-zt-setup-json-actual-gate.sh", "Re-check fingerprint match and signature checks.")
+		add(2, "bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins 'OLD_FPR_40HEX,NEW_FPR_40HEX'", "Update CI expected pins during approved key rotation.")
+		add(3, "bash ./scripts/ci/check-zt-setup-json-actual-gate.sh", "Re-check fingerprint match and signature checks.")
 	case setupCompatCategoryToolsLockSignature:
 		add(1, "gpg --verify ./tools/secure-pack/tools.lock.sig ./tools/secure-pack/tools.lock", "Verify detached signature diagnostics.")
 		add(2, "bash ./scripts/dev/generate-secure-pack-tools-lock.sh --root-key <gpg_uid_or_fpr>", "Regenerate/sign CI-canonical tools.lock artifacts.")

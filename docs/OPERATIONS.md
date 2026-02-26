@@ -238,6 +238,10 @@ actual repo ゲート（実artifact直検査）:
 - `scripts/ci/check-zt-setup-json-actual-gate.sh`
 - `tools/secure-pack/tools.lock` / `tools.lock.sig` / `ROOT_PUBKEY.asc` が存在する場合は fail-closed
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` 未設定時は `fail`
+- `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` が設定されている場合:
+  - `ROOT_PUBKEY.asc` から解決した fingerprint が expected pins に含まれることを検証
+  - 検証成功時のみ `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
+- `ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP=1` はローカル簡易運用向け（同一repo起点のため zero-trust 強度は下がる）
 - `zt setup --json` の全体 `ok` は参考値（supply-chain 以外の失敗に影響されるため）
 - `resolved.pin_match_count >= 1` を必須化
 - `ZT_BIN=/path/to/linux-zt` を指定すると、`go build` の代わりに既存バイナリで実行可能（Ubuntu コンテナ検証用）
@@ -304,7 +308,25 @@ jq -r '.event_type' ./.zt-spool/events.jsonl | sort | uniq -c
 
 fingerprint は秘密値ではない前提のため、GitHub Actions `Variables` を推奨します（`Secrets` は fallback）。
 
-`gh` CLI:
+1コマンド bootstrap（推奨）:
+
+```bash
+# 推奨: 承認済み pins を明示
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX"
+
+# One-trust（ローカル ROOT_PUBKEY 依存）
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+```
+
+`gh` CLI（手動運用時）:
+
+```bash
+gh variable set ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED \
+  --repo mt4110/zt-gateway \
+  --body "OLD_FPR_40HEX,NEW_FPR_40HEX"
+```
+
+直接 pin を渡す運用（従来）:
 
 ```bash
 gh variable set ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS \

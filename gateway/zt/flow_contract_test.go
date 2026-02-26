@@ -10,11 +10,12 @@ import (
 )
 
 type receiverSharePayload struct {
-	Kind        string                   `json:"kind"`
-	Format      string                   `json:"format"`
-	Command     string                   `json:"command"`
-	Text        string                   `json:"text"`
-	ReceiptHint receiverShareReceiptHint `json:"receipt_hint"`
+	Kind             string                        `json:"kind"`
+	Format           string                        `json:"format"`
+	Command          string                        `json:"command"`
+	Text             string                        `json:"text"`
+	ReceiptHint      receiverShareReceiptHint      `json:"receipt_hint"`
+	ChannelTemplates receiverShareChannelTemplates `json:"channel_templates"`
 }
 
 func TestShareJSONToVerifyToReceipt_E2EContract(t *testing.T) {
@@ -99,6 +100,30 @@ func TestShareJSONToVerifyToReceipt_E2EContract(t *testing.T) {
 	}
 	if strings.TrimSpace(share.ReceiptHint.Command) == "" {
 		t.Fatalf("receipt_hint.command is empty")
+	}
+	if share.ChannelTemplates.Version != "v1" {
+		t.Fatalf("channel_templates.version = %q, want v1", share.ChannelTemplates.Version)
+	}
+	if strings.TrimSpace(share.ChannelTemplates.SlackText) == "" {
+		t.Fatalf("channel_templates.slack_text is empty")
+	}
+	if strings.TrimSpace(share.ChannelTemplates.EmailSubject) == "" {
+		t.Fatalf("channel_templates.email_subject is empty")
+	}
+	if strings.TrimSpace(share.ChannelTemplates.EmailBody) == "" {
+		t.Fatalf("channel_templates.email_body is empty")
+	}
+	if !strings.Contains(share.ChannelTemplates.SlackText, share.Command) {
+		t.Fatalf("channel_templates.slack_text does not include share command: %q", share.ChannelTemplates.SlackText)
+	}
+	if !strings.Contains(share.ChannelTemplates.SlackText, share.ReceiptHint.Command) {
+		t.Fatalf("channel_templates.slack_text does not include receipt command: %q", share.ChannelTemplates.SlackText)
+	}
+	if !strings.Contains(share.ChannelTemplates.EmailBody, share.Command) {
+		t.Fatalf("channel_templates.email_body does not include share command: %q", share.ChannelTemplates.EmailBody)
+	}
+	if !strings.Contains(share.ChannelTemplates.EmailBody, share.ReceiptHint.Command) {
+		t.Fatalf("channel_templates.email_body does not include receipt command: %q", share.ChannelTemplates.EmailBody)
 	}
 	wantReceiptCommand := fmt.Sprintf("zt verify --receipt-out %s -- %s", shellQuotePOSIX(share.ReceiptHint.Path), strings.TrimSpace(strings.TrimPrefix(share.Command, "zt verify --")))
 	if share.ReceiptHint.Command != wantReceiptCommand {

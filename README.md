@@ -38,6 +38,21 @@ export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
 export SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${ROOT_FPR}"
 ```
 
+CIでの zero-trust 寄り運用（推奨）:
+
+- `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を保護変数として配布
+- `scripts/ci/check-zt-setup-json-actual-gate.sh` が `ROOT_PUBKEY.asc` の fingerprint 一致を検証後、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
+
+1コマンド登録（GitHub Variables）:
+
+```bash
+# 推奨: 承認済み pin を明示（鍵ローテーション時は old,new）
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX"
+
+# One-trust: ローカル ROOT_PUBKEY.asc をそのまま登録
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+```
+
 複数 fingerprint を許容する例（鍵ローテーション時）:
 
 ```bash
@@ -101,7 +116,7 @@ go run ./gateway/zt --help-advanced
 - Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
 - CLI I/O・表示契約（v0.4 固定）: `docs/contracts/CLI_IO_DISPLAY_CONTRACT_v0.4.md`
 
-## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.8.0 additive)
+## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.9.0 additive)
 
 `zt send` の `--share-json` は、受信側に渡す検証コマンド共有用の payload を **JSON 1オブジェクト** で出力します。
 
@@ -132,6 +147,19 @@ Slack 投稿例（コマンドだけ使う）:
 jq -r '.command' /tmp/zt-share.json
 ```
 
+Slack 投稿例（v0.9.0 テンプレートを使う）:
+
+```bash
+jq -r '.channel_templates.slack_text' /tmp/zt-share.json
+```
+
+メール件名/本文（v0.9.0 テンプレートを使う）:
+
+```bash
+jq -r '.channel_templates.email_subject' /tmp/zt-share.json
+jq -r '.channel_templates.email_body' /tmp/zt-share.json
+```
+
 ### 固定スキーマ（現在の契約）
 
 `--share-json` の payload は次のフィールドを持ちます。
@@ -144,6 +172,11 @@ jq -r '.command' /tmp/zt-share.json
   - `version` (string): 現在は固定値 `v1`
   - `path` (string): 推奨レシート出力パス（相対）
   - `command` (string): `--receipt-out` 付きの検証コマンド
+- `channel_templates` (object): Slack/メール貼り付け向けの定型文テンプレート（v0.9.0 additive）
+  - `version` (string): 現在は固定値 `v1`
+  - `slack_text` (string): Slack 向け本文
+  - `email_subject` (string): メール件名
+  - `email_body` (string): メール本文
 
 JSON 例（英語）:
 
@@ -157,6 +190,12 @@ JSON 例（英語）:
     "version": "v1",
     "path": "./receipt_bundle_clientA_20260224T120000Z.json",
     "command": "zt verify --receipt-out './receipt_bundle_clientA_20260224T120000Z.json' -- './bundle_clientA_20260224T120000Z.spkg.tgz'"
+  },
+  "channel_templates": {
+    "version": "v1",
+    "slack_text": "[ZT Gateway] Receiver verification request\nVerify command:\nzt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'\nReceipt command (JSON evidence):\nzt verify --receipt-out './receipt_bundle_clientA_20260224T120000Z.json' -- './bundle_clientA_20260224T120000Z.spkg.tgz'",
+    "email_subject": "[ZT Gateway] Verification request: bundle_clientA_20260224T120000Z.spkg.tgz",
+    "email_body": "Please verify the received packet with the command below.\n\nVerify command:\nzt verify -- './bundle_clientA_20260224T120000Z.spkg.tgz'\n\nSave a JSON receipt with this command and attach the file when you reply.\nzt verify --receipt-out './receipt_bundle_clientA_20260224T120000Z.json' -- './bundle_clientA_20260224T120000Z.spkg.tgz'\n"
   }
 }
 ```
@@ -173,6 +212,12 @@ JSON 例（日本語）:
     "version": "v1",
     "path": "./receipt_bundle_xxx.json",
     "command": "zt verify --receipt-out './receipt_bundle_xxx.json' -- './bundle_xxx.spkg.tgz'"
+  },
+  "channel_templates": {
+    "version": "v1",
+    "slack_text": "[ZT Gateway] 受信ファイル検証のお願い\n検証コマンド:\nzt verify -- './bundle_xxx.spkg.tgz'\nレシート保存コマンド (JSON証跡):\nzt verify --receipt-out './receipt_bundle_xxx.json' -- './bundle_xxx.spkg.tgz'",
+    "email_subject": "[ZT Gateway] 受信ファイル検証のお願い: bundle_xxx.spkg.tgz",
+    "email_body": "受信したパケットを次のコマンドで検証してください。\n\n検証コマンド:\nzt verify -- './bundle_xxx.spkg.tgz'\n\n次のコマンドで JSON レシートを保存し、返信時に添付してください。\nzt verify --receipt-out './receipt_bundle_xxx.json' -- './bundle_xxx.spkg.tgz'\n"
   }
 }
 ```
@@ -181,6 +226,7 @@ JSON 例（日本語）:
 
 - `v0.3.x` の4フィールド（`kind`/`format`/`command`/`text`）は維持します
 - `v0.8.0` で `receipt_hint` を追加しました（additive、既存4フィールドは不変）
+- `v0.9.0` で `channel_templates` を追加しました（additive、既存5フィールドは不変）
 - 将来の拡張では **フィールド追加を優先** し、既存フィールドの意味変更は避けます
 - 連携側は未知フィールドを無視し、`kind` を見て分岐してください
 - 機械処理は `command` を優先し、人間向け表示は `text` を使ってください
@@ -276,13 +322,16 @@ flowchart LR
 - v0.7.0 では `zt sync --json` に `backlog_slo_seconds` / `backlog_breached` / `backlog_breached_since` を追加し、SLO breach 判定を再現可能にする
 - v0.7.0 では `quick_fix_bundle.runbook_anchor` を追加し、`error_code -> runbook anchor` を固定する
 - v0.8.0 では `zt send --share-json` に `receipt_hint` を追加し、受信側 `zt verify --receipt-out ...` 導線を機械可読で配布できるようにする
+- v0.9.0 では `zt send --share-json` に `channel_templates` を追加し、Slack/メール向け定型文を機械可読で配布できるようにする
 - 次段の配布運用設計（v0.5g）は `docs/architecture/POLICY_CONTROL_LOOP_V0.5G_DESIGN.md` を正本として管理する
 - v0.6.0MAX 設計正本は `docs/architecture/V0.6.0MAX_DESIGN.md`
 - v0.7.0 設計正本は `docs/architecture/V0.7.0_DESIGN.md`
 - v0.7.0 実装チケット分割は `docs/architecture/V0.7.0_IMPLEMENTATION_TICKETS.md`
 - v0.8.0 設計正本は `docs/architecture/V0.8.0_DESIGN.md`
 - v0.8.0 実装チケット分割は `docs/architecture/V0.8.0_IMPLEMENTATION_TICKETS.md`
-- 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を GitHub Actions Variables（推奨）または Secrets に配布する
+- v0.9.0 設計正本は `docs/architecture/V0.9.0_DESIGN.md`
+- v0.9.0 実装チケット分割は `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`
+- 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
 補足:
