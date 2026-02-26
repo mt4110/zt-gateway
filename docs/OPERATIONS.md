@@ -258,6 +258,156 @@ zt sync --force --json
 - `environment.os` / `environment.package_source` / `environment.pin_source`
 - `fix_candidates[]`（優先順の修復コマンド候補）
 
+## break-glass unlock 運用（trusted signer 必須）
+
+`unlock token` は `ZT_BREAKGLASS_TRUSTED_SIGNERS` が未設定だと有効化されません（fail-closed）。
+
+運用ルール:
+
+- 本番運用では `ZT_BREAKGLASS_TRUSTED_SIGNERS` を必須化する
+- 形式は `<signer_id>:<pubkey_b64>` をカンマ区切り（`;` / 改行区切りも可）
+- 承認は 2 名以上（`unlock issue` で最低 2 signer 必須）
+- token は短い TTL（例: `4h` / `24h`）を原則とし、作業完了後に revoke
+
+設定例:
+
+```bash
+export ZT_BREAKGLASS_TRUSTED_SIGNERS="ops1:BASE64_PUBKEY_1,ops2:BASE64_PUBKEY_2"
+```
+
+一次対応フロー:
+
+1. `go run ./gateway/zt unlock verify --json` で `active` / `reason` を確認
+2. `go run ./gateway/zt setup --json` で `checks[].name=="breakglass_trusted_signers"` を確認
+3. `reason=trusted_signers_not_configured` の場合は `ZT_BREAKGLASS_TRUSTED_SIGNERS` を設定
+4. `reason=insufficient_valid_approvals` の場合は 2名以上で token を再発行
+5. 作業完了後は `go run ./gateway/zt unlock revoke` で token を削除
+
+注意:
+
+- `ZT_BREAKGLASS_ALLOW_EMBEDDED_SIGNERS=1` は緊急回避向け。通常運用では使わない
+- token ファイルだけ存在する状態は安全側で `inactive` 判定になる
+
+## dashboard unlock badge の意味（運用判定）
+
+`zt dashboard` / `/api/status` の `unlock.badge` は以下で固定。
+
+| badge | UI表示 | 意味 | 一次対応 |
+| --- | --- | --- | --- |
+| `active` | 有効 | trusted signer 固定 + 2承認以上 + 期限内 | 解除作業を実施し、終了後 revoke |
+| `pending` | 解除申請中 | token はあるが有効承認が不足 | 2名承認で再発行し verify |
+| `expired` | 期限切れ | token の有効期限超過 | 新規 issue（期限短め） |
+| `inactive` | 無効 | trusted signer 未設定/署名不整合など | `unlock verify --json` の `reason` を解消 |
+| `none` | 未設定 | token 未配置 | 平常運用（解除不要） |
+
+確認コマンド:
+
+```bash
+go run ./gateway/zt dashboard
+# または
+go run ./gateway/zt dashboard --json | jq '.unlock'
+```
+
+## dashboard danger / local lock 運用
+
+`zt dashboard` / `/api/status` は `danger` と `lock` を固定出力します。
+
+- `danger.level`: `high` / `medium` / `low`
+- `danger.signals[]`: 危険信号コード一覧（原因トリアージの起点）
+- `lock.locked=true`: 送信系を手動停止中（`zt send` / `zt relay` は fail-closed）
+
+既定 lock ファイル:
+
+- `<repo>/.zt-spool/local-lock.json`
+- 変更時: `ZT_LOCAL_LOCK_FILE`
+
+主要 danger signal 例:
+
+| code | 重大度 | 意味 | 一次対応 |
+| --- | --- | --- | --- |
+| `local_lock_active` | high | 手動ロック中 | 解除条件を満たしたら dashboard から unlock |
+| `secure_pack_supply_chain_files_missing` | high | `tools.lock` など不足 | supply-chain 必須ファイルを復旧 |
+| `tools_lock_signature_unverified` | high | `tools.lock.sig` 未検証/失敗 | root key / signature を再検証 |
+| `root_pin_mismatch` | high | root pin 不一致 | pin 配布値と `ROOT_PUBKEY` を照合 |
+| `policy_freshness_critical` | high | policy鮮度がcritical | CP同期と policy fetch を復旧 |
+| `receipt_tamper_detected` | high | verify receipt が改ざん検知 | 対象受領物を隔離し再受領 |
+
+ロック操作（dashboard API 直接呼び出し例）:
+
+```bash
+# lock
+curl -sS -X POST http://127.0.0.1:8787/api/lock \
+  -H 'content-type: application/json' \
+  -d '{"action":"lock","reason":"incident triage"}'
+
+# unlock
+curl -sS -X POST http://127.0.0.1:8787/api/lock \
+  -H 'content-type: application/json' \
+  -d '{"action":"unlock","reason":"incident closed"}'
+```
+
+送信系の停止確認:
+
+```bash
+go run ./gateway/zt send --client clientA ./safe.txt
+# => ZT_ERROR_CODE=ZT_LOCAL_LOCK_ACTIVE
+```
+
+## relay drive: Google Drive API 直upload 手順
+
+`relay drive` は 2経路をサポート:
+
+- ローカル同期フォルダへの handoff（`--folder`）
+- Google Drive API への直接 upload（`--api-upload`）
+
+API upload 前提:
+
+- OAuth access token を取得（Drive upload 可能 scope）
+- 必要時のみ `--drive-folder-id` を指定（未指定時は My Drive 直下）
+- token は `--oauth-token` または `ZT_GOOGLE_DRIVE_ACCESS_TOKEN`
+
+最短手順:
+
+```bash
+export ZT_GOOGLE_DRIVE_ACCESS_TOKEN="<oauth_access_token>"
+
+go run ./gateway/zt relay drive \
+  --packet ./bundle_clientA_20260224T120000Z.spkg.tgz \
+  --api-upload \
+  --drive-folder-id "<google_drive_folder_id>" \
+  --write-json
+```
+
+併用手順（同期フォルダ + API）:
+
+```bash
+go run ./gateway/zt relay drive \
+  --packet ./bundle_clientA_20260224T120000Z.spkg.tgz \
+  --folder "$HOME/Google Drive/My Drive/zt-share" \
+  --api-upload \
+  --drive-folder-id "<google_drive_folder_id>" \
+  --write-json
+```
+
+出力確認:
+
+- API upload 成功時は `api_packet_id` / `api_verify_id`（`--write-json` 時は `api_share_json_id`）が表示される
+- `--folder` 併用時は `drive_packet` / `verify_text` / `share_json` のローカルパスが表示される
+
+代表エラー切り分け:
+
+- `--oauth-token or ZT_GOOGLE_DRIVE_ACCESS_TOKEN is required`  
+  token 未設定。env または flag を設定
+- `drive upload failed: status=401/403`  
+  token期限切れ / scope不足 / folder権限不足
+- `drive upload response missing id`  
+  API応答異常。レスポンス本文と Google 側設定を確認
+
+補足:
+
+- `--api-upload` 未指定時は `--folder` 必須（ローカル handoff モード）
+- upload 対象は packet 本体 + `*.verify.txt` + `*.share.json`（`--write-json=true` 時）
+
 ## CI ゲート（標準）
 
 fixtureゲート（ロジック回帰検知）:
