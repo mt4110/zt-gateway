@@ -39,7 +39,10 @@ func TestCollectDashboardSnapshot_Basic(t *testing.T) {
 	if err := os.WriteFile(packetPath, []byte("packet"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildVerificationReceipt(packetPath, decisionForVerify(true, "policy_verify_pass"))
+	receipt, err := buildVerificationReceipt(packetPath, decisionForVerify(true, "policy_verify_pass"), "0123456789ABCDEF0123456789ABCDEF01234567")
+	if err != nil {
+		t.Fatal(err)
+	}
 	receiptPath := filepath.Join(repoRoot, "receipt_bundle_clientA_20260225T000000Z.json")
 	if err := writeVerificationReceipt(receiptPath, receipt); err != nil {
 		t.Fatal(err)
