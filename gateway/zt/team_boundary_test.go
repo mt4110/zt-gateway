@@ -710,6 +710,37 @@ func TestBuildTeamBoundarySetupChecks_BreakGlassEnvPresentDetectedWhenDisabled(t
 	}
 }
 
+func TestBuildTeamBoundarySetupChecks_SignerPinReadinessWarnWhenBoundaryDisabledAndPinsMissing(t *testing.T) {
+	repoRoot := t.TempDir()
+	checks, _ := buildTeamBoundarySetupChecks(repoRoot)
+	c, ok := findSetupCheckByName(checks, teamBoundarySignerPinConsistencyCheckName)
+	if !ok {
+		t.Fatalf("missing check: %s", teamBoundarySignerPinConsistencyCheckName)
+	}
+	if c.Status != "warn" {
+		t.Fatalf("status = %q, want warn", c.Status)
+	}
+	if c.Code != teamBoundarySignerPinMissingCode {
+		t.Fatalf("code = %q, want %q", c.Code, teamBoundarySignerPinMissingCode)
+	}
+}
+
+func TestBuildTeamBoundarySetupChecks_SignerPinReadinessOKWhenBoundaryDisabled(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv(securePackSignerFingerprintZTEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
+	checks, _ := buildTeamBoundarySetupChecks(repoRoot)
+	c, ok := findSetupCheckByName(checks, teamBoundarySignerPinConsistencyCheckName)
+	if !ok {
+		t.Fatalf("missing check: %s", teamBoundarySignerPinConsistencyCheckName)
+	}
+	if c.Status != "ok" {
+		t.Fatalf("status = %q, want ok", c.Status)
+	}
+	if c.Code != "" {
+		t.Fatalf("code = %q, want empty", c.Code)
+	}
+}
+
 func writeTeamBoundaryPolicyFixture(t *testing.T, repoRoot, signerFingerprint string) {
 	t.Helper()
 	policyDir := filepath.Join(repoRoot, "policy")
