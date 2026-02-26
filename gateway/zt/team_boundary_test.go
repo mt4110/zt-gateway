@@ -119,6 +119,61 @@ func TestEnforceTeamBoundaryForSend_RecipientDenied(t *testing.T) {
 	}
 }
 
+func TestEnforceTeamBoundaryForSend_EmptyClientReturnsClientRequiredCode(t *testing.T) {
+	pol := teamBoundaryPolicy{
+		Enabled:                   true,
+		TenantID:                  "corp",
+		TeamID:                    "secops",
+		BoundaryPolicyVersion:     "v1",
+		AllowedRecipients:         []string{"clientA"},
+		AllowedShareRoutes:        []string{"stdout"},
+		AllowedSignerFingerprints: []string{"0123456789ABCDEF0123456789ABCDEF01234567"},
+	}
+	_, _, err := enforceTeamBoundaryForSend(pol, sendOptions{})
+	if err == nil {
+		t.Fatalf("expected boundary error")
+	}
+	if got := classifyTeamBoundaryEnforcementError(err); got != teamBoundaryClientRequiredCode {
+		t.Fatalf("enforcement code = %q, want %q", got, teamBoundaryClientRequiredCode)
+	}
+	gotZT, gotReason := classifyTeamBoundarySendEnforcementError(err)
+	if gotZT != ztErrorCodeSendClientRequired {
+		t.Fatalf("zt code = %q, want %q", gotZT, ztErrorCodeSendClientRequired)
+	}
+	if gotReason != teamBoundaryClientRequiredCode {
+		t.Fatalf("reason code = %q, want %q", gotReason, teamBoundaryClientRequiredCode)
+	}
+}
+
+func TestEnforceTeamBoundaryForSend_InvalidShareRouteReturnsRouteCode(t *testing.T) {
+	pol := teamBoundaryPolicy{
+		Enabled:                   true,
+		TenantID:                  "corp",
+		TeamID:                    "secops",
+		BoundaryPolicyVersion:     "v1",
+		AllowedRecipients:         []string{"clientA"},
+		AllowedShareRoutes:        []string{"stdout"},
+		AllowedSignerFingerprints: []string{"0123456789ABCDEF0123456789ABCDEF01234567"},
+	}
+	_, _, err := enforceTeamBoundaryForSend(pol, sendOptions{
+		Client:      "clientA",
+		ShareRoutes: []string{"invalid-route"},
+	})
+	if err == nil {
+		t.Fatalf("expected boundary error")
+	}
+	if got := classifyTeamBoundaryEnforcementError(err); got != teamBoundaryShareRouteDeniedCode {
+		t.Fatalf("enforcement code = %q, want %q", got, teamBoundaryShareRouteDeniedCode)
+	}
+	gotZT, gotReason := classifyTeamBoundarySendEnforcementError(err)
+	if gotZT != ztErrorCodeSendBoundaryRoute {
+		t.Fatalf("zt code = %q, want %q", gotZT, ztErrorCodeSendBoundaryRoute)
+	}
+	if gotReason != teamBoundaryShareRouteDeniedCode {
+		t.Fatalf("reason code = %q, want %q", gotReason, teamBoundaryShareRouteDeniedCode)
+	}
+}
+
 func TestEnforceTeamBoundaryForSend_BreakGlassAllows(t *testing.T) {
 	pol := teamBoundaryPolicy{
 		Enabled:                   true,
@@ -333,6 +388,12 @@ func TestClassifyTeamBoundarySendEnforcementError_BreakGlassCases(t *testing.T) 
 		wantZT     string
 		wantReason string
 	}{
+		{
+			name:       "client required",
+			err:        &teamBoundaryEnforceError{Code: teamBoundaryClientRequiredCode, Message: "client required"},
+			wantZT:     ztErrorCodeSendClientRequired,
+			wantReason: teamBoundaryClientRequiredCode,
+		},
 		{
 			name:       "env present",
 			err:        &teamBoundaryEnforceError{Code: teamBoundaryBreakGlassEnvPresentCode, Message: "env present"},

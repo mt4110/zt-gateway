@@ -57,6 +57,18 @@ func TestResolveSendScanStrict_ConfidentialForcesStrict(t *testing.T) {
 	}
 }
 
+func TestResolveSendBoundaryDecisionProfile_UsesValidProfile(t *testing.T) {
+	if got := resolveSendBoundaryDecisionProfile(trustProfilePublic); got != trustProfilePublic {
+		t.Fatalf("profile = %q, want %q", got, trustProfilePublic)
+	}
+}
+
+func TestResolveSendBoundaryDecisionProfile_InvalidFallsBackInternal(t *testing.T) {
+	if got := resolveSendBoundaryDecisionProfile("partner"); got != trustProfileInternal {
+		t.Fatalf("profile = %q, want %q", got, trustProfileInternal)
+	}
+}
+
 func TestRunSendSecurePackPrecheck_MissingFilesBlocks(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoRoot, "tools", "secure-pack"), 0o755); err != nil {

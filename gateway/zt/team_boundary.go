@@ -36,6 +36,7 @@ const (
 	teamBoundaryRecipientDeniedCode  = "policy_team_boundary_recipient_denied"
 	teamBoundaryShareRouteDeniedCode = "policy_team_boundary_share_route_denied"
 	teamBoundarySignerDeniedCode     = "policy_team_boundary_signer_denied"
+	teamBoundaryClientRequiredCode   = "policy_team_boundary_client_required"
 )
 
 type teamBoundaryPolicy struct {
@@ -379,7 +380,10 @@ func enforceTeamBoundaryBreakGlassStartupGuardrail(_ teamBoundaryPolicy) error {
 func enforceTeamBoundaryForSend(pol teamBoundaryPolicy, opts sendOptions) (bool, string, error) {
 	client := normalizeRecipientName(opts.Client)
 	if client == "" {
-		return false, "", fmt.Errorf("recipient boundary: empty client")
+		return false, "", &teamBoundaryEnforceError{
+			Code:    teamBoundaryClientRequiredCode,
+			Message: "recipient boundary: empty client (`--client` is required)",
+		}
 	}
 	recipientViolation := false
 	routeViolation := false
@@ -399,7 +403,10 @@ func enforceTeamBoundaryForSend(pol teamBoundaryPolicy, opts sendOptions) (bool,
 	}
 	resolvedRoutes, err := resolveEffectiveShareRouteKinds(opts)
 	if err != nil {
-		return false, "", fmt.Errorf("share-route boundary: %w", err)
+		return false, "", &teamBoundaryEnforceError{
+			Code:    teamBoundaryShareRouteDeniedCode,
+			Message: fmt.Sprintf("share-route boundary: %v", err),
+		}
 	}
 	for _, route := range resolvedRoutes {
 		if _, ok := allowedRoutes[route]; !ok {
@@ -573,6 +580,8 @@ func classifyTeamBoundaryEnforcementError(err error) string {
 
 func classifyTeamBoundarySendEnforcementError(err error) (string, string) {
 	switch classifyTeamBoundaryEnforcementError(err) {
+	case teamBoundaryClientRequiredCode:
+		return ztErrorCodeSendClientRequired, teamBoundaryClientRequiredCode
 	case teamBoundaryBreakGlassEnvPresentCode:
 		return ztErrorCodeSendBoundaryBreakGlassEnvPresent, teamBoundaryBreakGlassEnvPresentCode
 	case teamBoundaryBreakGlassGuardrailWeakCode:
