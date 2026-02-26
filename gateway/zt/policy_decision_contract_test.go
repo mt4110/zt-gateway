@@ -83,11 +83,12 @@ func TestScanPosture_ProfileContract(t *testing.T) {
 
 	sendOut := captureStdout(t, func() {
 		runSend(adapters, sendOptions{
-			InputFile:   inputPath,
-			Client:      "clientA",
-			Profile:     trustProfilePublic,
-			ShareJSON:   true,
-			ShareFormat: "en",
+			InputFile:         inputPath,
+			Client:            "clientA",
+			Profile:           trustProfilePublic,
+			AllowDegradedScan: true,
+			ShareJSON:         true,
+			ShareFormat:       "en",
 		})
 	})
 	if !strings.Contains(sendOut, "[SUCCESS] Packet generated.") {

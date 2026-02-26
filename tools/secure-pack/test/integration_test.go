@@ -140,7 +140,7 @@ func TestFullFlow(t *testing.T) {
 	// Theoretically, sender needs private key, receiver needs private key to decrypt.
 	// In this test, we act as BOTH.
 	// 1. Generate Sender Key
-	_ = setupGPG(t, gpgHome, "sender")
+	senderFpr := setupGPG(t, gpgHome, "sender")
 	// 2. Generate Receiver Key
 	receiverFpr := setupGPG(t, gpgHome, "clientA")
 	// 3. Generate Root Key for tools.lock signature verification
@@ -177,6 +177,7 @@ func TestFullFlow(t *testing.T) {
 	os.Setenv("GNUPGHOME", gpgHome)
 	defer os.Unsetenv("GNUPGHOME")
 	t.Setenv("ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS", rootFpr)
+	t.Setenv("ZT_SECURE_PACK_SIGNER_FINGERPRINTS", senderFpr)
 
 	// Change CWD to baseDir so "docs" is found relative to it
 	originalWd, _ := os.Getwd()

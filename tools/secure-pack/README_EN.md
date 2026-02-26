@@ -67,6 +67,18 @@ go run ./cmd/secure-pack receive --in <packet_file> --out <output_dir>
 
 ### 3. Verify Only
 Checks signature and checksum without extracting.
+`verify` is fail-closed unless signer fingerprint allowlist is configured.
+
+```bash
+# Preferred: explicit signer pins (comma/newline separated)
+export SECURE_PACK_SIGNER_FINGERPRINTS="SIGNER_FPR_40HEX[,ANOTHER_FPR]"
+
+# Compatible with zt env naming
+export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="SIGNER_FPR_40HEX"
+```
+
+You can also provide signer pins via `SIGNERS_ALLOWLIST.txt` (or `tools/secure-pack/SIGNERS_ALLOWLIST.txt`),
+one fingerprint per line.
 
 ```bash
 go run ./cmd/secure-pack verify --in <packet_file>

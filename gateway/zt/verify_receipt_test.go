@@ -17,13 +17,22 @@ func TestInferReceiptClient(t *testing.T) {
 	}
 }
 
-func TestResolveReceiptKeyFingerprint(t *testing.T) {
-	t.Setenv("ZT_RECEIPT_KEY_FINGERPRINT", "")
-	t.Setenv("ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS", "0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567")
-	got := resolveReceiptKeyFingerprint()
+func TestExtractVerifiedSignerFingerprint(t *testing.T) {
+	in := "SIGNER_FINGERPRINT=0123456789ABCDEF0123456789ABCDEF01234567\nOK: Signature and checksum verified.\n"
+	got, err := extractVerifiedSignerFingerprint(in)
+	if err != nil {
+		t.Fatalf("extractVerifiedSignerFingerprint() error = %v", err)
+	}
 	want := "0123456789ABCDEF0123456789ABCDEF01234567"
 	if got != want {
-		t.Fatalf("resolveReceiptKeyFingerprint() = %q, want %q", got, want)
+		t.Fatalf("extractVerifiedSignerFingerprint() = %q, want %q", got, want)
+	}
+}
+
+func TestExtractVerifiedSignerFingerprint_MissingFails(t *testing.T) {
+	_, err := extractVerifiedSignerFingerprint("OK: Signature and checksum verified.\n")
+	if err == nil {
+		t.Fatalf("expected error when SIGNER_FINGERPRINT is missing")
 	}
 }
 
@@ -34,7 +43,10 @@ func TestBuildAndWriteVerificationReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("ZT_SECURE_PACK_VERSION", "v0.3.0-test")
-	receipt := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"))
+	receipt, err := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"), "0123456789ABCDEF0123456789ABCDEF01234567")
+	if err != nil {
+		t.Fatalf("buildVerificationReceipt returned error: %v", err)
+	}
 
 	if receipt.ReceiptVersion != "v1" {
 		t.Fatalf("ReceiptVersion = %q, want v1", receipt.ReceiptVersion)
@@ -44,6 +56,9 @@ func TestBuildAndWriteVerificationReceipt(t *testing.T) {
 	}
 	if receipt.Tooling.SecurePackVersion != "v0.3.0-test" {
 		t.Fatalf("SecurePackVersion = %q", receipt.Tooling.SecurePackVersion)
+	}
+	if receipt.Provenance.KeyFingerprint != "0123456789ABCDEF0123456789ABCDEF01234567" {
+		t.Fatalf("Provenance.KeyFingerprint = %q", receipt.Provenance.KeyFingerprint)
 	}
 	if len(receipt.ReceiptID) != 32 {
 		t.Fatalf("ReceiptID len = %d, want 32", len(receipt.ReceiptID))
@@ -82,7 +97,10 @@ func TestVerificationReceipt_JSONContractV1(t *testing.T) {
 	if err := os.WriteFile(artifact, []byte("packet"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"))
+	receipt, err := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"), "0123456789ABCDEF0123456789ABCDEF01234567")
+	if err != nil {
+		t.Fatalf("buildVerificationReceipt returned error: %v", err)
+	}
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatalf("json.Marshal returned error: %v", err)

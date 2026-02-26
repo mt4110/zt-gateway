@@ -101,6 +101,18 @@ go run ./cmd/secure-pack receive --in dist/bundle_clientA_....spkg.tgz --out ext
 
 ### 3. 検証のみ (Verify)
 展開はせずに、署名とハッシュが正しいかだけを確認します。
+`verify` は署名者 fingerprint の allowlist が未設定だと fail-closed します。
+
+```bash
+# 推奨: 環境変数で明示 pin（`,` / 改行区切り可）
+export SECURE_PACK_SIGNER_FINGERPRINTS="SIGNER_FPR_40HEX[,ANOTHER_FPR]"
+
+# zt と共通化する場合
+export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="SIGNER_FPR_40HEX"
+```
+
+または `SIGNERS_ALLOWLIST.txt`（または `tools/secure-pack/SIGNERS_ALLOWLIST.txt`）に
+fingerprint を1行ずつ配置しても利用できます。
 
 ```bash
 go run ./cmd/secure-pack verify --in <ファイルパス>

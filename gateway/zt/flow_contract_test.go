@@ -168,6 +168,9 @@ func TestShareJSONToVerifyToReceipt_E2EContract(t *testing.T) {
 	if receipt.Provenance.Client != "clientA" {
 		t.Fatalf("Provenance.Client = %q, want clientA", receipt.Provenance.Client)
 	}
+	if receipt.Provenance.KeyFingerprint != "0123456789ABCDEF0123456789ABCDEF01234567" {
+		t.Fatalf("Provenance.KeyFingerprint = %q", receipt.Provenance.KeyFingerprint)
+	}
 }
 
 func installFlowContractGoStub(t *testing.T, repoRoot string) {
@@ -184,6 +187,7 @@ if [ "${1:-}" = "run" ] && [ "${2:-}" = "./tools/secure-scan/cmd/secure-scan" ];
   exit 0
 fi
 if [ "${1:-}" = "run" ] && [ "${3:-}" = "verify" ]; then
+  echo "SIGNER_FINGERPRINT=0123456789ABCDEF0123456789ABCDEF01234567"
   echo "secure-pack verify ok"
   exit 0
 fi

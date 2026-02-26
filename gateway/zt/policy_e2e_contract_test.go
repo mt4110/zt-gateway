@@ -172,7 +172,10 @@ func TestPolicyRotateFetchDecisionSyncAuditReceipt_E2EContract(t *testing.T) {
 	if err := os.WriteFile(packet, []byte("packet"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile(packet): %v", err)
 	}
-	receipt := buildVerificationReceipt(packet, decision)
+	receipt, err := buildVerificationReceipt(packet, decision, "0123456789ABCDEF0123456789ABCDEF01234567")
+	if err != nil {
+		t.Fatalf("buildVerificationReceipt: %v", err)
+	}
 	if receipt.Verification.PolicyDecision.Decision != decision.Decision {
 		t.Fatalf("receipt decision mismatch")
 	}

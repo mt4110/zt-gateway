@@ -37,13 +37,13 @@ func TestResolveSendScanStrict_ExplicitStrictMessage(t *testing.T) {
 	}
 }
 
-func TestResolveSendScanStrict_PublicProfileDefaultsToDegraded(t *testing.T) {
+func TestResolveSendScanStrict_PublicProfileDefaultsToStrict(t *testing.T) {
 	strict, msg := resolveSendScanStrict(sendOptions{Profile: trustProfilePublic}, false)
-	if strict {
-		t.Fatalf("strict = true, want false for public profile default")
+	if !strict {
+		t.Fatalf("strict = false, want true for public profile default")
 	}
-	if !strings.Contains(msg, "profile=public") {
-		t.Fatalf("msg = %q, want profile=public note", msg)
+	if !strings.Contains(msg, "default") {
+		t.Fatalf("msg = %q, want default note", msg)
 	}
 }
 
@@ -69,5 +69,28 @@ func TestRunSendSecurePackPrecheck_MissingFilesBlocks(t *testing.T) {
 	}
 	if len(fixes) == 0 {
 		t.Fatalf("expected quick fixes when precheck fails")
+	}
+}
+
+func TestProfileExtensionPolicy_ConfidentialAndRegulatedRequireRebuildForDocs(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	cases := []struct {
+		profile string
+	}{
+		{profile: trustProfileConfidential},
+		{profile: trustProfileRegulated},
+	}
+	for _, tc := range cases {
+		policyPath := filepath.Join(repoRoot, "policy", "profiles", tc.profile, "extension_policy.toml")
+		pol, err := loadExtensionPolicy(policyPath)
+		if err != nil {
+			t.Fatalf("loadExtensionPolicy(%s): %v", policyPath, err)
+		}
+		for _, name := range []string{"doc.pdf", "doc.docx", "sheet.xlsx", "slide.pptx"} {
+			mode, reason := resolveExtensionMode(name, pol)
+			if mode != ExtModeScanRebuild {
+				t.Fatalf("profile=%s file=%s mode=%s reason=%s, want %s", tc.profile, name, mode, reason, ExtModeScanRebuild)
+			}
+		}
 	}
 }

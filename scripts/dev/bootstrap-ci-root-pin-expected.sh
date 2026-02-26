@@ -9,6 +9,7 @@ repo=""
 expected_pins_raw=""
 trust_local_root_key=0
 dry_run=0
+print_env=0
 
 usage() {
   cat <<USAGE
@@ -21,6 +22,7 @@ Options:
   --var-name <name>              Variable name (default: ${var_name})
   --expected-pins <FPR[,FPR...]> Approved pin list (recommended; can include old+new during rotation)
   --trust-local-root-key         One-trust mode: use ROOT_PUBKEY.asc fingerprint directly
+  --print-env                    Print shell export for local use and exit (no gh required)
   --dry-run                      Print resolved values without updating GitHub variable
   -h, --help                     Show help
 
@@ -114,6 +116,10 @@ while [[ $# -gt 0 ]]; do
       dry_run=1
       shift
       ;;
+    --print-env)
+      print_env=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -133,19 +139,6 @@ fi
 
 if ! command -v gpg >/dev/null 2>&1; then
   echo "gpg is required" >&2
-  exit 1
-fi
-
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI is required" >&2
-  exit 1
-fi
-
-if [[ -z "${repo}" ]]; then
-  repo="$(detect_repo_from_origin || true)"
-fi
-if [[ -z "${repo}" ]]; then
-  echo "could not detect --repo from git remote origin; pass --repo <owner/repo>" >&2
   exit 1
 fi
 
@@ -171,12 +164,33 @@ else
   exit 1
 fi
 
+if [[ ${print_env} -eq 1 ]]; then
+  echo "export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED=\"${expected_pins}\""
+  exit 0
+fi
+
+if [[ -z "${repo}" ]]; then
+  repo="$(detect_repo_from_origin || true)"
+fi
+
 if [[ ${dry_run} -eq 1 ]]; then
   echo "[dry-run] repo=${repo}"
   echo "[dry-run] var_name=${var_name}"
   echo "[dry-run] resolved_fingerprint=${resolved_fpr}"
   echo "[dry-run] value=${expected_pins}"
   exit 0
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "gh CLI is required" >&2
+  exit 1
+fi
+if [[ -z "${repo}" ]]; then
+  repo="$(detect_repo_from_origin || true)"
+fi
+if [[ -z "${repo}" ]]; then
+  echo "could not detect --repo from git remote origin; pass --repo <owner/repo>" >&2
+  exit 1
 fi
 
 gh variable set "${var_name}" --repo "${repo}" --body "${expected_pins}"

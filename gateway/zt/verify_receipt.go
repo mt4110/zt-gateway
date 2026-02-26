@@ -47,7 +47,11 @@ type receiptTooling struct {
 
 var packetClientPattern = regexp.MustCompile(`^bundle_([^_]+)_\d{8}T\d{6}Z\.spkg\.tgz$`)
 
-func buildVerificationReceipt(artifactPath string, decision policyDecision) verificationReceipt {
+func buildVerificationReceipt(artifactPath string, decision policyDecision, signerFingerprint string) (verificationReceipt, error) {
+	signerFingerprint, err := normalizePGPFingerprint(signerFingerprint)
+	if err != nil {
+		return verificationReceipt{}, fmt.Errorf("invalid signer fingerprint: %w", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	sha := hashPathSHA256(artifactPath)
 	receiptID := buildReceiptID(sha, now)
@@ -77,13 +81,13 @@ func buildVerificationReceipt(artifactPath string, decision policyDecision) veri
 		Provenance: receiptProvenance{
 			Sender:         "unknown",
 			Client:         client,
-			KeyFingerprint: resolveReceiptKeyFingerprint(),
+			KeyFingerprint: signerFingerprint,
 		},
 		Tooling: receiptTooling{
 			ZTVersion:         ztVersion,
 			SecurePackVersion: resolveSecurePackVersion(),
 		},
-	}
+	}, nil
 }
 
 func buildReceiptID(artifactSHA, verifiedAt string) string {
@@ -100,30 +104,31 @@ func inferReceiptClient(packetBase string) string {
 	return strings.TrimSpace(m[1])
 }
 
-func resolveReceiptKeyFingerprint() string {
-	for _, env := range []string{"ZT_RECEIPT_KEY_FINGERPRINT", "ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS", "SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS"} {
-		raw := strings.TrimSpace(os.Getenv(env))
-		if raw == "" {
-			continue
-		}
-		for _, token := range splitFingerprintPins(raw) {
-			fp, err := normalizePGPFingerprint(token)
-			if err != nil {
-				continue
-			}
-			if len(fp) >= 40 {
-				return fp[:40]
-			}
-		}
-	}
-	return strings.Repeat("0", 40)
-}
-
 func resolveSecurePackVersion() string {
 	if v := strings.TrimSpace(os.Getenv("ZT_SECURE_PACK_VERSION")); v != "" {
 		return v
 	}
 	return "unknown"
+}
+
+func extractVerifiedSignerFingerprint(verifyOutput string) (string, error) {
+	for _, raw := range strings.Split(verifyOutput, "\n") {
+		line := strings.TrimSpace(raw)
+		const prefix = "SIGNER_FINGERPRINT="
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		fp := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if fp == "" {
+			continue
+		}
+		norm, err := normalizePGPFingerprint(fp)
+		if err != nil {
+			return "", fmt.Errorf("invalid SIGNER_FINGERPRINT value: %w", err)
+		}
+		return norm, nil
+	}
+	return "", fmt.Errorf("SIGNER_FINGERPRINT is missing in verify output")
 }
 
 func writeVerificationReceipt(path string, receipt verificationReceipt) error {

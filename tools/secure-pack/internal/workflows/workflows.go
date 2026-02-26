@@ -20,12 +20,17 @@ import (
 const (
 	securePackRootPubKeyFingerprintEnv   = "SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS"
 	securePackRootPubKeyFingerprintZTEnv = "ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS"
+	securePackSignerFingerprintEnv       = "SECURE_PACK_SIGNER_FINGERPRINTS"
+	securePackSignerFingerprintZTEnv     = "ZT_SECURE_PACK_SIGNER_FINGERPRINTS"
+	securePackSignersAllowlistFileEnv    = "SECURE_PACK_SIGNERS_ALLOWLIST_FILE"
 )
 
 // Optional compiled-in allowlist for distributed builds.
 var securePackRootPubKeyFingerprintPins = []string{}
+var securePackSignerFingerprintPins = []string{}
 
 var verifyToolPinFunc = verifyToolPin
+var verifyPacketWithSignerFunc = pack.VerifyPacketWithSigner
 
 func verifySupplyChainLock(cfg *config.Config) error {
 	if cfg == nil {
@@ -206,6 +211,81 @@ func resolveSecurePackRootPubKeyFingerprintPins() ([]string, error) {
 	return out, nil
 }
 
+func resolveSecurePackSignerFingerprintPins() ([]string, error) {
+	raw := append([]string(nil), securePackSignerFingerprintPins...)
+	if env := strings.TrimSpace(os.Getenv(securePackSignerFingerprintEnv)); env != "" {
+		raw = append(raw, splitFingerprintPins(env)...)
+	}
+	if env := strings.TrimSpace(os.Getenv(securePackSignerFingerprintZTEnv)); env != "" {
+		raw = append(raw, splitFingerprintPins(env)...)
+	}
+
+	if len(raw) == 0 {
+		fromFile, err := loadSignerAllowlistFingerprints()
+		if err != nil {
+			return nil, err
+		}
+		raw = append(raw, fromFile...)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		fp, err := normalizePGPFingerprint(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fingerprint %q: %w", strings.TrimSpace(v), err)
+		}
+		if _, ok := seen[fp]; ok {
+			continue
+		}
+		seen[fp] = struct{}{}
+		out = append(out, fp)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func loadSignerAllowlistFingerprints() ([]string, error) {
+	candidates := make([]string, 0, 2)
+	if explicit := strings.TrimSpace(os.Getenv(securePackSignersAllowlistFileEnv)); explicit != "" {
+		candidates = append(candidates, explicit)
+	} else {
+		candidates = append(candidates, "SIGNERS_ALLOWLIST.txt", filepath.Join("tools", "secure-pack", "SIGNERS_ALLOWLIST.txt"))
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to read signer allowlist file %q: %w", path, err)
+		}
+		return parseSignerAllowlistFingerprints(string(data)), nil
+	}
+	return nil, nil
+}
+
+func parseSignerAllowlistFingerprints(content string) []string {
+	out := make([]string, 0, 8)
+	for _, raw := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if line == "" {
+			continue
+		}
+		out = append(out, splitFingerprintPins(line)...)
+	}
+	return out
+}
+
 func splitFingerprintPins(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool {
 		switch r {
@@ -349,10 +429,41 @@ func ReceiverWorkflow(cfg *config.Config, inputPath string, outDir string) (stri
 	return pack.UnpackPacket(opts)
 }
 
-// VerifyWorkflow handles the packet verification
-func VerifyWorkflow(inputPath string) error {
+// VerifyWorkflowWithSigner handles packet verification and returns verified signer fingerprint.
+func VerifyWorkflowWithSigner(inputPath string) (string, error) {
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
-		return fmt.Errorf("file not found: %s", inputPath)
+		return "", fmt.Errorf("file not found: %s", inputPath)
 	}
-	return pack.VerifyPacket(inputPath)
+	allowedPins, err := resolveSecurePackSignerFingerprintPins()
+	if err != nil {
+		return "", withCode(ErrCodeSignerPinConfigInvalid, fmt.Errorf("signer fingerprint pin configuration invalid: %w", err))
+	}
+	if len(allowedPins) == 0 {
+		return "", withCode(
+			ErrCodeSignerPinMissing,
+			fmt.Errorf(
+				"no trusted signer fingerprint pins configured (set %s or %s, or provide SIGNERS_ALLOWLIST.txt)",
+				securePackSignerFingerprintEnv,
+				securePackSignerFingerprintZTEnv,
+			),
+		)
+	}
+
+	actualSignerFingerprint, err := verifyPacketWithSignerFunc(inputPath)
+	if err != nil {
+		return "", err
+	}
+	if !fingerprintPinned(actualSignerFingerprint, allowedPins) {
+		return "", withCode(
+			ErrCodeSignerPinMismatch,
+			fmt.Errorf("packet signer fingerprint mismatch: got %s, allowed=%s", actualSignerFingerprint, strings.Join(allowedPins, ",")),
+		)
+	}
+	return actualSignerFingerprint, nil
+}
+
+// VerifyWorkflow handles the packet verification.
+func VerifyWorkflow(inputPath string) error {
+	_, err := VerifyWorkflowWithSigner(inputPath)
+	return err
 }
