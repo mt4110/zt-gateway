@@ -76,14 +76,100 @@ func buildQuickFixBundleWithCode(summary string, quickFixes []string, retryComma
 	return &quickFixBundle{
 		Why:           why,
 		Commands:      commands,
-		Runbook:       "docs/OPERATIONS.md",
+		Runbook:       runbookPathForErrorCode(errorCode),
 		RunbookAnchor: runbookAnchorForErrorCode(errorCode),
 		Retry:         retry,
 	}
 }
 
+func runbookPathForErrorCode(errorCode string) string {
+	switch strings.ToLower(strings.TrimSpace(errorCode)) {
+	case strings.ToLower(ztErrorCodeSendBoundaryPolicy),
+		strings.ToLower(ztErrorCodeSendBoundaryClient),
+		strings.ToLower(ztErrorCodeSendBoundaryRoute),
+		strings.ToLower(ztErrorCodeSendBoundaryBreakGlassEnvPresent),
+		strings.ToLower(ztErrorCodeSendBoundaryBreakGlassReasonRequired),
+		strings.ToLower(ztErrorCodeSendBoundaryBreakGlassTokenInvalid),
+		strings.ToLower(ztErrorCodeSendBoundaryBreakGlassTokenExpired),
+		strings.ToLower(ztErrorCodeSendAuditAppendFail),
+		strings.ToLower(ztErrorCodeVerifyBoundaryPolicy),
+		strings.ToLower(ztErrorCodeVerifyBoundarySigner),
+		strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassEnvPresent),
+		strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassReasonRequired),
+		strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassTokenInvalid),
+		strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassTokenExpired),
+		strings.ToLower(ztErrorCodeVerifySignerPinMissing),
+		strings.ToLower(ztErrorCodeVerifySignerPinMismatch),
+		strings.ToLower(ztErrorCodeVerifySignerPinConfig),
+		strings.ToLower(ztErrorCodeVerifyAuditAppendFail),
+		"sp_signer_pin_missing",
+		"sp_signer_pin_mismatch",
+		"sp_signer_pin_config_invalid",
+		teamBoundarySignerSplitBrainCode,
+		teamBoundarySignerPinMissingCode,
+		teamBoundarySignerPinConfigInvalidCode,
+		auditTrailAppendUnavailableCode,
+		teamBoundaryBreakGlassEnvPresentCode,
+		teamBoundaryBreakGlassGuardrailWeakCode,
+		teamBoundaryBreakGlassReasonRequiredCode,
+		teamBoundaryBreakGlassTokenInvalidCode,
+		teamBoundaryBreakGlassTokenExpiredCode:
+		return "docs/V0.9.2_ABNORMAL_USECASES.md"
+	default:
+		return "docs/OPERATIONS.md"
+	}
+}
+
 func runbookAnchorForErrorCode(errorCode string) string {
 	switch strings.ToLower(strings.TrimSpace(errorCode)) {
+	case strings.ToLower(ztErrorCodeSendBoundaryPolicy), strings.ToLower(ztErrorCodeVerifyBoundaryPolicy):
+		return "#team-boundary-policy-missing-or-invalid"
+	case strings.ToLower(ztErrorCodeSendBoundaryClient):
+		return "#recipient-boundary-denied"
+	case strings.ToLower(ztErrorCodeSendBoundaryRoute):
+		return "#share-route-boundary-denied"
+	case strings.ToLower(ztErrorCodeSendBoundaryBreakGlassEnvPresent), strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassEnvPresent):
+		return "#break-glass-override-left-enabled"
+	case strings.ToLower(ztErrorCodeSendBoundaryBreakGlassReasonRequired), strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassReasonRequired), teamBoundaryBreakGlassReasonRequiredCode:
+		return "#break-glass-reason-required"
+	case strings.ToLower(ztErrorCodeSendBoundaryBreakGlassTokenInvalid), strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassTokenInvalid):
+		return "#break-glass-token-invalid"
+	case strings.ToLower(ztErrorCodeSendBoundaryBreakGlassTokenExpired), strings.ToLower(ztErrorCodeVerifyBoundaryBreakGlassTokenExpired):
+		return "#break-glass-token-expired"
+	case strings.ToLower(ztErrorCodeSendAuditAppendFail):
+		return "#audit-trail-append-failed"
+	case strings.ToLower(ztErrorCodeVerifyBoundarySigner):
+		return "#signer-boundary-denied"
+	case strings.ToLower(ztErrorCodeVerifySignerPinMissing):
+		return "#signer-allowlist-missing"
+	case strings.ToLower(ztErrorCodeVerifySignerPinMismatch):
+		return "#signer-key-loss"
+	case strings.ToLower(ztErrorCodeVerifySignerPinConfig):
+		return "#signer-allowlist-invalid-format"
+	case strings.ToLower(ztErrorCodeVerifyAuditAppendFail):
+		return "#audit-trail-append-failed"
+	case "sp_signer_pin_missing":
+		return "#signer-allowlist-missing"
+	case "sp_signer_pin_mismatch":
+		return "#signer-key-loss"
+	case "sp_signer_pin_config_invalid":
+		return "#signer-allowlist-invalid-format"
+	case teamBoundarySignerSplitBrainCode:
+		return "#signer-policy-split-brain-detected"
+	case teamBoundarySignerPinMissingCode:
+		return "#signer-allowlist-missing"
+	case teamBoundarySignerPinConfigInvalidCode:
+		return "#signer-allowlist-invalid-format"
+	case auditTrailAppendUnavailableCode:
+		return "#audit-trail-append-failed"
+	case teamBoundaryBreakGlassEnvPresentCode:
+		return "#break-glass-override-left-enabled"
+	case teamBoundaryBreakGlassGuardrailWeakCode:
+		return "#break-glass-guardrail-weak"
+	case teamBoundaryBreakGlassTokenInvalidCode:
+		return "#break-glass-token-invalid"
+	case teamBoundaryBreakGlassTokenExpiredCode:
+		return "#break-glass-token-expired"
 	case "policy_set_skew_detected":
 		return "#policy-set-consistency-reason"
 	case "policy_sync_slo_breached":

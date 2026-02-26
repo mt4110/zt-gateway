@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEmitDoctorJSON_IncludesErrorCodeField(t *testing.T) {
@@ -88,6 +89,13 @@ func TestRunConfigDoctor_JSONContract_Success(t *testing.T) {
 		"control_plane_api_key",
 		"spool_dir",
 		"event_signing_key_env",
+		"team_boundary_policy_loaded",
+		"team_boundary_recipient_contract",
+		"team_boundary_signer_contract",
+		"team_boundary_share_route_contract",
+		teamBoundarySignerPinConsistencyCheckName,
+		teamBoundaryBreakGlassGuardrailCheckName,
+		auditTrailAppendabilityCheckName,
 	}
 	for _, name := range checkNames {
 		if !doctorCheckExists(got.Checks, name) {
@@ -213,6 +221,129 @@ func TestRunConfigDoctor_JSONContract_FailureOnParse(t *testing.T) {
 	}
 	if !doctorCheckExistsWithStatus(got.Checks, "zt_client_config_parse", "fail") {
 		t.Fatalf("missing fail parse check: %#v", got.Checks)
+	}
+}
+
+func TestRunConfigDoctor_JSONContract_TeamBoundarySignerSplitBrainDetected(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "tools", "secure-pack"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	policy := "" +
+		"enabled = true\n" +
+		"tenant_id = \"corp-example\"\n" +
+		"team_id = \"secops\"\n" +
+		"boundary_policy_version = \"2026-02-26\"\n" +
+		"allowed_recipients = [\"clientA\"]\n" +
+		"allowed_signer_fingerprints = [\"0123456789ABCDEF0123456789ABCDEF01234567\"]\n" +
+		"allowed_share_routes = [\"stdout\"]\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "team_boundary.toml"), []byte(policy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repoRoot, "tools", "secure-pack", "SIGNERS_ALLOWLIST.txt"),
+		[]byte("89ABCDEF0123456789ABCDEF0123456789ABCDEF\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		err := runConfigDoctor(repoRoot, []string{"--json"})
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+	var got doctorResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v\n%s", err, out)
+	}
+	if got.OK {
+		t.Fatalf("OK = true, want false")
+	}
+	var splitCheck *doctorCheck
+	for i := range got.Checks {
+		if got.Checks[i].Name == teamBoundarySignerPinConsistencyCheckName {
+			splitCheck = &got.Checks[i]
+			break
+		}
+	}
+	if splitCheck == nil {
+		t.Fatalf("missing check: %s", teamBoundarySignerPinConsistencyCheckName)
+	}
+	if splitCheck.Status != "fail" {
+		t.Fatalf("status = %q, want fail", splitCheck.Status)
+	}
+	if splitCheck.Code != teamBoundarySignerSplitBrainCode {
+		t.Fatalf("code = %q, want %q", splitCheck.Code, teamBoundarySignerSplitBrainCode)
+	}
+}
+
+func TestRunConfigDoctor_JSONContract_TeamBoundaryBreakGlassEnvPresentDetected(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "tools", "secure-pack"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const signerFP = "0123456789ABCDEF0123456789ABCDEF01234567"
+	policy := "" +
+		"enabled = true\n" +
+		"tenant_id = \"corp-example\"\n" +
+		"team_id = \"secops\"\n" +
+		"boundary_policy_version = \"2026-02-26\"\n" +
+		"allowed_recipients = [\"clientA\"]\n" +
+		"allowed_signer_fingerprints = [\"" + signerFP + "\"]\n" +
+		"allowed_share_routes = [\"stdout\"]\n" +
+		"break_glass_enabled = true\n" +
+		"break_glass_require_reason = true\n" +
+		"break_glass_require_approver = true\n" +
+		"break_glass_max_ttl_minutes = 60\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "team_boundary.toml"), []byte(policy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repoRoot, "tools", "secure-pack", "SIGNERS_ALLOWLIST.txt"),
+		[]byte(signerFP+"\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(20 * time.Minute).Format(time.RFC3339)
+	t.Setenv(teamBoundaryBreakGlassEnv, "incident=inc-env;approved_by=alice;expires_at="+expiresAt)
+
+	out := captureStdout(t, func() {
+		err := runConfigDoctor(repoRoot, []string{"--json"})
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+	var got doctorResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v\n%s", err, out)
+	}
+	if got.OK {
+		t.Fatalf("OK = true, want false")
+	}
+	var breakGlassCheck *doctorCheck
+	for i := range got.Checks {
+		if got.Checks[i].Name == teamBoundaryBreakGlassGuardrailCheckName {
+			breakGlassCheck = &got.Checks[i]
+			break
+		}
+	}
+	if breakGlassCheck == nil {
+		t.Fatalf("missing check: %s", teamBoundaryBreakGlassGuardrailCheckName)
+	}
+	if breakGlassCheck.Status != "fail" {
+		t.Fatalf("status = %q, want fail", breakGlassCheck.Status)
+	}
+	if breakGlassCheck.Code != teamBoundaryBreakGlassEnvPresentCode {
+		t.Fatalf("code = %q, want %q", breakGlassCheck.Code, teamBoundaryBreakGlassEnvPresentCode)
 	}
 }
 

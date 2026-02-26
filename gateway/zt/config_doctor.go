@@ -13,6 +13,7 @@ import (
 type doctorCheck struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 	Source  string `json:"source,omitempty"`
 }
@@ -28,6 +29,10 @@ type doctorResolved struct {
 	PolicyLastSyncAt string `json:"policy_last_sync_at,omitempty"`
 	PolicyNextSyncAt string `json:"policy_next_sync_at,omitempty"`
 	PolicySyncError  string `json:"policy_sync_error_code,omitempty"`
+	BoundaryEnabled  bool   `json:"boundary_enabled,omitempty"`
+	TenantID         string `json:"tenant_id,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
+	BoundaryVersion  string `json:"boundary_policy_version,omitempty"`
 }
 
 type doctorResult struct {
@@ -121,6 +126,14 @@ func runConfigDoctor(repoRoot string, args []string) error {
 		APIKeySet:       cpAPIKey != "",
 		APIKeySource:    cpAPIKeySource,
 		SpoolDir:        spoolDir,
+	}
+	if pol, active, err := resolveTeamBoundaryPolicy(repoRoot); err == nil {
+		result.Resolved.BoundaryEnabled = active
+		if active {
+			result.Resolved.TenantID = pol.TenantID
+			result.Resolved.TeamID = pol.TeamID
+			result.Resolved.BoundaryVersion = pol.BoundaryPolicyVersion
+		}
 	}
 	policyHealth, policyHealthErr := inspectPolicyLoopHealth(repoRoot, "extension")
 	if policyHealthErr == nil {
@@ -251,6 +264,23 @@ func runConfigDoctor(repoRoot string, args []string) error {
 			Message: policyLoopHealthMessage(policyHealth),
 		})
 	}
+	for _, c := range buildTeamBoundaryDoctorChecks(repoRoot) {
+		switch c.Status {
+		case "fail":
+			result.Failures++
+		case "warn":
+			result.Warnings++
+		}
+		result.Checks = append(result.Checks, c)
+	}
+	auditCheck := buildAuditTrailDoctorCheck(repoRoot)
+	switch auditCheck.Status {
+	case "fail":
+		result.Failures++
+	case "warn":
+		result.Warnings++
+	}
+	result.Checks = append(result.Checks, auditCheck)
 
 	result.OK = result.Failures == 0
 	if result.OK {
@@ -279,6 +309,9 @@ func runConfigDoctor(repoRoot string, args []string) error {
 			prefix = "[FAIL]"
 		}
 		line := fmt.Sprintf("%s %s", prefix, c.Name)
+		if c.Code != "" {
+			line += " code=" + c.Code
+		}
 		if c.Message != "" {
 			line += " " + c.Message
 		}

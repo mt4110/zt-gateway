@@ -35,9 +35,14 @@ type receiptVerification struct {
 }
 
 type receiptProvenance struct {
-	Sender         string `json:"sender"`
-	Client         string `json:"client"`
-	KeyFingerprint string `json:"key_fingerprint"`
+	Sender                string `json:"sender"`
+	Client                string `json:"client"`
+	KeyFingerprint        string `json:"key_fingerprint"`
+	TenantID              string `json:"tenant_id,omitempty"`
+	TeamID                string `json:"team_id,omitempty"`
+	BoundaryPolicyVersion string `json:"boundary_policy_version,omitempty"`
+	BreakGlass            bool   `json:"break_glass,omitempty"`
+	BreakGlassReason      string `json:"break_glass_reason,omitempty"`
 }
 
 type receiptTooling struct {
@@ -64,6 +69,19 @@ func buildVerificationReceipt(artifactPath string, decision policyDecision, sign
 		policyResult = "degraded"
 	}
 
+	provenance := receiptProvenance{
+		Sender:         "unknown",
+		Client:         client,
+		KeyFingerprint: signerFingerprint,
+	}
+	if ctx := currentTeamBoundaryContext(); ctx != nil {
+		provenance.TenantID = ctx.TenantID
+		provenance.TeamID = ctx.TeamID
+		provenance.BoundaryPolicyVersion = ctx.BoundaryPolicyVersion
+		provenance.BreakGlass = ctx.BreakGlass
+		provenance.BreakGlassReason = ctx.BreakGlassReason
+	}
+
 	return verificationReceipt{
 		ReceiptVersion: "v1",
 		ReceiptID:      receiptID,
@@ -78,11 +96,7 @@ func buildVerificationReceipt(artifactPath string, decision policyDecision, sign
 			PolicyResult:   policyResult,
 			PolicyDecision: decision,
 		},
-		Provenance: receiptProvenance{
-			Sender:         "unknown",
-			Client:         client,
-			KeyFingerprint: signerFingerprint,
-		},
+		Provenance: provenance,
 		Tooling: receiptTooling{
 			ZTVersion:         ztVersion,
 			SecurePackVersion: resolveSecurePackVersion(),

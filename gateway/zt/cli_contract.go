@@ -4,9 +4,9 @@ const (
 	cliUsageRoot = "Usage: zt <command> [args]"
 
 	cliSetupSignature  = "setup [--json] [--profile public|internal|confidential|regulated]"
-	cliSendSignature   = "send --client <name> [--profile public|internal|confidential|regulated] [--strict | --allow-degraded-scan] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-json] [--share-format auto|ja|en] [--share-route none|stdout|clipboard|file:<path>|command-file:<path>] <file>"
+	cliSendSignature   = "send --client <name> [--profile public|internal|confidential|regulated] [--strict | --allow-degraded-scan] [--force-public] [--update] [--sync-now] [--no-auto-sync] [--copy-command] [--share-json] [--share-format auto|ja|en] [--share-route none|stdout|clipboard|file:<path>|command-file:<path>] [--break-glass-reason <text>] <file>"
 	cliScanSignature   = "scan [--tui] [--force-public] [--update] [--strict] [--no-auto-sync] <path>"
-	cliVerifySignature = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] <packet.spkg.tgz>"
+	cliVerifySignature = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] [--break-glass-reason <text>] <packet.spkg.tgz>"
 	cliAuditSignature  = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
 	cliSyncSignature   = "sync [--force] [--json]"
 	cliPolicySignature = "policy status [--json] [--kind extension|scan|all]"

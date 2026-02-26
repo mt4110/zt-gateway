@@ -82,6 +82,14 @@ func runSetup(repoRoot string, opts setupOptions) error {
 		Profile:         profileSelection.Name,
 		ProfileSource:   profileSelection.Source,
 	}
+	if pol, active, err := resolveTeamBoundaryPolicy(repoRoot); err == nil {
+		result.Resolved.BoundaryEnabled = active
+		if active {
+			result.Resolved.TenantID = pol.TenantID
+			result.Resolved.TeamID = pol.TeamID
+			result.Resolved.BoundaryVersion = pol.BoundaryPolicyVersion
+		}
+	}
 	policyHealth, policyHealthErr := inspectPolicyLoopHealth(repoRoot, "extension")
 	if policyHealthErr == nil {
 		result.Resolved.PolicyLastSyncAt = policyHealth.LastSyncAt

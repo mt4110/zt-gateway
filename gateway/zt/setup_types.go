@@ -8,6 +8,7 @@ import (
 type setupCheck struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
@@ -24,6 +25,10 @@ type setupResolved struct {
 	PolicyLastSyncAt string `json:"policy_last_sync_at,omitempty"`
 	PolicyNextSyncAt string `json:"policy_next_sync_at,omitempty"`
 	PolicySyncError  string `json:"policy_sync_error_code,omitempty"`
+	BoundaryEnabled  bool   `json:"boundary_enabled,omitempty"`
+	TenantID         string `json:"tenant_id,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
+	BoundaryVersion  string `json:"boundary_policy_version,omitempty"`
 	// Optional supply-chain pin details for machine-readable CI diagnostics.
 	ActualRootFingerprint string `json:"actual_root_fingerprint,omitempty"`
 	PinSource             string `json:"pin_source,omitempty"`

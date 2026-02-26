@@ -136,3 +136,36 @@ func TestVerificationReceipt_JSONContractV1(t *testing.T) {
 		t.Fatalf("verification.policy_decision is missing")
 	}
 }
+
+func TestBuildVerificationReceipt_BoundaryMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	artifact := filepath.Join(tmp, "bundle_clientA_20260225T000000Z.spkg.tgz")
+	if err := os.WriteFile(artifact, []byte("packet"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setActiveTeamBoundaryContext(&teamBoundaryRuntimeContext{
+		TenantID:              "corp-example",
+		TeamID:                "secops",
+		BoundaryPolicyVersion: "2026-02-26",
+		BreakGlass:            true,
+		BreakGlassReason:      "incident-9204",
+	})
+	defer setActiveTeamBoundaryContext(nil)
+
+	receipt, err := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"), "0123456789ABCDEF0123456789ABCDEF01234567")
+	if err != nil {
+		t.Fatalf("buildVerificationReceipt returned error: %v", err)
+	}
+	if receipt.Provenance.TenantID != "corp-example" {
+		t.Fatalf("tenant_id = %q", receipt.Provenance.TenantID)
+	}
+	if receipt.Provenance.TeamID != "secops" {
+		t.Fatalf("team_id = %q", receipt.Provenance.TeamID)
+	}
+	if receipt.Provenance.BoundaryPolicyVersion != "2026-02-26" {
+		t.Fatalf("boundary_policy_version = %q", receipt.Provenance.BoundaryPolicyVersion)
+	}
+	if !receipt.Provenance.BreakGlass {
+		t.Fatalf("break_glass = false, want true")
+	}
+}

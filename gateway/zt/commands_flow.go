@@ -167,6 +167,8 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	trustFail := func(code string) {
 		printTrustStatusLine(newTrustStatusFailure(code))
 	}
+	resetAuditAppendFailureState()
+	setActiveTeamBoundaryContext(nil)
 
 	if cpEvents != nil {
 		if opts.NoAutoSync {
@@ -181,6 +183,54 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		os.Exit(1)
 	}
 	fmt.Printf("Processing %s...\n", inputPath)
+	boundaryPolicy, boundaryActive, boundaryErr := resolveTeamBoundaryPolicy(adapters.repoRoot)
+	if boundaryErr != nil {
+		decision := decisionForSendPolicyBlock(trustProfileInternal, "team_boundary.local", "policy_team_boundary_load_failed")
+		emitPolicyDecisionCLI(decision)
+		emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.policy_load_failed", boundaryErr.Error(), decision)
+		printZTErrorCode(ztErrorCodeSendBoundaryPolicy)
+		fmt.Printf("[BLOCKED] Team boundary policy failed: %v\n", boundaryErr)
+		fmt.Printf("[HINT] Repair %s or disable strict requirement (`%s=0`) only in non-boundary mode.\n", teamBoundaryPolicyFileLabel, teamBoundaryRequiredEnv)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendBoundaryPolicy)
+		os.Exit(1)
+	}
+	if boundaryActive {
+		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, false, ""))
+		if guardErr := enforceTeamBoundaryBreakGlassStartupGuardrail(boundaryPolicy); guardErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(guardErr)
+			decision := decisionForSendPolicyBlock(trustProfileInternal, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.break_glass_env_present", guardErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary startup guardrail failed: %v\n", guardErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		breakGlassUsed, breakGlassReason, boundaryEnforceErr := enforceTeamBoundaryForSend(boundaryPolicy, opts)
+		if boundaryEnforceErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(boundaryEnforceErr)
+			decision := decisionForSendPolicyBlock(trustProfileInternal, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.contract_failed", boundaryEnforceErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary contract failed: %v\n", boundaryEnforceErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, breakGlassUsed, breakGlassReason))
+		if breakGlassUsed {
+			fmt.Printf("[WARN] Team boundary break-glass accepted (reason=%q).\n", breakGlassReason)
+		}
+	}
 	profileSelection, profileErr := resolveTrustProfilePolicySelection(adapters.repoRoot, opts.Profile)
 	if profileErr != nil {
 		printZTErrorCode(ztErrorCodeSendExtPolicyLoad)
@@ -392,6 +442,13 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		_ = json.Unmarshal(output, &scanMeta)
 		finalDecision := decisionFromScanResultWithPosture(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"), scanPosture)
 		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"), finalDecision)
+		if auditFail := consumeAuditAppendFailureState(); auditFail != nil {
+			printZTErrorCode(ztErrorCodeSendAuditAppendFail)
+			fmt.Printf("[FAIL] Packet was generated but audit trail append failed (endpoint=%s): %s\n", auditFail.Endpoint, auditFail.Message)
+			fmt.Printf("[HINT] Restore spool/audit write path and run `zt config doctor --json`; follow docs/V0.9.2_ABNORMAL_USECASES.md#audit-trail-append-failed.\n")
+			trustFail(ztErrorCodeSendAuditAppendFail)
+			os.Exit(1)
+		}
 		if opts.SyncNow {
 			runSyncEvents(true)
 		}
@@ -406,4 +463,29 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	fmt.Println("Reason: legacy artifact.zp path was removed.")
 	trustFail(ztErrorCodeSendClientRequired)
 	os.Exit(1)
+}
+
+func emitSendBoundaryEvent(inputPath, client string, ok bool, reason string, details string, decision policyDecision) {
+	result := "blocked"
+	if ok {
+		result = "allowed"
+	}
+	payload := map[string]any{
+		"event_id":        fmt.Sprintf("evt_send_%d", time.Now().UTC().UnixNano()),
+		"occurred_at":     time.Now().UTC().Format(time.RFC3339Nano),
+		"host_id":         hostID(),
+		"tool_version":    ztVersion,
+		"command":         "send",
+		"result":          result,
+		"reason":          reason,
+		"target_name":     filepath.Base(strings.TrimSpace(inputPath)),
+		"recipient_name":  strings.TrimSpace(client),
+		"policy_decision": normalizePolicyDecision(decision),
+		"details": map[string]any{
+			"path":    strings.TrimSpace(inputPath),
+			"message": strings.TrimSpace(details),
+		},
+	}
+	applyTeamBoundaryMetadata(payload)
+	emitControlPlaneEvent("/v1/events/send", payload)
 }

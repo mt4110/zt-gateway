@@ -33,11 +33,36 @@
 | `ZT_SEND_SANITIZE_FAILED` | `zt send` | `secure-rebuild` 失敗 | 対象形式の対応状況・入力破損・rebuild stderr を確認 |
 | `ZT_SEND_PACK_FAILED` | `zt send` | `secure-pack` 側失敗 | 併記される `SECURE_PACK_ERROR_CODE=...` を優先確認 |
 | `ZT_SEND_CLIENT_REQUIRED` | `zt send` | `--client <name>` 未指定 | `--client <recipient-name>` を付与 |
+| `ZT_SEND_TEAM_BOUNDARY_POLICY_FAILED` | `zt send` | `policy/team_boundary.toml` 欠落/破損（required時） | boundary policy を復旧し再実行 |
+| `ZT_SEND_TEAM_BOUNDARY_RECIPIENT_DENIED` | `zt send` | `allowed_recipients` 不一致 | recipient allowlist 更新。緊急時は理由付き break-glass |
+| `ZT_SEND_TEAM_BOUNDARY_SHARE_ROUTE_DENIED` | `zt send` | `allowed_share_routes` 不一致 | share-route allowlist 更新。緊急時は理由付き break-glass |
+| `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_ENV_PRESENT` | `zt send` | `ZT_BREAK_GLASS_REASON` 常駐設定を起動時に検知 | `ZT_BREAK_GLASS_REASON` を shell/profile/CI から除去し、`docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-override-left-enabled` を実施 |
+| `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` | `zt send` | break-glass 理由未指定で緊急解除不可 | `--break-glass-reason` を設定し、`docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-reason-required` を実施 |
+| `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_TOKEN_INVALID` | `zt send` | break-glass token 形式不正/TTL超過 | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-token-invalid` を実施 |
+| `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_TOKEN_EXPIRED` | `zt send` | break-glass token 期限切れ | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-token-expired` を実施 |
+| `ZT_SEND_AUDIT_APPEND_FAILED` | `zt send` | 監査ログ追記失敗（追跡不能のため fail-closed） | `docs/V0.9.2_ABNORMAL_USECASES.md#audit-trail-append-failed` を実施 |
 | `ZT_VERIFY_PACKET_FAILED` | `zt verify` | `.spkg.tgz` の署名/整合性検証失敗 | 受領ファイル改ざん/破損の可能性。再受領して再検証 |
+| `ZT_VERIFY_TEAM_BOUNDARY_POLICY_FAILED` | `zt verify` | `policy/team_boundary.toml` 欠落/破損（required時） | boundary policy を復旧し再実行 |
+| `ZT_VERIFY_TEAM_BOUNDARY_SIGNER_DENIED` | `zt verify` | team boundary signer 不一致 | signer allowlist / team boundary signer を整合 |
+| `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_ENV_PRESENT` | `zt verify` | `ZT_BREAK_GLASS_REASON` 常駐設定を起動時に検知 | `ZT_BREAK_GLASS_REASON` を shell/profile/CI から除去し、`docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-override-left-enabled` を実施 |
+| `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` | `zt verify` | break-glass 理由未指定で緊急解除不可 | `--break-glass-reason` を設定し、`docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-reason-required` を実施 |
+| `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_TOKEN_INVALID` | `zt verify` | break-glass token 形式不正/TTL超過 | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-token-invalid` を実施 |
+| `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_TOKEN_EXPIRED` | `zt verify` | break-glass token 期限切れ | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-token-expired` を実施 |
+| `ZT_VERIFY_SIGNER_PIN_MISSING` | `zt verify` | signer allowlist 未設定 | allowlist を配布して再検証 |
+| `ZT_VERIFY_SIGNER_PIN_MISMATCH` | `zt verify` | signer fingerprint 不一致（鍵ローテ/喪失含む） | 鍵喪失/ローテ runbook へ遷移 |
+| `ZT_VERIFY_SIGNER_PIN_CONFIG_INVALID` | `zt verify` | signer pin 設定形式不正 | 40/64 hex 形式に修正 |
+| `ZT_VERIFY_AUDIT_APPEND_FAILED` | `zt verify` | 監査ログ追記失敗（追跡不能のため fail-closed） | `docs/V0.9.2_ABNORMAL_USECASES.md#audit-trail-append-failed` を実施 |
 | `ZT_VERIFY_UNSUPPORTED_INPUT` | `zt verify` | `.spkg.tgz` 以外入力（legacy含む） | `zt verify <packet.spkg.tgz>` に統一 |
 | `ZT_SCAN_CHECK_FAILED` | `zt scan` | secure-scan 実行失敗 | stderr / scanner依存関係 / PATH を確認 |
 | `ZT_SCAN_TUI_FAILED` | `zt scan --tui` | secure-scan TUI起動失敗 | TTY環境・依存関係・secure-scan 実行可否を確認 |
 | `ZT_CONFIG_DOCTOR_FAILED` | `zt config doctor` | config/env/spool等の doctor fail | `zt config doctor --json` の `checks[]` を確認 |
+| `policy_team_boundary_signer_split_brain_detected` | `zt config doctor --json` (`checks[].code`) | team boundary signer と verify signer pin の配布ずれ | `docs/V0.9.2_ABNORMAL_USECASES.md#signer-policy-split-brain-detected` を実施 |
+| `policy_team_boundary_break_glass_guardrail_weak` | `zt config doctor --json` (`checks[].code`) | break-glass が恒常化しやすい設定 | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-guardrail-weak` を実施 |
+| `policy_team_boundary_break_glass_env_present` | `zt config doctor --json` (`checks[].code`) | `ZT_BREAK_GLASS_REASON` 常駐で戻し忘れ | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-override-left-enabled` を実施 |
+| `policy_team_boundary_break_glass_reason_required` | `policy_decision.reason_code` / `quick_fix_bundle.runbook_anchor` | break-glass 理由未指定で緊急解除不可 | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-reason-required` を実施 |
+| `policy_team_boundary_break_glass_token_invalid` | `zt config doctor --json` (`checks[].code`) | break-glass token 形式不正 | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-token-invalid` を実施 |
+| `policy_team_boundary_break_glass_token_expired` | `zt config doctor --json` (`checks[].code`) | break-glass token 期限切れ | `docs/V0.9.2_ABNORMAL_USECASES.md#break-glass-token-expired` を実施 |
+| `policy_audit_trail_append_unavailable` | `zt config doctor --json` (`checks[].code`) | 監査ログ追記不可/チェーン破損 | `docs/V0.9.2_ABNORMAL_USECASES.md#audit-trail-append-failed` を実施 |
 | `ZT_CONFIG_USAGE` | `zt config doctor` / `zt config` | 引数不正 | usageに合わせて再実行 |
 | `ZT_CONFIG_UNKNOWN_SUBCOMMAND` | `zt config` | 未対応サブコマンド | `zt config doctor` のみ使用 |
 
@@ -48,6 +73,14 @@
 - `SECURE_PACK_ERROR_CODE=SP_TOOLS_LOCK_SIGNATURE_INVALID`
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_HASH_MISMATCH`
 - `SECURE_PACK_ERROR_CODE=SP_TOOL_VERSION_MISMATCH`
+- `SECURE_PACK_ERROR_CODE=SP_SIGNER_PIN_MISSING`
+- `SECURE_PACK_ERROR_CODE=SP_SIGNER_PIN_MISMATCH`
+- `SECURE_PACK_ERROR_CODE=SP_SIGNER_PIN_CONFIG_INVALID`
+
+## v0.9.2 異常系ユースケース（正本）
+
+`Team Boundary` 運用時の利用不能シーンと復旧手順は次を正本として参照してください。  
+`docs/V0.9.2_ABNORMAL_USECASES.md`
 
 ## Control Plane event sync（v0.5e 運用固定）
 

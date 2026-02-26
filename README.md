@@ -334,6 +334,13 @@ flowchart LR
 - v0.9.0 実装チケット分割は `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`
 - v0.9.1 True Zero Trust hardening 設計は `docs/architecture/V0.9.1_DESIGN.md`
 - v0.9.2 Team/Enterprise Boundary（社内・チーム限定運用）設計ドラフトは `docs/architecture/V0.9.2_DESIGN.md`
+- v0.9.2 Team Boundary 運用は `policy/team_boundary.toml`（`enabled=true` で有効）を使用し、緊急時 override は `--break-glass-reason` を明示する（`ZT_BREAK_GLASS_REASON` 常駐は fail-fast）
+- v0.9.2 では `zt config doctor --json` の `team_boundary_signer_pin_consistency` で signer pin 配布ずれ（`policy_team_boundary_signer_split_brain_detected`）を検知できる
+- v0.9.2 では `team_boundary_break_glass_guardrail` で break-glass 戻し忘れ/ガード弱化（`policy_team_boundary_break_glass_*`）を検知できる
+- v0.9.2 では `audit_trail_appendability` で監査ログ追記不可/チェーン破損（`policy_audit_trail_append_unavailable`）を検知できる
+- break-glass reason は `incident=<id>;approved_by=<id>;expires_at=<RFC3339>` の期限付き token 形式を推奨
+- v0.9.2 では break-glass 理由不足を `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` / `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` で即時切り分けできる
+- v0.9.2 異常系ユースケース/復旧runbook正本は `docs/V0.9.2_ABNORMAL_USECASES.md`
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
@@ -370,6 +377,7 @@ go run ./gateway/zt send --client <recipient> --share-json ./safe.txt
 - CI ゲート（fixture / actual repo）の使い分け
 - GitHub Actions Variable 配布（`gh variable set` / `gh api` / `curl`）
 - 実artifact配置 -> actual repo ゲート通過の手順
+- Team Boundary 異常系runbook（鍵喪失/誤ブロック/ローテーション）は `docs/V0.9.2_ABNORMAL_USECASES.md`
 
 ## 何を自動でやるのか（利用者に見せたい体験）
 

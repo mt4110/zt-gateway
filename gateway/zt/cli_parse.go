@@ -23,6 +23,7 @@ func parseSendArgs(args []string) (sendOptions, error) {
 	var shareJSON bool
 	var shareFormat string
 	var shareRoutes multiStringFlag
+	var breakGlassReason string
 	fs.StringVar(&client, "client", "", "Recipient client name for modern secure-pack adapter")
 	fs.StringVar(&profile, "profile", trustProfileInternal, "Trust profile: public|internal|confidential|regulated")
 	fs.BoolVar(&allowDegradedScan, "allow-degraded-scan", false, "Allow degraded scan mode in zt send (unsafe): permit no-scanner-available allow result")
@@ -35,6 +36,7 @@ func parseSendArgs(args []string) (sendOptions, error) {
 	fs.BoolVar(&shareJSON, "share-json", false, "Emit receiver share payload as JSON for share routes that support structured output")
 	fs.StringVar(&shareFormat, "share-format", "auto", "Share text language for receiver hint: auto|ja|en (default: auto)")
 	fs.Var(&shareRoutes, "share-route", "Additional share transport route: none | stdout | clipboard | file:<path> | command-file:<path> (repeatable)")
+	fs.StringVar(&breakGlassReason, "break-glass-reason", "", "Break-glass reason for one-off boundary override (persistent ZT_BREAK_GLASS_REASON is fail-fast)")
 
 	if err := fs.Parse(args); err != nil {
 		return sendOptions{}, err
@@ -82,6 +84,7 @@ func parseSendArgs(args []string) (sendOptions, error) {
 		ShareJSON:         shareJSON,
 		ShareFormat:       shareFormat,
 		ShareRoutes:       append([]string(nil), shareRoutes.Values...),
+		BreakGlassReason:  strings.TrimSpace(breakGlassReason),
 	}, nil
 }
 
@@ -149,6 +152,7 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 	fs.StringVar(&opts.ReceiptOut, "receipt-out", "", "Write verification receipt JSON to file path")
 	fs.BoolVar(&opts.SyncNow, "sync-now", false, "Force-sync local event spool to control plane after command")
 	fs.BoolVar(&opts.NoAutoSync, "no-auto-sync", false, "Disable background auto-sync to control plane (events are only spooled locally unless sync is triggered)")
+	fs.StringVar(&opts.BreakGlassReason, "break-glass-reason", "", "Break-glass reason for one-off boundary override (persistent ZT_BREAK_GLASS_REASON is fail-fast)")
 	if err := fs.Parse(args); err != nil {
 		return verifyOptions{}, err
 	}
@@ -157,5 +161,6 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 		return verifyOptions{}, fmt.Errorf(cliVerifyUsage)
 	}
 	opts.ArtifactPath = rest[0]
+	opts.BreakGlassReason = strings.TrimSpace(opts.BreakGlassReason)
 	return opts, nil
 }
