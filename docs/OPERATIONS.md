@@ -375,6 +375,40 @@ go run ./gateway/zt relay drive \
 - `--api-upload` 未指定時は `--folder` 必須（ローカル handoff モード）
 - upload 対象は packet 本体 + `*.verify.txt` + `*.share.json`（`--write-json=true` 時）
 
+## relay auto-drive 運用（watch -> send -> drive）
+
+`relay auto-drive` は watch フォルダ内の通常ファイルを順次処理します。
+
+- 入力: plaintext 元ファイル
+- 実行: `zt send --share-json` で packet 生成、続けて `relay drive` 実行
+- 成功時: 元ファイルを `.zt-done/` へ移動
+- 失敗時: 元ファイルを `.zt-error/` へ移動
+
+最小実行:
+
+```bash
+go run ./gateway/zt relay auto-drive \
+  --client clientA \
+  --watch-dir ./dropbox/send-queue \
+  --folder "$HOME/Google Drive/My Drive/zt-share" \
+  --poll-interval 5s
+```
+
+バッチ1回実行:
+
+```bash
+go run ./gateway/zt relay auto-drive \
+  --client clientA \
+  --watch-dir ./dropbox/send-queue \
+  --folder "$HOME/Google Drive/My Drive/zt-share" \
+  --once
+```
+
+注意:
+
+- `zt send` が実行されるため、local lock が有効なら fail-closed で停止
+- `*.spkg.tgz` / `*.verify.txt` / `*.share.json` は watch 対象から除外
+
 ## CI ゲート（標準）
 
 fixtureゲート（ロジック回帰検知）:
