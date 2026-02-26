@@ -48,6 +48,7 @@ func TestRunConfigDoctor_JSONContract_Success(t *testing.T) {
 	}
 	t.Setenv("ZT_CLIENT_CONFIG_FILE", cfgPath)
 	t.Setenv("ZT_EVENT_SIGNING_ED25519_PRIV_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv(securePackSignerFingerprintZTEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
 
 	out := captureStdout(t, func() {
 		if err := runConfigDoctor(repoRoot, []string{"--json"}); err != nil {

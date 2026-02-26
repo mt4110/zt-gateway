@@ -730,14 +730,15 @@ func buildTeamBoundarySetupChecks(repoRoot string) ([]setupCheck, []string) {
 		}
 	}
 	if !fileExists(policyPath) && !isTeamBoundaryRequired() {
+		signerReadinessCheck, signerReadinessFixes := buildVerifySignerPinReadinessCheck(repoRoot)
 		return []setupCheck{
 			checkDisabled("team_boundary_policy_loaded"),
 			checkDisabled("team_boundary_recipient_contract"),
 			checkDisabled("team_boundary_signer_contract"),
 			checkDisabled("team_boundary_share_route_contract"),
-			checkDisabled(teamBoundarySignerPinConsistencyCheckName),
+			signerReadinessCheck,
 			checkDisabled(teamBoundaryBreakGlassGuardrailCheckName),
-		}, nil
+		}, signerReadinessFixes
 	}
 
 	pol, active, err := resolveTeamBoundaryPolicy(repoRoot)
@@ -764,14 +765,15 @@ func buildTeamBoundarySetupChecks(repoRoot string) ([]setupCheck, []string) {
 	}
 	if !active {
 		msg := "loaded but disabled (`enabled=false`)"
+		signerReadinessCheck, signerReadinessFixes := buildVerifySignerPinReadinessCheck(repoRoot)
 		return []setupCheck{
 			{Name: "team_boundary_policy_loaded", Status: "ok", Message: msg},
 			checkDisabled("team_boundary_recipient_contract"),
 			checkDisabled("team_boundary_signer_contract"),
 			checkDisabled("team_boundary_share_route_contract"),
-			checkDisabled(teamBoundarySignerPinConsistencyCheckName),
+			signerReadinessCheck,
 			checkDisabled(teamBoundaryBreakGlassGuardrailCheckName),
-		}, nil
+		}, signerReadinessFixes
 	}
 
 	consistencyCheck, consistencyFixes := buildTeamBoundarySignerPinConsistencyCheck(repoRoot, pol)
@@ -885,6 +887,26 @@ func buildTeamBoundarySignerPinConsistencyCheck(repoRoot string, pol teamBoundar
 
 	check.Status = "ok"
 	check.Message = fmt.Sprintf("consistent signer pins count=%d source=%s", len(verifyPins), source)
+	return check, nil
+}
+
+func buildVerifySignerPinReadinessCheck(repoRoot string) (setupCheck, []string) {
+	check := setupCheck{Name: teamBoundarySignerPinConsistencyCheckName}
+	verifyPins, source, err := resolveSecurePackSignerPinSet(repoRoot)
+	if err != nil {
+		check.Status = "fail"
+		check.Code = teamBoundarySignerPinConfigInvalidCode
+		check.Message = fmt.Sprintf("signer pin resolution failed: %v", err)
+		return check, nil
+	}
+	if len(verifyPins) == 0 {
+		check.Status = "warn"
+		check.Code = teamBoundarySignerPinMissingCode
+		check.Message = fmt.Sprintf("verify signer pins are empty (source=%s); `zt verify` will fail until signer pins are configured", source)
+		return check, nil
+	}
+	check.Status = "ok"
+	check.Message = fmt.Sprintf("verify signer pins configured count=%d source=%s", len(verifyPins), source)
 	return check, nil
 }
 
