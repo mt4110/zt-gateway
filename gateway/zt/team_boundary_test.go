@@ -710,15 +710,15 @@ func TestBuildTeamBoundarySetupChecks_BreakGlassEnvPresentDetectedWhenDisabled(t
 	}
 }
 
-func TestBuildTeamBoundarySetupChecks_SignerPinReadinessWarnWhenBoundaryDisabledAndPinsMissing(t *testing.T) {
+func TestBuildTeamBoundarySetupChecks_SignerPinReadinessFailWhenBoundaryDisabledAndPinsMissing(t *testing.T) {
 	repoRoot := t.TempDir()
 	checks, _ := buildTeamBoundarySetupChecks(repoRoot)
 	c, ok := findSetupCheckByName(checks, teamBoundarySignerPinConsistencyCheckName)
 	if !ok {
 		t.Fatalf("missing check: %s", teamBoundarySignerPinConsistencyCheckName)
 	}
-	if c.Status != "warn" {
-		t.Fatalf("status = %q, want warn", c.Status)
+	if c.Status != "fail" {
+		t.Fatalf("status = %q, want fail", c.Status)
 	}
 	if c.Code != teamBoundarySignerPinMissingCode {
 		t.Fatalf("code = %q, want %q", c.Code, teamBoundarySignerPinMissingCode)

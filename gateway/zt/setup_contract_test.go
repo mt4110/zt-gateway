@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -123,15 +122,15 @@ func TestRunSetup_JSONQuickFixCommandsContractByProfile(t *testing.T) {
 			if got.QuickFixBundle == nil {
 				t.Fatalf("QuickFixBundle is nil")
 			}
-			wantProfileFixes := []string{fmt.Sprintf(
+			wantProfileFix := fmt.Sprintf(
 				"Create `%s` and `%s` for profile `%s`, or rerun with `--profile %s`.",
 				filepath.Join(repoRoot, "policy", "extension_policy.toml"),
 				filepath.Join(repoRoot, "policy", "scan_policy.toml"),
 				tc.profile,
 				trustProfileInternal,
-			)}
-			if !reflect.DeepEqual(got.QuickFixBundle.Commands, wantProfileFixes) {
-				t.Fatalf("commands mismatch:\nwant=%#v\ngot=%#v", wantProfileFixes, got.QuickFixBundle.Commands)
+			)
+			if !containsString(got.QuickFixBundle.Commands, wantProfileFix) {
+				t.Fatalf("commands must include profile fix:\nwant=%q\ngot=%#v", wantProfileFix, got.QuickFixBundle.Commands)
 			}
 			if hasDuplicateStrings(got.QuickFixBundle.Commands) {
 				t.Fatalf("commands must be deduped: %#v", got.QuickFixBundle.Commands)

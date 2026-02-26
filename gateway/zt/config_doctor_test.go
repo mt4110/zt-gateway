@@ -116,6 +116,7 @@ func TestRunConfigDoctor_JSONContract_Success(t *testing.T) {
 
 func TestRunConfigDoctor_JSONContract_WarnMinimum(t *testing.T) {
 	repoRoot := t.TempDir()
+	t.Setenv(securePackSignerFingerprintZTEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
 	out := captureStdout(t, func() {
 		if err := runConfigDoctor(repoRoot, []string{"--json"}); err != nil {
 			t.Fatalf("runConfigDoctor returned error: %v", err)
