@@ -463,6 +463,12 @@ go run ./gateway/zt relay hook configure-finder \
   --json
 ```
 
+force-public 運用方針（repo guard）:
+
+- `mt4110/zt-gateway` は Public リポジトリのため、当面は `--force-public` を有効化して運用
+- 本番推奨は private/internal リポジトリへ移行し、`--force-public` を外して fail-closed を維持
+- 移行完了後は Finder Quick Action 設定（`~/.config/zt/finder-quick-action.env`）から `ZT_RELAY_HOOK_FORCE_PUBLIC` を削除/0化
+
 3. 生成物を確認
 
 ```bash
