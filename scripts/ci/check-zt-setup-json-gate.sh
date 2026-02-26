@@ -51,7 +51,11 @@ fi
 
 (
   cd "${tmp_repo}"
-  ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${fpr}" "${zt_bin}" setup --json > "${json_out}"
+  # Fixture gate is policy/supply-chain focused; provide signer pins explicitly so
+  # setup's fail-closed verify-pin readiness check remains green in CI.
+  ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${fpr}" \
+  ZT_SECURE_PACK_SIGNER_FINGERPRINTS="${fpr}" \
+  "${zt_bin}" setup --json > "${json_out}"
 )
 
 python3 - "${json_out}" <<'PY'
