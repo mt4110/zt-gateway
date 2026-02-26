@@ -50,6 +50,7 @@ tmp_gocache/
 .env
 .env.*
 *.local
+/.local/
 
 # zt local control-plane event spool
 .zt-spool/
