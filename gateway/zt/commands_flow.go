@@ -177,6 +177,12 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 	}
 	resetAuditAppendFailureState()
 	setActiveTeamBoundaryContext(nil)
+	if _, err := ensureOperationUnlocked(adapters.repoRoot, "send"); err != nil {
+		printZTErrorCode(ztErrorCodeLocalLockActive)
+		fmt.Printf("[LOCKED] %v\n", err)
+		trustFail(ztErrorCodeLocalLockActive)
+		os.Exit(1)
+	}
 
 	if cpEvents != nil {
 		if opts.NoAutoSync {

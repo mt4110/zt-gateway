@@ -33,6 +33,7 @@ const (
 	ztErrorCodeSendPackFail                           = "ZT_SEND_PACK_FAILED"
 	ztErrorCodeSendAuditAppendFail                    = "ZT_SEND_AUDIT_APPEND_FAILED"
 	ztErrorCodeSendClientRequired                     = "ZT_SEND_CLIENT_REQUIRED"
+	ztErrorCodeLocalLockActive                        = "ZT_LOCAL_LOCK_ACTIVE"
 	ztErrorCodeSendBoundaryPolicy                     = "ZT_SEND_TEAM_BOUNDARY_POLICY_FAILED"
 	ztErrorCodeSendBoundaryClient                     = "ZT_SEND_TEAM_BOUNDARY_RECIPIENT_DENIED"
 	ztErrorCodeSendBoundaryRoute                      = "ZT_SEND_TEAM_BOUNDARY_SHARE_ROUTE_DENIED"

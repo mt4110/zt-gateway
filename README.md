@@ -116,6 +116,92 @@ go run ./gateway/zt --help-advanced
 - Ubuntu runner 相当での固定実行: `scripts/dev/run-secure-pack-smoketest-ubuntu-docker.sh`
 - CLI I/O・表示契約（v0.4 固定）: `docs/contracts/CLI_IO_DISPLAY_CONTRACT_v0.4.md`
 
+## 追加運用（unlock / dashboard / relay drive）
+
+### 1) trusted signer 固定（必須）
+
+`unlock token` は、`ZT_BREAKGLASS_TRUSTED_SIGNERS` が未設定だと有効化されません。  
+運用では **trusted signer を固定してから** `unlock issue/verify` を使ってください。
+
+```bash
+# 形式: <signer_id>:<pubkey_b64> をカンマ区切り（; / 改行区切りも可）
+export ZT_BREAKGLASS_TRUSTED_SIGNERS="ops1:BASE64_PUBKEY_1,ops2:BASE64_PUBKEY_2"
+
+# 状態確認（active=true を確認）
+go run ./gateway/zt unlock verify --json
+go run ./gateway/zt setup --json
+```
+
+補足:
+
+- token ファイルだけ置いても、trusted signer 未設定なら `active=false`（fail-closed）
+- 緊急回避用途として `ZT_BREAKGLASS_ALLOW_EMBEDDED_SIGNERS=1` がありますが、通常運用では非推奨
+
+### 2) dashboard の危険信号 / unlock badge / ローカルロック
+
+`zt dashboard` は、危険信号（danger）とローカルロック状態を表示します。
+
+- `danger.level=high|medium|low` で運用リスクを集約表示
+- `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`）
+- `Local Lock` は dashboard から lock/unlock 操作でき、`send` と `relay` を停止できます（fail-closed）
+
+ロック状態ファイル（既定）:
+
+- `.zt-spool/local-lock.json`
+- 変更したい場合は `ZT_LOCAL_LOCK_FILE` を使用
+
+- `有効` (`active`): trusted signer 固定 + 2承認以上 + 期限内
+- `解除申請中` (`pending`): token はあるが有効承認数が不足（例: 1/2）
+- `期限切れ` (`expired`): token 期限超過
+- `無効` (`inactive`): token ありだが trusted signer 未設定/不整合などで不活性
+- `未設定` (`none`): token ファイルなし
+
+ローカル確認:
+
+```bash
+go run ./gateway/zt dashboard
+# または
+go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock'
+```
+
+### 3) relay drive の Google Drive API 直upload（任意）
+
+`relay drive` は、ローカル同期フォルダコピーに加えて `--api-upload` で Drive API へ直接 upload できます。
+
+事前準備:
+
+- Google OAuth access token を取得（Drive upload 可能な scope）
+- 必要なら格納先フォルダIDを控える（`--drive-folder-id`）
+
+実行例（API upload のみ）:
+
+```bash
+export ZT_GOOGLE_DRIVE_ACCESS_TOKEN="<oauth_access_token>"
+
+go run ./gateway/zt relay drive \
+  --packet ./bundle_clientA_20260224T120000Z.spkg.tgz \
+  --api-upload \
+  --drive-folder-id "<google_drive_folder_id>" \
+  --write-json
+```
+
+実行例（ローカル同期フォルダ + API upload 併用）:
+
+```bash
+go run ./gateway/zt relay drive \
+  --packet ./bundle_clientA_20260224T120000Z.spkg.tgz \
+  --folder "$HOME/Google Drive/My Drive/zt-share" \
+  --api-upload \
+  --drive-folder-id "<google_drive_folder_id>" \
+  --write-json
+```
+
+出力される添付物:
+
+- packet 本体 (`*.spkg.tgz`)
+- 受信者向け verify 手順 (`*.verify.txt`)
+- 共有JSON (`*.share.json`, `--write-json=true` 時)
+
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.9.0 additive)
 
 `zt send` の `--share-json` は、受信側に渡す検証コマンド共有用の payload を **JSON 1オブジェクト** で出力します。
