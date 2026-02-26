@@ -40,6 +40,7 @@ func emitScanEventFromSecureScanJSON(command string, targetPath string, scanJSON
 		"policy_decision": normalizePolicyDecision(decision),
 		"raw_scan":        m,
 	}
+	applyTeamBoundaryMetadata(payload)
 	emitControlPlaneEvent("/v1/events/scan", payload)
 }
 
@@ -61,15 +62,30 @@ func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash st
 		"artifact_path":      artifactPath,
 		"policy_decision":    normalizePolicyDecision(decision),
 	}
+	applyTeamBoundaryMetadata(payload)
 	emitControlPlaneEvent("/v1/events/artifact", payload)
 }
 
 func emitVerifyEvent(artifactPath string, ok bool, reason string, details string, decision policyDecision) {
+	emitVerifyEventWithMeta(artifactPath, ok, reason, details, decision, nil)
+}
+
+func emitVerifyEventWithMeta(artifactPath string, ok bool, reason string, details string, decision policyDecision, meta map[string]any) {
 	result := "failed"
 	if ok {
 		result = "verified"
 	}
 	decision = normalizePolicyDecision(decision)
+	detailPayload := map[string]any{
+		"path":    artifactPath,
+		"message": details,
+	}
+	for k, v := range meta {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		detailPayload[k] = v
+	}
 	payload := map[string]any{
 		"event_id":          fmt.Sprintf("evt_verify_%d", time.Now().UTC().UnixNano()),
 		"occurred_at":       time.Now().UTC().Format(time.RFC3339Nano),
@@ -81,11 +97,9 @@ func emitVerifyEvent(artifactPath string, ok bool, reason string, details string
 		"result":            result,
 		"reason":            reason,
 		"policy_decision":   decision,
-		"details": map[string]any{
-			"path":    artifactPath,
-			"message": details,
-		},
+		"details":           detailPayload,
 	}
+	applyTeamBoundaryMetadata(payload)
 	emitControlPlaneEvent("/v1/events/verify", payload)
 }
 

@@ -436,3 +436,29 @@ func TestEmitSetupJSON_IncludesErrorCodeField(t *testing.T) {
 		t.Fatalf("quick_fix_bundle.runbook = %v", qfb["runbook"])
 	}
 }
+
+func TestCollectSetupPreflightChecks_IncludesTeamBoundaryChecks(t *testing.T) {
+	repoRoot := t.TempDir()
+	got := collectSetupPreflightChecks(repoRoot)
+	wantNames := []string{
+		"team_boundary_policy_loaded",
+		"team_boundary_recipient_contract",
+		"team_boundary_signer_contract",
+		"team_boundary_share_route_contract",
+		teamBoundarySignerPinConsistencyCheckName,
+		teamBoundaryBreakGlassGuardrailCheckName,
+		auditTrailAppendabilityCheckName,
+	}
+	for _, name := range wantNames {
+		found := false
+		for _, c := range got.Checks {
+			if c.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing team boundary check: %s", name)
+		}
+	}
+}

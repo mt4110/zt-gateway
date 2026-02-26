@@ -102,3 +102,195 @@ func TestBuildQuickFixBundleWithCode_RunbookAnchorContract(t *testing.T) {
 		t.Fatalf("RunbookAnchor = %q, want #sync-backlog-slo-breached-v070", got.RunbookAnchor)
 	}
 }
+
+func TestBuildQuickFixBundleWithCode_V092RunbookMappingContract(t *testing.T) {
+	got := buildQuickFixBundleWithCode(
+		"verify signer mismatch",
+		[]string{"update signer allowlist"},
+		"zt verify -- ./bundle.spkg.tgz",
+		ztErrorCodeVerifySignerPinMismatch,
+	)
+	if got == nil {
+		t.Fatalf("bundle = nil")
+	}
+	if got.Runbook != "docs/V0.9.2_ABNORMAL_USECASES.md" {
+		t.Fatalf("Runbook = %q, want docs/V0.9.2_ABNORMAL_USECASES.md", got.Runbook)
+	}
+	if got.RunbookAnchor != "#signer-key-loss" {
+		t.Fatalf("RunbookAnchor = %q, want #signer-key-loss", got.RunbookAnchor)
+	}
+}
+
+func TestBuildQuickFixBundleWithCode_V092RunbookAnchorMatrix(t *testing.T) {
+	tests := []struct {
+		name   string
+		code   string
+		anchor string
+	}{
+		{
+			name:   "send policy",
+			code:   ztErrorCodeSendBoundaryPolicy,
+			anchor: "#team-boundary-policy-missing-or-invalid",
+		},
+		{
+			name:   "verify policy",
+			code:   ztErrorCodeVerifyBoundaryPolicy,
+			anchor: "#team-boundary-policy-missing-or-invalid",
+		},
+		{
+			name:   "recipient denied",
+			code:   ztErrorCodeSendBoundaryClient,
+			anchor: "#recipient-boundary-denied",
+		},
+		{
+			name:   "route denied",
+			code:   ztErrorCodeSendBoundaryRoute,
+			anchor: "#share-route-boundary-denied",
+		},
+		{
+			name:   "send break-glass reason required",
+			code:   ztErrorCodeSendBoundaryBreakGlassReasonRequired,
+			anchor: "#break-glass-reason-required",
+		},
+		{
+			name:   "send break-glass env present",
+			code:   ztErrorCodeSendBoundaryBreakGlassEnvPresent,
+			anchor: "#break-glass-override-left-enabled",
+		},
+		{
+			name:   "send break-glass token invalid",
+			code:   ztErrorCodeSendBoundaryBreakGlassTokenInvalid,
+			anchor: "#break-glass-token-invalid",
+		},
+		{
+			name:   "send break-glass token expired",
+			code:   ztErrorCodeSendBoundaryBreakGlassTokenExpired,
+			anchor: "#break-glass-token-expired",
+		},
+		{
+			name:   "send audit append failed",
+			code:   ztErrorCodeSendAuditAppendFail,
+			anchor: "#audit-trail-append-failed",
+		},
+		{
+			name:   "signer denied",
+			code:   ztErrorCodeVerifyBoundarySigner,
+			anchor: "#signer-boundary-denied",
+		},
+		{
+			name:   "verify break-glass reason required",
+			code:   ztErrorCodeVerifyBoundaryBreakGlassReasonRequired,
+			anchor: "#break-glass-reason-required",
+		},
+		{
+			name:   "verify break-glass env present",
+			code:   ztErrorCodeVerifyBoundaryBreakGlassEnvPresent,
+			anchor: "#break-glass-override-left-enabled",
+		},
+		{
+			name:   "verify break-glass token invalid",
+			code:   ztErrorCodeVerifyBoundaryBreakGlassTokenInvalid,
+			anchor: "#break-glass-token-invalid",
+		},
+		{
+			name:   "verify break-glass token expired",
+			code:   ztErrorCodeVerifyBoundaryBreakGlassTokenExpired,
+			anchor: "#break-glass-token-expired",
+		},
+		{
+			name:   "signer missing",
+			code:   ztErrorCodeVerifySignerPinMissing,
+			anchor: "#signer-allowlist-missing",
+		},
+		{
+			name:   "signer mismatch",
+			code:   ztErrorCodeVerifySignerPinMismatch,
+			anchor: "#signer-key-loss",
+		},
+		{
+			name:   "signer config invalid",
+			code:   ztErrorCodeVerifySignerPinConfig,
+			anchor: "#signer-allowlist-invalid-format",
+		},
+		{
+			name:   "verify audit append failed",
+			code:   ztErrorCodeVerifyAuditAppendFail,
+			anchor: "#audit-trail-append-failed",
+		},
+		{
+			name:   "secure-pack signer missing",
+			code:   "SP_SIGNER_PIN_MISSING",
+			anchor: "#signer-allowlist-missing",
+		},
+		{
+			name:   "secure-pack signer mismatch",
+			code:   "SP_SIGNER_PIN_MISMATCH",
+			anchor: "#signer-key-loss",
+		},
+		{
+			name:   "secure-pack signer config invalid",
+			code:   "SP_SIGNER_PIN_CONFIG_INVALID",
+			anchor: "#signer-allowlist-invalid-format",
+		},
+		{
+			name:   "team boundary split brain",
+			code:   teamBoundarySignerSplitBrainCode,
+			anchor: "#signer-policy-split-brain-detected",
+		},
+		{
+			name:   "team boundary signer pin missing",
+			code:   teamBoundarySignerPinMissingCode,
+			anchor: "#signer-allowlist-missing",
+		},
+		{
+			name:   "team boundary signer pin invalid",
+			code:   teamBoundarySignerPinConfigInvalidCode,
+			anchor: "#signer-allowlist-invalid-format",
+		},
+		{
+			name:   "audit trail append unavailable",
+			code:   auditTrailAppendUnavailableCode,
+			anchor: "#audit-trail-append-failed",
+		},
+		{
+			name:   "break-glass env present",
+			code:   teamBoundaryBreakGlassEnvPresentCode,
+			anchor: "#break-glass-override-left-enabled",
+		},
+		{
+			name:   "break-glass guardrail weak",
+			code:   teamBoundaryBreakGlassGuardrailWeakCode,
+			anchor: "#break-glass-guardrail-weak",
+		},
+		{
+			name:   "break-glass reason required policy",
+			code:   teamBoundaryBreakGlassReasonRequiredCode,
+			anchor: "#break-glass-reason-required",
+		},
+		{
+			name:   "break-glass token invalid",
+			code:   teamBoundaryBreakGlassTokenInvalidCode,
+			anchor: "#break-glass-token-invalid",
+		},
+		{
+			name:   "break-glass token expired",
+			code:   teamBoundaryBreakGlassTokenExpiredCode,
+			anchor: "#break-glass-token-expired",
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildQuickFixBundleWithCode("v0.9.2 failure", nil, "zt verify -- ./bundle.spkg.tgz", tc.code)
+			if got == nil {
+				t.Fatalf("bundle = nil")
+			}
+			if got.Runbook != "docs/V0.9.2_ABNORMAL_USECASES.md" {
+				t.Fatalf("Runbook = %q, want docs/V0.9.2_ABNORMAL_USECASES.md", got.Runbook)
+			}
+			if got.RunbookAnchor != tc.anchor {
+				t.Fatalf("RunbookAnchor = %q, want %q", got.RunbookAnchor, tc.anchor)
+			}
+		})
+	}
+}

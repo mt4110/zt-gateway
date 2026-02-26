@@ -26,6 +26,7 @@ type sendOptions struct {
 	ShareJSON         bool
 	ShareFormat       string
 	ShareRoutes       []string
+	BreakGlassReason  string
 }
 
 type scanOptions struct {
@@ -48,10 +49,11 @@ type setupOptions struct {
 }
 
 type verifyOptions struct {
-	ArtifactPath string
-	ReceiptOut   string
-	SyncNow      bool
-	NoAutoSync   bool
+	ArtifactPath     string
+	ReceiptOut       string
+	SyncNow          bool
+	NoAutoSync       bool
+	BreakGlassReason string
 }
 
 // UpdateConfig defines where to look for updates

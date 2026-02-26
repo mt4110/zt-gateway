@@ -106,6 +106,14 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 	out.Compatibility = compatibility
 	out.QuickFixes = append(out.QuickFixes, compatFixes...)
 
+	boundaryChecks, boundaryFixes := buildTeamBoundarySetupChecks(repoRoot)
+	out.Checks = append(out.Checks, boundaryChecks...)
+	out.QuickFixes = append(out.QuickFixes, boundaryFixes...)
+
+	auditCheck, auditFixes := buildAuditTrailSetupCheck(repoRoot)
+	out.Checks = append(out.Checks, auditCheck)
+	out.QuickFixes = append(out.QuickFixes, auditFixes...)
+
 	return out
 }
 
@@ -117,7 +125,14 @@ func printSetupCheckLine(c setupCheck) {
 	case "fail":
 		prefix = "[FAIL]"
 	}
-	fmt.Printf("%s %s %s\n", prefix, c.Name, c.Message)
+	line := fmt.Sprintf("%s %s", prefix, c.Name)
+	if c.Code != "" {
+		line += " code=" + c.Code
+	}
+	if c.Message != "" {
+		line += " " + c.Message
+	}
+	fmt.Println(line)
 }
 
 func buildClamAVDBSetupCheck() (setupCheck, string) {

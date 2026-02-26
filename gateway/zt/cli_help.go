@@ -41,6 +41,8 @@ func printAdvancedUsage() {
 	fmt.Println("  - Add `--share-route file:/tmp/share.txt` or `command-file:/tmp/verify.sh` (repeatable) to fan out share output.")
 	fmt.Println("  - Add `--share-json` to emit structured share payload JSON (stdout/file routes).")
 	fmt.Println("  - Add `--profile` to select trust posture presets (`internal` by default).")
+	fmt.Println("  - Team boundary break-glass requires explicit `--break-glass-reason` (persistent `ZT_BREAK_GLASS_REASON` is fail-fast).")
+	fmt.Println("  - Recommended break-glass reason token: `incident=<id>;approved_by=<id>;expires_at=<RFC3339>`.")
 	fmt.Println("  - `zt send` uses strict scan mode by default; add `--allow-degraded-scan` only for explicit local/degraded runs.")
 	fmt.Println("  - `send --client <name>` uses the new secure-pack adapter (spkg.tgz output).")
 	fmt.Println("  - Legacy `artifact.zp` send/verify path has been removed; use `*.spkg.tgz` only.")

@@ -61,6 +61,7 @@ type receiverShareMessage struct {
 	Format           string
 	ReceiptHint      *receiverShareReceiptHint
 	ChannelTemplates *receiverShareChannelTemplates
+	Boundary         *receiverShareBoundary
 }
 
 type receiverShareReceiptHint struct {
@@ -76,6 +77,14 @@ type receiverShareChannelTemplates struct {
 	EmailBody    string `json:"email_body"`
 }
 
+type receiverShareBoundary struct {
+	TenantID              string `json:"tenant_id"`
+	TeamID                string `json:"team_id"`
+	BoundaryPolicyVersion string `json:"boundary_policy_version"`
+	BreakGlass            bool   `json:"break_glass"`
+	BreakGlassReason      string `json:"break_glass_reason,omitempty"`
+}
+
 func buildReceiverShareMessage(artifactPath, format string) (receiverShareMessage, bool) {
 	cmd := receiverVerifyCommand(artifactPath)
 	if cmd == "" {
@@ -88,6 +97,7 @@ func buildReceiverShareMessage(artifactPath, format string) (receiverShareMessag
 		Format:           resolvedFormat,
 		ReceiptHint:      receiptHint,
 		ChannelTemplates: buildReceiverChannelTemplates(artifactPath, resolvedFormat, cmd, receiptHint),
+		Boundary:         buildReceiverShareBoundary(),
 	}, true
 }
 
@@ -108,6 +118,7 @@ func renderReceiverShareJSON(msg receiverShareMessage) string {
 		Text             string                         `json:"text"`
 		ReceiptHint      *receiverShareReceiptHint      `json:"receipt_hint,omitempty"`
 		ChannelTemplates *receiverShareChannelTemplates `json:"channel_templates,omitempty"`
+		Boundary         *receiverShareBoundary         `json:"boundary,omitempty"`
 	}{
 		Kind:             "receiver_verify_hint",
 		Format:           msg.Format,
@@ -115,6 +126,7 @@ func renderReceiverShareJSON(msg receiverShareMessage) string {
 		Text:             renderReceiverShareText(msg),
 		ReceiptHint:      msg.ReceiptHint,
 		ChannelTemplates: msg.ChannelTemplates,
+		Boundary:         msg.Boundary,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -165,6 +177,20 @@ func buildReceiverChannelTemplates(artifactPath, format, verifyCommand string, r
 			EmailSubject: "[ZT Gateway] Verification request: " + base,
 			EmailBody:    renderEmailTemplateEN(verifyCommand, receiptCommand),
 		}
+	}
+}
+
+func buildReceiverShareBoundary() *receiverShareBoundary {
+	ctx := currentTeamBoundaryContext()
+	if ctx == nil {
+		return nil
+	}
+	return &receiverShareBoundary{
+		TenantID:              ctx.TenantID,
+		TeamID:                ctx.TeamID,
+		BoundaryPolicyVersion: ctx.BoundaryPolicyVersion,
+		BreakGlass:            ctx.BreakGlass,
+		BreakGlassReason:      ctx.BreakGlassReason,
 	}
 }
 

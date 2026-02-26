@@ -101,6 +101,16 @@ func TestParseSendArgs_AllowDegradedScan(t *testing.T) {
 	}
 }
 
+func TestParseSendArgs_BreakGlassReason(t *testing.T) {
+	opts, err := parseSendArgs([]string{"--client", "alice", "--break-glass-reason", "incident-1", "sample.txt"})
+	if err != nil {
+		t.Fatalf("parseSendArgs returned error: %v", err)
+	}
+	if opts.BreakGlassReason != "incident-1" {
+		t.Fatalf("BreakGlassReason = %q, want incident-1", opts.BreakGlassReason)
+	}
+}
+
 func TestParseSendArgs_StrictAndAllowDegradedConflict(t *testing.T) {
 	_, err := parseSendArgs([]string{"--client", "alice", "--strict", "--allow-degraded-scan", "sample.txt"})
 	if err == nil {
@@ -131,6 +141,16 @@ func TestParseVerifyArgs_WithReceiptOut(t *testing.T) {
 	}
 	if opts.ReceiptOut != "/tmp/receipt.json" {
 		t.Fatalf("ReceiptOut = %q, want /tmp/receipt.json", opts.ReceiptOut)
+	}
+}
+
+func TestParseVerifyArgs_BreakGlassReason(t *testing.T) {
+	opts, err := parseVerifyArgs([]string{"--break-glass-reason", "incident-2", "bundle.spkg.tgz"})
+	if err != nil {
+		t.Fatalf("parseVerifyArgs returned error: %v", err)
+	}
+	if opts.BreakGlassReason != "incident-2" {
+		t.Fatalf("BreakGlassReason = %q, want incident-2", opts.BreakGlassReason)
 	}
 }
 

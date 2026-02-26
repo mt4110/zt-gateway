@@ -15,6 +15,13 @@ import (
 const ztVersion = "v0.5g-dev"
 
 var cpEvents *eventSpool
+var lastAuditAppendFailure *auditAppendFailureState
+
+type auditAppendFailureState struct {
+	Endpoint string
+	Message  string
+	At       string
+}
 
 type controlPlaneConfig struct {
 	BaseURL  string
@@ -307,7 +314,10 @@ func emitControlPlaneEvent(endpoint string, payload any) {
 		return
 	}
 	if err := cpEvents.appendAuditEvent(endpoint, payload); err != nil {
+		rememberAuditAppendFailure(endpoint, err)
 		fmt.Fprintf(os.Stderr, "[Events] WARN audit append failed (%s): %v\n", endpoint, err)
+	} else {
+		// Keep sticky failure if previously set; command-level fail-closed consumes it.
 	}
 	if cpEvents.cfg.BaseURL != "" && cpEvents.autoSync {
 		if _, err := cpEvents.Sync(false); err != nil {
@@ -319,6 +329,27 @@ func emitControlPlaneEvent(endpoint string, payload any) {
 			}
 		}
 	}
+}
+
+func resetAuditAppendFailureState() {
+	lastAuditAppendFailure = nil
+}
+
+func rememberAuditAppendFailure(endpoint string, err error) {
+	if err == nil {
+		return
+	}
+	lastAuditAppendFailure = &auditAppendFailureState{
+		Endpoint: strings.TrimSpace(endpoint),
+		Message:  strings.TrimSpace(err.Error()),
+		At:       time.Now().UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func consumeAuditAppendFailureState() *auditAppendFailureState {
+	out := lastAuditAppendFailure
+	lastAuditAppendFailure = nil
+	return out
 }
 
 func (s *eventSpool) SetAutoSync(enabled bool) {

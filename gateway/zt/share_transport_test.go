@@ -91,6 +91,7 @@ func TestRenderReceiverShareTextEnglish(t *testing.T) {
 }
 
 func TestRenderReceiverShareJSON_Contract(t *testing.T) {
+	setActiveTeamBoundaryContext(nil)
 	msg, ok := buildReceiverShareMessage("bundle.spkg.tgz", "en")
 	if !ok {
 		t.Fatalf("buildReceiverShareMessage returned ok=false")
@@ -169,6 +170,37 @@ func TestRenderReceiverShareJSON_Contract(t *testing.T) {
 	}
 }
 
+func TestRenderReceiverShareJSON_BoundaryContract(t *testing.T) {
+	setActiveTeamBoundaryContext(&teamBoundaryRuntimeContext{
+		TenantID:              "corp-example",
+		TeamID:                "secops",
+		BoundaryPolicyVersion: "2026-02-26",
+		BreakGlass:            true,
+		BreakGlassReason:      "incident-1",
+	})
+	defer setActiveTeamBoundaryContext(nil)
+
+	msg, ok := buildReceiverShareMessage("bundle.spkg.tgz", "en")
+	if !ok {
+		t.Fatalf("buildReceiverShareMessage returned ok=false")
+	}
+	raw := renderReceiverShareJSON(msg)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &got); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	boundary, ok := got["boundary"].(map[string]any)
+	if !ok {
+		t.Fatalf("boundary missing: %#v", got["boundary"])
+	}
+	if boundary["tenant_id"] != "corp-example" {
+		t.Fatalf("tenant_id = %v", boundary["tenant_id"])
+	}
+	if boundary["team_id"] != "secops" {
+		t.Fatalf("team_id = %v", boundary["team_id"])
+	}
+}
+
 func TestRenderReceiverShareJSON_ChannelTemplatesContract(t *testing.T) {
 	msg, ok := buildReceiverShareMessage("bundle_clientA.spkg.tgz", "ja")
 	if !ok {
@@ -209,6 +241,7 @@ func TestStdoutShareTransport_TextContract(t *testing.T) {
 }
 
 func TestStdoutShareTransport_JSONContract(t *testing.T) {
+	setActiveTeamBoundaryContext(nil)
 	var out bytes.Buffer
 	msg, ok := buildReceiverShareMessage("bundle.spkg.tgz", "ja")
 	if !ok {
