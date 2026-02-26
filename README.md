@@ -207,12 +207,21 @@ go run ./gateway/zt relay drive \
 送信元フォルダを監視し、`zt send` -> `relay drive` を自動実行できます。  
 処理済み原本は `watch-dir/.zt-done/`、失敗原本は `watch-dir/.zt-error/` へ移動します。
 
+v1.0.1 追加（運用強化）:
+
+- `--stable-window` で部分書き込み中ファイルの誤処理を抑止
+- `--max-retries` + `--retry-backoff` で指数バックオフ再試行
+- `--dedup-ledger` で同一内容の重複送信を抑止（idempotency）
+
 ```bash
 go run ./gateway/zt relay auto-drive \
   --client clientA \
   --watch-dir ./dropbox/send-queue \
   --folder "$HOME/Google Drive/My Drive/zt-share" \
-  --poll-interval 5s
+  --poll-interval 5s \
+  --stable-window 3s \
+  --max-retries 3 \
+  --retry-backoff 5s
 ```
 
 1回だけ処理して終了:
@@ -223,6 +232,36 @@ go run ./gateway/zt relay auto-drive \
   --watch-dir ./dropbox/send-queue \
   --folder "$HOME/Google Drive/My Drive/zt-share" \
   --once
+```
+
+### 5) relay hook（拡張連携ブリッジ）
+
+OS拡張/ブラウザ拡張/Automator から呼ぶためのブリッジです。
+
+1ファイルをCLI経由でラップ:
+
+```bash
+go run ./gateway/zt relay hook wrap \
+  --path ./sample.txt \
+  --client clientA \
+  --share-format auto \
+  --json
+```
+
+ローカルHTTP APIを起動（将来の拡張連携向け）:
+
+```bash
+export ZT_RELAY_HOOK_TOKEN="<long_random_token>"
+go run ./gateway/zt relay hook serve --client clientA --addr 127.0.0.1:8791
+```
+
+API呼び出し例:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8791/v1/wrap \
+  -H "Authorization: Bearer ${ZT_RELAY_HOOK_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"path":"./sample.txt","share_format":"ja"}'
 ```
 
 ## CI / Slack 連携: `zt send --share-json` の固定スキーマ (v0.9.0 additive)
