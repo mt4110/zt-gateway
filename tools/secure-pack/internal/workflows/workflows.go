@@ -442,9 +442,10 @@ func VerifyWorkflowWithSigner(inputPath string) (string, error) {
 		return "", withCode(
 			ErrCodeSignerPinMissing,
 			fmt.Errorf(
-				"no trusted signer fingerprint pins configured (set %s or %s, or provide SIGNERS_ALLOWLIST.txt)",
+				"no trusted signer fingerprint pins configured (set %s or %s, set %s, or provide SIGNERS_ALLOWLIST.txt)",
 				securePackSignerFingerprintEnv,
 				securePackSignerFingerprintZTEnv,
+				securePackSignersAllowlistFileEnv,
 			),
 		)
 	}

@@ -41,7 +41,7 @@ type receiptProvenance struct {
 	TenantID              string `json:"tenant_id,omitempty"`
 	TeamID                string `json:"team_id,omitempty"`
 	BoundaryPolicyVersion string `json:"boundary_policy_version,omitempty"`
-	BreakGlass            bool   `json:"break_glass,omitempty"`
+	BreakGlass            bool   `json:"break_glass"`
 	BreakGlassReason      string `json:"break_glass_reason,omitempty"`
 }
 

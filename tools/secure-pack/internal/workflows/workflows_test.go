@@ -164,6 +164,9 @@ func TestVerifyWorkflow_SignerPinMissingReturnsCode(t *testing.T) {
 	if got := ErrorCode(err); got != ErrCodeSignerPinMissing {
 		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMissing, err)
 	}
+	if !strings.Contains(err.Error(), securePackSignersAllowlistFileEnv) {
+		t.Fatalf("error = %q, want hint for %s", err.Error(), securePackSignersAllowlistFileEnv)
+	}
 }
 
 func TestVerifyWorkflow_SignerPinMismatchReturnsCode(t *testing.T) {

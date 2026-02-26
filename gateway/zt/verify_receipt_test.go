@@ -169,3 +169,42 @@ func TestBuildVerificationReceipt_BoundaryMetadata(t *testing.T) {
 		t.Fatalf("break_glass = false, want true")
 	}
 }
+
+func TestBuildVerificationReceipt_BoundaryMetadataIncludesBreakGlassFalseInJSON(t *testing.T) {
+	tmp := t.TempDir()
+	artifact := filepath.Join(tmp, "bundle_clientA_20260225T000000Z.spkg.tgz")
+	if err := os.WriteFile(artifact, []byte("packet"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setActiveTeamBoundaryContext(&teamBoundaryRuntimeContext{
+		TenantID:              "corp-example",
+		TeamID:                "secops",
+		BoundaryPolicyVersion: "2026-02-26",
+		BreakGlass:            false,
+	})
+	defer setActiveTeamBoundaryContext(nil)
+
+	receipt, err := buildVerificationReceipt(artifact, decisionForVerify(true, "policy_verify_pass"), "0123456789ABCDEF0123456789ABCDEF01234567")
+	if err != nil {
+		t.Fatalf("buildVerificationReceipt returned error: %v", err)
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	prov, ok := payload["provenance"].(map[string]any)
+	if !ok {
+		t.Fatalf("provenance missing or invalid: %#v", payload["provenance"])
+	}
+	v, ok := prov["break_glass"]
+	if !ok {
+		t.Fatalf("provenance.break_glass is missing: %#v", prov)
+	}
+	if got, ok := v.(bool); !ok || got {
+		t.Fatalf("provenance.break_glass = %#v, want false", v)
+	}
+}

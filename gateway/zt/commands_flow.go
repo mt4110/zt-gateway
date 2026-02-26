@@ -41,6 +41,14 @@ func resolveSendScanStrict(opts sendOptions, envZTScanStrict bool) (bool, string
 	return true, "[Scan] strict mode enabled by default (zt send)"
 }
 
+func resolveSendBoundaryDecisionProfile(raw string) string {
+	profile, err := validateTrustProfile(raw)
+	if err != nil {
+		return trustProfileInternal
+	}
+	return profile
+}
+
 func buildScanPostureSummary(strictEffective bool, requiredScanners []string, requireClamAVDB bool) *scanPostureSummary {
 	return normalizeScanPostureSummary(&scanPostureSummary{
 		StrictEffective:  strictEffective,
@@ -182,10 +190,19 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		trustFail(ztErrorCodeSendInvalidPath)
 		os.Exit(1)
 	}
+	opts.Client = strings.TrimSpace(opts.Client)
+	if opts.Client == "" {
+		printZTErrorCode(ztErrorCodeSendClientRequired)
+		fmt.Println("[BLOCKED] zt send now requires --client <name> and only supports spkg.tgz packets.")
+		fmt.Println("Reason: legacy artifact.zp path was removed.")
+		trustFail(ztErrorCodeSendClientRequired)
+		os.Exit(1)
+	}
+	boundaryDecisionProfile := resolveSendBoundaryDecisionProfile(opts.Profile)
 	fmt.Printf("Processing %s...\n", inputPath)
 	boundaryPolicy, boundaryActive, boundaryErr := resolveTeamBoundaryPolicy(adapters.repoRoot)
 	if boundaryErr != nil {
-		decision := decisionForSendPolicyBlock(trustProfileInternal, "team_boundary.local", "policy_team_boundary_load_failed")
+		decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", "policy_team_boundary_load_failed")
 		emitPolicyDecisionCLI(decision)
 		emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.policy_load_failed", boundaryErr.Error(), decision)
 		printZTErrorCode(ztErrorCodeSendBoundaryPolicy)
@@ -201,7 +218,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, false, ""))
 		if guardErr := enforceTeamBoundaryBreakGlassStartupGuardrail(boundaryPolicy); guardErr != nil {
 			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(guardErr)
-			decision := decisionForSendPolicyBlock(trustProfileInternal, "team_boundary.local", reasonCode)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
 			emitPolicyDecisionCLI(decision)
 			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.break_glass_env_present", guardErr.Error(), decision)
 			printZTErrorCode(errorCode)
@@ -215,7 +232,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		breakGlassUsed, breakGlassReason, boundaryEnforceErr := enforceTeamBoundaryForSend(boundaryPolicy, opts)
 		if boundaryEnforceErr != nil {
 			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(boundaryEnforceErr)
-			decision := decisionForSendPolicyBlock(trustProfileInternal, "team_boundary.local", reasonCode)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
 			emitPolicyDecisionCLI(decision)
 			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.contract_failed", boundaryEnforceErr.Error(), decision)
 			printZTErrorCode(errorCode)
