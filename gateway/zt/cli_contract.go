@@ -21,6 +21,7 @@ const (
 	cliRelaySlackSignature   = "relay slack --packet <packet.spkg.tgz> [--format auto|ja|en] [--webhook-url <url>] [--json]"
 	cliRelayDiscordSignature = "relay discord --packet <packet.spkg.tgz> [--format auto|ja|en] [--webhook-url <url>] [--json]"
 	cliRelayDriveSignature   = "relay drive --packet <packet.spkg.tgz> [--folder <path>] [--format auto|ja|en] [--write-json] [--api-upload] [--drive-folder-id <id>] [--oauth-token <token>]"
+	cliRelayAutoDriveSig     = "relay auto-drive --client <name> --watch-dir <path> [--done-dir <path>] [--error-dir <path>] [--poll-interval <duration>] [--once] [--folder <path>] [--format auto|ja|en] [--write-json] [--api-upload] [--drive-folder-id <id>] [--oauth-token <token>]"
 	cliHelpSignature         = "help [advanced]"
 
 	cliSetupUsage        = "Usage: zt " + cliSetupSignature
@@ -41,6 +42,7 @@ const (
 	cliRelaySlackUsage   = "Usage: zt " + cliRelaySlackSignature
 	cliRelayDiscordUsage = "Usage: zt " + cliRelayDiscordSignature
 	cliRelayDriveUsage   = "Usage: zt " + cliRelayDriveSignature
+	cliRelayAutoDriveUse = "Usage: zt " + cliRelayAutoDriveSig
 
 	setupNextSender   = "Sender: zt send --client <name> <file>"
 	setupNextReceiver = "Receiver: zt verify <packet.spkg.tgz>"
