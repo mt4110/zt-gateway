@@ -371,6 +371,7 @@ func writeDashboardSSOCallbackHTML(w http.ResponseWriter, payload map[string]any
 	if err != nil {
 		raw = []byte(`{"ok":false,"error":"marshal_failed"}`)
 	}
+	encoded := base64.StdEncoding.EncodeToString(raw)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -379,7 +380,11 @@ func writeDashboardSSOCallbackHTML(w http.ResponseWriter, payload map[string]any
 	_, _ = fmt.Fprintf(
 		w,
 		`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>SSO Callback</title></head><body><script>
-const payload = %s;
+const payloadB64 = "%s";
+let payload = { ok: false, error: "payload_decode_failed" };
+try {
+  payload = JSON.parse(atob(payloadB64));
+} catch (e) {}
 try {
   if (window.opener && window.opener !== window) {
     window.opener.postMessage({ type: "zt-sso-result", payload }, window.location.origin);
@@ -387,7 +392,7 @@ try {
 } catch (e) {}
 window.close();
 </script><p>You can close this window.</p></body></html>`,
-		string(raw),
+		encoded,
 	)
 }
 

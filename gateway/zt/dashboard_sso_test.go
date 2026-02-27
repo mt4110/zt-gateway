@@ -111,11 +111,11 @@ func TestDashboardSSOLoginAndCallback(t *testing.T) {
 		t.Fatalf("token endpoint was not called")
 	}
 	body := callbackRec.Body.String()
-	if !strings.Contains(body, `"ok":true`) {
-		t.Fatalf("callback body missing success payload")
+	if !strings.Contains(body, `payloadB64`) {
+		t.Fatalf("callback body missing encoded payload")
 	}
-	if !strings.Contains(body, `"provider":"google"`) {
-		t.Fatalf("callback body missing provider")
+	if !strings.Contains(body, `"zt-sso-result"`) {
+		t.Fatalf("callback body missing postMessage envelope")
 	}
 }
 
