@@ -78,7 +78,7 @@ values ('key-a', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPA', '2
 	req := httptest.NewRequest(http.MethodPost, "/api/keys/key-a/status?tenant_id=tenant-a", bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	handleDashboardKeyStatusAPI(repoRoot, "key-a", rr, req)
+	handleDashboardKeyStatusAPI(repoRoot, "127.0.0.1:8787", "key-a", rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -118,5 +118,96 @@ where tenant_id = 'tenant-a' and action = 'key_status_transition' and reason lik
 	}
 	if !found {
 		t.Fatalf("danger signals missing local_sor_keys_compromised: %#v", snapshot.Danger.Signals)
+	}
+}
+
+func TestV099HandleDashboardKeyStatusAPI_RemoteBindRejectsWithoutToken(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+
+	body := dashboardKeyStatusUpdateRequest{
+		Status: "compromised",
+		Reason: "signature mismatch",
+		Actor:  "ops-user",
+	}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/keys/key-auth/status?tenant_id=tenant-a", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyStatusAPI(repoRoot, "0.0.0.0:8787", "key-auth", rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_token_required" {
+		t.Fatalf("error=%q, want dashboard_mutation_token_required", got)
+	}
+}
+
+func TestV099HandleDashboardKeyStatusAPI_RemoteBindRejectsTokenMismatch(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "token-1")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+
+	body := dashboardKeyStatusUpdateRequest{
+		Status: "compromised",
+		Reason: "signature mismatch",
+		Actor:  "ops-user",
+	}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/keys/key-auth/status?tenant_id=tenant-a", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(dashboardMutationTokenHdr, "token-2")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyStatusAPI(repoRoot, "0.0.0.0:8787", "key-auth", rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_auth_failed" {
+		t.Fatalf("error=%q, want dashboard_mutation_auth_failed", got)
+	}
+}
+
+func TestV099HandleDashboardKeyStatusAPI_RemoteBindAllowsTokenMatch(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "token-1")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+
+	body := dashboardKeyStatusUpdateRequest{
+		Status: "compromised",
+		Reason: "signature mismatch",
+		Actor:  "ops-user",
+	}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/keys/key-auth/status?tenant_id=tenant-a", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(dashboardMutationTokenHdr, "token-1")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyStatusAPI(repoRoot, "0.0.0.0:8787", "key-auth", rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusOK, rr.Body.String())
 	}
 }

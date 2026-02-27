@@ -703,8 +703,10 @@ flowchart LR
 - v0.9.3 残タスク収束（receive trust parity / degraded guardrail / scan posture hardening）設計ドラフトは `docs/architecture/V0.9.3_DESIGN.md`
 - v0.9.7 dashboard通知安全化（外部通知unsafe設定の可視化 + 専用ゲート）は `docs/architecture/V0.9.7_DESIGN.md`
 - v0.9.8 dashboard mutation fail-closed hardening（remote bind時のread-only降格 + token認可 + 専用ゲート）は `docs/architecture/V0.9.8_DESIGN.md`
-- v0.9.8 では `ZT_DASHBOARD_MUTATION_TOKEN` 未設定かつ非loopback bind時に mutation API（lock/incident/alert dispatch/key-repair transition）を 403 fail-closed で拒否する
+- v0.9.9 dashboard mutation auth coverage closure（keys status / key-repair create まで認可対象を拡張）は `docs/architecture/V0.9.9_DESIGN.md`
+- v0.9.9 では `ZT_DASHBOARD_MUTATION_TOKEN` 未設定かつ非loopback bind時に mutation API（lock/incident/alert dispatch/keys status/key-repair create/key-repair transition）を 403 fail-closed で拒否する
 - v0.9.8 の dashboard mutation 認可契約は `scripts/ci/check-v098-dashboard-auth-gate.sh` で独立検知する
+- v0.9.9 の dashboard mutation coverage 契約は `scripts/ci/check-v099-dashboard-mutation-coverage-gate.sh` で独立検知する
 - v0.9.2 Team Boundary 運用は `policy/team_boundary.toml`（`enabled=true` で有効）を使用し、緊急時 override は `--break-glass-reason` を明示する（`ZT_BREAK_GLASS_REASON` 常駐は fail-fast）
 - v0.9.2 では `zt config doctor --json` の `team_boundary_signer_pin_consistency` で signer pin 配布ずれ（`policy_team_boundary_signer_split_brain_detected`）を検知できる
 - v0.9.2 では `team_boundary_break_glass_guardrail` で break-glass 戻し忘れ/ガード弱化（`policy_team_boundary_break_glass_*`）を検知できる

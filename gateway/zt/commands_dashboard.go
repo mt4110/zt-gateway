@@ -205,19 +205,19 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		parts := strings.Split(rest, "/")
 		keyID := strings.TrimSpace(parts[0])
 		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "status") {
-			handleDashboardKeyStatusAPI(repoRoot, keyID, w, r)
+			handleDashboardKeyStatusAPI(repoRoot, listenAddr, keyID, w, r)
 			return
 		}
 		handleDashboardKeyDetailAPI(repoRoot, keyID, w, r)
 	})
 	mux.HandleFunc("/api/key-repair/jobs", func(w http.ResponseWriter, r *http.Request) {
-		handleDashboardKeyRepairJobsAPI(repoRoot, w, r)
+		handleDashboardKeyRepairJobsAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/key-repair/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/key-repair/jobs/")
 		rest = strings.TrimSpace(strings.Trim(rest, "/"))
 		if rest == "" {
-			handleDashboardKeyRepairJobsAPI(repoRoot, w, r)
+			handleDashboardKeyRepairJobsAPI(repoRoot, listenAddr, w, r)
 			return
 		}
 		parts := strings.Split(rest, "/")

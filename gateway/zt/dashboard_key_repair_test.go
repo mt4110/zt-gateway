@@ -77,7 +77,7 @@ values ('key-repair', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPR
 	req := httptest.NewRequest(http.MethodPost, "/api/key-repair/jobs?tenant_id=tenant-a", bytes.NewReader(rawCreate))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	handleDashboardKeyRepairJobsAPI(repoRoot, rr, req)
+	handleDashboardKeyRepairJobsAPI(repoRoot, "127.0.0.1:8787", rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -197,5 +197,96 @@ values ('key-repair-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active',
 	}
 	if got, _ := out["error"].(string); got != "dashboard_mutation_token_required" {
 		t.Fatalf("error=%q, want dashboard_mutation_token_required", got)
+	}
+}
+
+func TestV099HandleDashboardKeyRepairJobsCreate_RemoteBindRejectsWithoutToken(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-repair-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+
+	createReq := dashboardKeyRepairCreateRequest{
+		KeyID:    "key-repair-auth",
+		Trigger:  "manual_investigation",
+		Operator: "ops-user",
+	}
+	rawCreate, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/key-repair/jobs?tenant_id=tenant-a", bytes.NewReader(rawCreate))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyRepairJobsAPI(repoRoot, "0.0.0.0:8787", rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_token_required" {
+		t.Fatalf("error=%q, want dashboard_mutation_token_required", got)
+	}
+}
+
+func TestV099HandleDashboardKeyRepairJobsCreate_RemoteBindRejectsTokenMismatch(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "token-1")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-repair-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+
+	createReq := dashboardKeyRepairCreateRequest{
+		KeyID:    "key-repair-auth",
+		Trigger:  "manual_investigation",
+		Operator: "ops-user",
+	}
+	rawCreate, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/key-repair/jobs?tenant_id=tenant-a", bytes.NewReader(rawCreate))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(dashboardMutationTokenHdr, "token-2")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyRepairJobsAPI(repoRoot, "0.0.0.0:8787", rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_auth_failed" {
+		t.Fatalf("error=%q, want dashboard_mutation_auth_failed", got)
+	}
+}
+
+func TestV099HandleDashboardKeyRepairJobsCreate_RemoteBindAllowsTokenMatch(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "token-1")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-repair-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+
+	createReq := dashboardKeyRepairCreateRequest{
+		KeyID:    "key-repair-auth",
+		Trigger:  "manual_investigation",
+		Operator: "ops-user",
+	}
+	rawCreate, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/key-repair/jobs?tenant_id=tenant-a", bytes.NewReader(rawCreate))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(dashboardMutationTokenHdr, "token-1")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyRepairJobsAPI(repoRoot, "0.0.0.0:8787", rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusCreated, rr.Body.String())
 	}
 }
