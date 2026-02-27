@@ -4,52 +4,56 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
-echo "[1/16] go test ./gateway/zt"
+echo "[1/17] go test ./gateway/zt"
 go test ./gateway/zt -count=1
 
-echo "[2/16] zt contract gate"
+echo "[2/17] zt contract gate"
 bash ./scripts/ci/check-zt-contract-gate.sh
 
-echo "[3/16] control-plane contract gate"
+echo "[3/17] control-plane contract gate"
 bash ./scripts/ci/check-control-plane-contract-gate.sh
 
-echo "[4/16] policy contract gate"
+echo "[4/17] policy contract gate"
 bash ./scripts/ci/check-policy-contract-gate.sh
 
-echo "[5/16] policy rollout gate"
+echo "[5/17] policy rollout gate"
 bash ./scripts/ci/check-policy-rollout-gate.sh
 
-echo "[6/16] policy set gate"
+echo "[6/17] policy set gate"
 bash ./scripts/ci/check-policy-set-gate.sh
 
-echo "[7/16] sync observability gate"
+echo "[7/17] sync observability gate"
 bash ./scripts/ci/check-sync-observability-gate.sh
 
-echo "[8/16] OpenAPI contract gate"
+echo "[8/17] OpenAPI contract gate"
 bash ./scripts/ci/check-openapi-contract-gate.sh
 
-echo "[9/16] v0.7.0 core gate"
+echo "[9/17] v0.7.0 core gate"
 bash ./scripts/ci/check-v070-core-gate.sh
 
-echo "[10/16] v0.8.0 core gate"
+echo "[10/17] v0.8.0 core gate"
 bash ./scripts/ci/check-v080-core-gate.sh
 
-echo "[11/16] v0.9.0 core gate"
+echo "[11/17] v0.9.0 core gate"
 bash ./scripts/ci/check-v090-core-gate.sh
 
-echo "[12/16] v0.9.2 boundary gate"
+echo "[12/17] v0.9.2 boundary gate"
 bash ./scripts/ci/check-v092-boundary-gate.sh
 
-echo "[13/16] go test ./tools/secure-pack/internal/workflows"
+echo "[13/17] v0.9.3 remaining gap gate"
+bash ./scripts/ci/check-v093-remaining-gap-gate.sh
+
+echo "[14/17] go test ./tools/secure-pack/internal/workflows"
 go test ./tools/secure-pack/internal/workflows -count=1
 
-echo "[14/16] fixture supply-chain gate"
+echo "[15/17] fixture supply-chain gate"
 bash ./scripts/ci/check-zt-setup-json-gate.sh
 
-echo "[15/16] actual repo supply-chain gate"
+echo "[16/17] actual repo supply-chain gate"
 if [[ "${SKIP_ACTUAL_GATE:-0}" == "1" ]]; then
   echo "skipped (SKIP_ACTUAL_GATE=1)"
 else
+  echo "[pre-push] actual gate uses gate_ok=true|false as the pass/fail signal (setup_ok/error_code are informational)"
   if [[ "${ZT_PREPUSH_AUTO_EXPECTED_PIN_BOOTSTRAP:-0}" == "1" ]] && \
      [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]] && \
      [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED:-}" ]] && \
@@ -68,7 +72,7 @@ else
   bash ./scripts/ci/check-zt-setup-json-actual-gate.sh
 fi
 
-echo "[16/16] git status summary (manual review before commit/push)"
+echo "[17/17] git status summary (manual review before commit/push)"
 git status --short
 
 echo

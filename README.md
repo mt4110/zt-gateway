@@ -534,6 +534,7 @@ flowchart LR
 - v0.9.0 実装チケット分割は `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`
 - v0.9.1 True Zero Trust hardening 設計は `docs/architecture/V0.9.1_DESIGN.md`
 - v0.9.2 Team/Enterprise Boundary（社内・チーム限定運用）設計ドラフトは `docs/architecture/V0.9.2_DESIGN.md`
+- v0.9.3 残タスク収束（receive trust parity / degraded guardrail / scan posture hardening）設計ドラフトは `docs/architecture/V0.9.3_DESIGN.md`
 - v0.9.2 Team Boundary 運用は `policy/team_boundary.toml`（`enabled=true` で有効）を使用し、緊急時 override は `--break-glass-reason` を明示する（`ZT_BREAK_GLASS_REASON` 常駐は fail-fast）
 - v0.9.2 では `zt config doctor --json` の `team_boundary_signer_pin_consistency` で signer pin 配布ずれ（`policy_team_boundary_signer_split_brain_detected`）を検知できる
 - v0.9.2 では `team_boundary_break_glass_guardrail` で break-glass 戻し忘れ/ガード弱化（`policy_team_boundary_break_glass_*`）を検知できる

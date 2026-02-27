@@ -27,8 +27,8 @@ max_size_mb = 50
 EOF
 
 cat > "${tmp_repo}/policy/scan_policy.toml" <<'EOF'
-required_scanners = []
-require_clamav_db = false
+required_scanners = ["ClamAV"]
+require_clamav_db = true
 EOF
 
 fpr="$(tr -d '\r\n' < "${fixture_dir}/FINGERPRINT.txt")"

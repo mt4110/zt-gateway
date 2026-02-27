@@ -249,6 +249,24 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 			trustFail(errorCode)
 			os.Exit(1)
 		}
+		degradedBreakGlassUsed, degradedBreakGlassReason, degradedErr := enforceTeamBoundaryDegradedScanOverride(boundaryPolicy, opts)
+		if degradedErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(degradedErr)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.contract_failed", degradedErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary contract failed: %v\n", degradedErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		if !breakGlassUsed && degradedBreakGlassUsed {
+			breakGlassUsed = true
+			breakGlassReason = degradedBreakGlassReason
+		}
 		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, breakGlassUsed, breakGlassReason))
 		if breakGlassUsed {
 			fmt.Printf("[WARN] Team boundary break-glass accepted (reason=%q).\n", breakGlassReason)

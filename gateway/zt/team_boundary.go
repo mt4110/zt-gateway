@@ -493,6 +493,43 @@ func enforceTeamBoundaryForSigner(pol teamBoundaryPolicy, signerFingerprint stri
 	return true, breakGlassReason, nil
 }
 
+func enforceTeamBoundaryDegradedScanOverride(pol teamBoundaryPolicy, opts sendOptions) (bool, string, error) {
+	if !opts.AllowDegradedScan {
+		return false, "", nil
+	}
+	violation := "degraded scan override (`--allow-degraded-scan`) is outside team boundary by default"
+	breakGlassReason := resolveBreakGlassReason(opts.BreakGlassReason)
+	if !pol.BreakGlassEnabled {
+		return false, "", &teamBoundaryEnforceError{
+			Code:    teamBoundaryBreakGlassReasonRequiredCode,
+			Message: violation + " (break-glass is disabled)",
+		}
+	}
+	if !isBreakGlassGuardrailStrict(pol) {
+		return false, "", &teamBoundaryEnforceError{
+			Code:    teamBoundaryBreakGlassGuardrailWeakCode,
+			Message: violation + " (" + breakGlassGuardrailWeakMessage(pol) + ")",
+		}
+	}
+	if pol.BreakGlassRequireReason && breakGlassReason == "" {
+		return false, "", &teamBoundaryEnforceError{
+			Code:    teamBoundaryBreakGlassReasonRequiredCode,
+			Message: violation + " (break-glass reason is required: --break-glass-reason)",
+		}
+	}
+	if err := validateBreakGlassReasonGuardrails(pol, breakGlassReason, time.Now().UTC()); err != nil {
+		reasonCode := classifyBreakGlassGuardrailError(err)
+		if reasonCode != teamBoundaryBreakGlassTokenExpiredCode {
+			reasonCode = teamBoundaryBreakGlassTokenInvalidCode
+		}
+		return false, "", &teamBoundaryEnforceError{
+			Code:    reasonCode,
+			Message: violation + " (" + err.Error() + ")",
+		}
+	}
+	return true, breakGlassReason, nil
+}
+
 type breakGlassReasonToken struct {
 	IncidentID string
 	ApprovedBy string

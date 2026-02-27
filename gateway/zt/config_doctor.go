@@ -141,6 +141,66 @@ func runConfigDoctor(repoRoot string, args []string) error {
 		result.Resolved.PolicyNextSyncAt = policyHealth.NextSyncAt
 		result.Resolved.PolicySyncError = policyHealth.SyncError
 	}
+	scanProfileSelection, scanProfileErr := resolveTrustProfilePolicySelection(repoRoot, trustProfileInternal)
+	if scanProfileErr != nil {
+		scanProfileSelection = trustProfilePolicySelection{
+			Name:                trustProfileInternal,
+			Source:              "policy/default",
+			ExtensionPolicyPath: filepath.Join(repoRoot, "policy", "extension_policy.toml"),
+			ScanPolicyPath:      filepath.Join(repoRoot, "policy", "scan_policy.toml"),
+		}
+	}
+	appendSetupCheckAsDoctor := func(c setupCheck) {
+		switch c.Status {
+		case "fail":
+			result.Failures++
+		case "warn":
+			result.Warnings++
+		}
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    c.Name,
+			Status:  c.Status,
+			Code:    c.Code,
+			Message: c.Message,
+		})
+	}
+	var scanPol *scanPolicy
+	if parsedScanPol, err := loadScanPolicy(scanProfileSelection.ScanPolicyPath); err != nil {
+		result.Warnings++
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    "scan_policy",
+			Status:  "warn",
+			Code:    scanPosturePolicyUnavailableCode,
+			Message: fmt.Sprintf("failed to load %s (%v)", scanProfileSelection.ScanPolicyPath, err),
+		})
+		result.Warnings++
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    scanPostureRequiredScannersCheckName,
+			Status:  "warn",
+			Code:    scanPosturePolicyUnavailableCode,
+			Message: "scan policy unavailable",
+		})
+		result.Warnings++
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    scanPostureClamAVDBStrictCheckName,
+			Status:  "warn",
+			Code:    scanPosturePolicyUnavailableCode,
+			Message: "scan policy unavailable",
+		})
+	} else {
+		scanPol = &parsedScanPol
+		result.Checks = append(result.Checks, doctorCheck{
+			Name:    "scan_policy",
+			Status:  "ok",
+			Message: fmt.Sprintf("profile=%s required_scanners=%v require_clamav_db=%t source=%s", scanProfileSelection.Name, scanPol.RequiredScanners, scanPol.RequireClamAVDB, scanPol.Source),
+		})
+		scanPostureChecks, _ := buildScanPosturePolicyChecks(scanProfileSelection.Name, *scanPol)
+		for _, c := range scanPostureChecks {
+			appendSetupCheckAsDoctor(c)
+		}
+	}
+	boundaryPostureCheck, _ := buildScanPostureBoundaryCheck(repoRoot)
+	appendSetupCheckAsDoctor(boundaryPostureCheck)
 
 	result.Checks = append(result.Checks, doctorCheck{
 		Name:    "auto_sync_resolution",

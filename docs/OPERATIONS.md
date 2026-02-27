@@ -551,7 +551,8 @@ actual repo ゲート（実artifact直検査）:
 - ローカル pre-push では `ZT_PREPUSH_AUTO_EXPECTED_PIN_BOOTSTRAP=1` を付けると、
   `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS*` 未設定時に `ROOT_PUBKEY.asc` から expected pin を一時自動設定できる（one-trust 簡易運用）
 - `ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP=1` はローカル簡易運用向け（同一repo起点のため zero-trust 強度は下がる）
-- `zt setup --json` の全体 `ok` は参考値（supply-chain 以外の失敗に影響されるため）
+- 判定優先順位は `gate必須項目 > zt setup --json 全体ok`（`setup_ok` / `error_code` は informational）
+- スクリプト出力の `gate_ok=true|false|skipped` を一次判定に使う（`skipped` は必須ファイル欠落時）
 - `resolved.pin_match_count >= 1` を必須化
 - `ZT_BIN=/path/to/linux-zt` を指定すると、`go build` の代わりに既存バイナリで実行可能（Ubuntu コンテナ検証用）
 

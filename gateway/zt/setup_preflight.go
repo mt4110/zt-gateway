@@ -71,7 +71,8 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 	if strings.TrimSpace(scanPolicyPath) == "" {
 		scanPolicyPath = filepath.Join(repoRoot, "policy", "scan_policy.toml")
 	}
-	scanPol, err := loadScanPolicy(scanPolicyPath)
+	var scanPol *scanPolicy
+	parsedScanPol, err := loadScanPolicy(scanPolicyPath)
 	if err != nil {
 		out.Checks = append(out.Checks, setupCheck{
 			Name:    "scan_policy",
@@ -80,6 +81,7 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 		})
 		out.QuickFixes = append(out.QuickFixes, "Fix `policy/scan_policy.toml` syntax; `zt send` blocks on scan policy parse errors (fail-closed).")
 	} else {
+		scanPol = &parsedScanPol
 		out.Checks = append(out.Checks, setupCheck{
 			Name:    "scan_policy",
 			Status:  "ok",
@@ -93,6 +95,30 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 			}
 		}
 	}
+	if scanPol == nil {
+		out.Checks = append(out.Checks,
+			setupCheck{
+				Name:    scanPostureRequiredScannersCheckName,
+				Status:  "fail",
+				Code:    scanPosturePolicyUnavailableCode,
+				Message: "scan policy unavailable",
+			},
+			setupCheck{
+				Name:    scanPostureClamAVDBStrictCheckName,
+				Status:  "fail",
+				Code:    scanPosturePolicyUnavailableCode,
+				Message: "scan policy unavailable",
+			},
+		)
+		out.QuickFixes = append(out.QuickFixes, "Restore parseable scan policy artifacts before running `zt send`.")
+	} else {
+		scanPostureChecks, scanPostureFixes := buildScanPosturePolicyChecks(selection.Name, *scanPol)
+		out.Checks = append(out.Checks, scanPostureChecks...)
+		out.QuickFixes = append(out.QuickFixes, scanPostureFixes...)
+	}
+	boundaryPostureCheck, boundaryPostureFixes := buildScanPostureBoundaryCheck(repoRoot)
+	out.Checks = append(out.Checks, boundaryPostureCheck)
+	out.QuickFixes = append(out.QuickFixes, boundaryPostureFixes...)
 
 	recipCheck, recipClientCheck, recipFixes := buildSecurePackRecipientsSetupChecks(repoRoot)
 	out.Checks = append(out.Checks, recipCheck, recipClientCheck)

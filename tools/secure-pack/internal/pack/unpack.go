@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/algo-artis/secure-pack/internal/gpg"
@@ -13,12 +14,21 @@ import (
 
 // UnpackOptions defines options for unpacking a packet
 type UnpackOptions struct {
-	InputPath string
-	OutDir    string
+	InputPath                 string
+	OutDir                    string
+	AllowedSignerFingerprints []string
 }
 
 // UnpackPacket handles the verification and extraction of a secure packet
 func UnpackPacket(opts UnpackOptions) (string, error) {
+	allowedSignerFingerprints, err := normalizeUnpackAllowedFingerprints(opts.AllowedSignerFingerprints)
+	if err != nil {
+		return "", fmt.Errorf("signer allowlist invalid: %w", err)
+	}
+	if len(allowedSignerFingerprints) == 0 {
+		return "", fmt.Errorf("signer allowlist is required for unpack")
+	}
+
 	// 1. Create temp workspace
 	tmpDir, err := os.MkdirTemp("", "secure-unpack-*")
 	if err != nil {
@@ -61,16 +71,14 @@ func UnpackPacket(opts UnpackOptions) (string, error) {
 	}
 
 	// 4. Verify Signature
-	// We need a GPG wrapper instance
 	gp := gpg.New("") // User default keyring
-	if err := gp.VerifyFile(sigFile, encFile); err != nil {
+	signerFingerprint, err := gp.VerifyFileAndSigner(sigFile, encFile)
+	if err != nil {
 		return "", fmt.Errorf("signature verification failed: %w", err)
 	}
-	// TODO: Check if signer is in ALLOWLIST?
-	// Existing unsign.sh checks SIGNERS_ALLOWLIST.txt.
-	// We should probably port that logic or simplify.
-	// For now, if VerifyFile passes (meaning signed by a trusted public key in user's keyring), that might be enough or we check specific fingerprints.
-	// Let's implement basics first.
+	if !fingerprintAllowed(signerFingerprint, allowedSignerFingerprints) {
+		return "", fmt.Errorf("packet signer fingerprint mismatch: got %s, allowed=%s", signerFingerprint, strings.Join(allowedSignerFingerprints, ","))
+	}
 
 	// 5. Verify SHA256
 	expectedSHA, err := parseSHAFile(shaFile)
@@ -148,6 +156,56 @@ func parseSHAFile(path string) (string, error) {
 		return "", fmt.Errorf("empty sha file")
 	}
 	return parts[0], nil
+}
+
+func normalizeUnpackAllowedFingerprints(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		fp, err := normalizeUnpackFingerprintHex(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fingerprint %q: %w", strings.TrimSpace(v), err)
+		}
+		if _, ok := seen[fp]; ok {
+			continue
+		}
+		seen[fp] = struct{}{}
+		out = append(out, fp)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func normalizeUnpackFingerprintHex(s string) (string, error) {
+	fp := strings.ToUpper(strings.TrimSpace(s))
+	fp = strings.ReplaceAll(fp, " ", "")
+	if fp == "" {
+		return "", fmt.Errorf("empty fingerprint")
+	}
+	if len(fp) != 40 && len(fp) != 64 {
+		return "", fmt.Errorf("fingerprint must be 40 or 64 hex chars")
+	}
+	for _, r := range fp {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'A' && r <= 'F':
+		default:
+			return "", fmt.Errorf("fingerprint must be hex")
+		}
+	}
+	return fp, nil
+}
+
+func fingerprintAllowed(actual string, allowed []string) bool {
+	for _, fp := range allowed {
+		if actual == fp {
+			return true
+		}
+	}
+	return false
 }
 
 // VerifyPacketWithSigner verifies a secure packet and returns signer fingerprint.

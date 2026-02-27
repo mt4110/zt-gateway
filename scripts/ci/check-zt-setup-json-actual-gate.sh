@@ -44,6 +44,7 @@ done
 
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "zt setup --json actual repo gate skipped: missing supply-chain files in tools/secure-pack (${missing[*]})"
+  echo "gate_ok=skipped"
   exit 0
 fi
 
@@ -52,17 +53,20 @@ if [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]]; then
   if [[ -n "${expected_pins}" ]]; then
     if ! command -v gpg >/dev/null 2>&1; then
       echo "zt setup --json actual repo gate failed: gpg is required to resolve ROOT_PUBKEY.asc fingerprint for expected-pin bootstrap" >&2
+      echo "gate_ok=false" >&2
       exit 1
     fi
     resolved_fpr="$(resolve_root_fpr_from_key)"
     if [[ -z "${resolved_fpr}" ]]; then
       echo "zt setup --json actual repo gate failed: could not resolve fingerprint from ROOT_PUBKEY.asc" >&2
+      echo "gate_ok=false" >&2
       exit 1
     fi
     if ! contains_fpr "${resolved_fpr}" "${expected_pins}"; then
       echo "zt setup --json actual repo gate failed: ROOT_PUBKEY.asc fingerprint does not match ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED" >&2
       echo "resolved_fingerprint=$(normalize_fpr "${resolved_fpr}")" >&2
       echo "expected_pins=${expected_pins}" >&2
+      echo "gate_ok=false" >&2
       exit 1
     fi
     export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${expected_pins}"
@@ -70,11 +74,13 @@ if [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]]; then
   elif [[ "${ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP:-0}" == "1" ]]; then
     if ! command -v gpg >/dev/null 2>&1; then
       echo "zt setup --json actual repo gate failed: gpg is required when ZT_SECURE_PACK_ALLOW_LOCAL_PIN_BOOTSTRAP=1" >&2
+      echo "gate_ok=false" >&2
       exit 1
     fi
     resolved_fpr="$(resolve_root_fpr_from_key)"
     if [[ -z "${resolved_fpr}" ]]; then
       echo "zt setup --json actual repo gate failed: could not resolve fingerprint from ROOT_PUBKEY.asc" >&2
+      echo "gate_ok=false" >&2
       exit 1
     fi
     export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="$(normalize_fpr "${resolved_fpr}")"
@@ -82,6 +88,7 @@ if [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]]; then
   else
     echo "zt setup --json actual repo gate failed: ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS is required when tools/secure-pack supply-chain files exist" >&2
     echo "Hint: set ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED in CI and let this gate verify+bootstrap it, or export ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS directly." >&2
+    echo "gate_ok=false" >&2
     exit 1
   fi
 fi
@@ -99,6 +106,7 @@ zt_bin_override="${ZT_BIN:-}"
 if [[ -n "${zt_bin_override}" ]]; then
   if [[ ! -x "${zt_bin_override}" ]]; then
     echo "ZT_BIN is set but not executable: ${zt_bin_override}" >&2
+    echo "gate_ok=false" >&2
     exit 1
   fi
   zt_bin="${zt_bin_override}"
@@ -116,6 +124,7 @@ fi
 
 if [[ ! -s "${json_out}" ]]; then
   echo "zt setup --json actual repo gate failed: no JSON output captured" >&2
+  echo "gate_ok=false" >&2
   exit 1
 fi
 
@@ -139,18 +148,36 @@ actual_fpr = resolved.get("actual_root_fingerprint")
 pin_source = resolved.get("pin_source")
 profile = resolved.get("profile")
 
+gate_errors = []
 if bad:
-    raise SystemExit("zt setup actual repo gate failed checks: " + ", ".join(f"{k}={v}" for k, v in bad))
+    gate_errors.append(
+        "required checks not ok: " + ", ".join(f"{k}={v}" for k, v in bad)
+    )
 if pin_match_count < 1:
-    raise SystemExit(
-        "zt setup actual repo gate failed: resolved.pin_match_count < 1 "
+    gate_errors.append(
+        "resolved.pin_match_count < 1 "
         f"(pin_match_count={pin_match_count}, actual_root_fingerprint={actual_fpr}, pin_source={pin_source})"
     )
 if profile != "internal":
-    raise SystemExit(f"zt setup actual repo gate failed: resolved.profile={profile!r} (want 'internal')")
+    gate_errors.append(f"resolved.profile={profile!r} (want 'internal')")
+
+if gate_errors:
+    print("zt setup --json actual repo gate FAILED")
+    print("gate_ok=false")
+    for err in gate_errors:
+        print(f"gate_error={err}")
+    print(
+        f"setup_ok={data.get('ok')} error_code={data.get('error_code')} (informational)"
+    )
+    print(f"actual_root_fingerprint={actual_fpr}")
+    print(f"pin_source={pin_source}")
+    print(f"pin_match_count={pin_match_count}")
+    print(f"profile={profile}")
+    raise SystemExit(1)
 
 print("zt setup --json actual repo gate OK")
-print(f"setup_ok={data.get('ok')} error_code={data.get('error_code')}")
+print("gate_ok=true")
+print(f"setup_ok={data.get('ok')} error_code={data.get('error_code')} (informational)")
 print(f"actual_root_fingerprint={actual_fpr}")
 print(f"pin_source={pin_source}")
 print(f"pin_match_count={pin_match_count}")
