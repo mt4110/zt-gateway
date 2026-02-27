@@ -258,6 +258,22 @@ zt sync --force --json
 - `environment.os` / `environment.package_source` / `environment.pin_source`
 - `fix_candidates[]`（優先順の修復コマンド候補）
 
+v0.9.4 追加（actual gate strict）:
+
+- `ZT_ACTUAL_GATE_STRICT=1` で `setup_ok=true` を必須化し、trust-critical check fail を gate fail として扱う
+- root pin は `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` から bootstrap 可能
+- signer pin は `ZT_SECURE_PACK_SIGNER_FINGERPRINTS_EXPECTED` から bootstrap 可能
+
+推奨（CI 変数 bootstrap）:
+
+```bash
+# root pin expected
+bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "<ROOT_FPR_40HEX[,OLD_FPR_40HEX]>"
+
+# signer pin expected
+bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --expected-pins "<SIGNER_FPR_40HEX[,NEXT_FPR_40HEX]>"
+```
+
 ## break-glass unlock 運用（trusted signer 必須）
 
 `unlock token` は `ZT_BREAKGLASS_TRUSTED_SIGNERS` が未設定だと有効化されません（fail-closed）。

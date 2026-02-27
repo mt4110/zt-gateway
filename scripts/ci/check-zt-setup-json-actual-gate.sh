@@ -14,6 +14,48 @@ normalize_fpr() {
   printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]' | tr -cd '0-9A-F'
 }
 
+normalize_signer_pins() {
+  local raw token normalized
+  raw="$(printf '%s' "${1:-}" | tr ',;\n\r\t' '      ')"
+  local -a out=()
+  local seen=""
+  for token in ${raw}; do
+    normalized="$(normalize_fpr "${token}")"
+    if [[ -z "${normalized}" ]]; then
+      continue
+    fi
+    if [[ ${#normalized} -ne 40 && ${#normalized} -ne 64 ]]; then
+      echo "invalid signer fingerprint length (want 40 or 64 hex): ${token}" >&2
+      return 1
+    fi
+    if [[ ",${seen}," == *",${normalized},"* ]]; then
+      continue
+    fi
+    out+=("${normalized}")
+    seen+="${normalized},"
+  done
+  if [[ ${#out[@]} -eq 0 ]]; then
+    return 1
+  fi
+  local IFS=,
+  printf '%s' "${out[*]}"
+}
+
+resolve_signer_pins_from_allowlist() {
+  local allowlist_path="${repo_root}/tools/secure-pack/SIGNERS_ALLOWLIST.txt"
+  if [[ ! -f "${allowlist_path}" ]]; then
+    return 1
+  fi
+  awk '
+    {
+      line=$0
+      sub(/#.*/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line != "") print line
+    }
+  ' "${allowlist_path}" | tr '\n' ','
+}
+
 resolve_root_fpr_from_key() {
   gpg --show-keys --with-colons "${tools_dir}/ROOT_PUBKEY.asc" | awk -F: '/^fpr:/ {print $10; exit}'
 }
@@ -93,6 +135,33 @@ if [[ -z "${ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS:-}" ]]; then
   fi
 fi
 
+if [[ -z "${ZT_SECURE_PACK_SIGNER_FINGERPRINTS:-}" ]]; then
+  expected_signer_pins="${ZT_SECURE_PACK_SIGNER_FINGERPRINTS_EXPECTED:-}"
+  if [[ -n "${expected_signer_pins}" ]]; then
+    normalized_signer_pins="$(normalize_signer_pins "${expected_signer_pins}")" || {
+      echo "zt setup --json actual repo gate failed: invalid ZT_SECURE_PACK_SIGNER_FINGERPRINTS_EXPECTED format" >&2
+      echo "gate_ok=false" >&2
+      exit 1
+    }
+    export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="${normalized_signer_pins}"
+    echo "[actual-gate] signer pin bootstrap source=ZT_SECURE_PACK_SIGNER_FINGERPRINTS_EXPECTED"
+  elif [[ "${ZT_SECURE_PACK_ALLOW_LOCAL_SIGNER_PIN_BOOTSTRAP:-0}" == "1" ]]; then
+    resolved_signer_raw="$(resolve_signer_pins_from_allowlist || true)"
+    if [[ -z "${resolved_signer_raw}" ]]; then
+      echo "zt setup --json actual repo gate failed: could not resolve signer pins from tools/secure-pack/SIGNERS_ALLOWLIST.txt" >&2
+      echo "gate_ok=false" >&2
+      exit 1
+    fi
+    normalized_signer_pins="$(normalize_signer_pins "${resolved_signer_raw}")" || {
+      echo "zt setup --json actual repo gate failed: invalid signer pins in local allowlist" >&2
+      echo "gate_ok=false" >&2
+      exit 1
+    }
+    export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="${normalized_signer_pins}"
+    echo "[actual-gate] WARN local signer pin bootstrap enabled (ZT_SECURE_PACK_ALLOW_LOCAL_SIGNER_PIN_BOOTSTRAP=1). Prefer expected signer pin bootstrap for zero-trust CI."
+  fi
+fi
+
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "${tmp_dir}"
@@ -130,6 +199,7 @@ fi
 
 python3 - "${json_out}" <<'PY'
 import json, sys
+import os
 
 path = sys.argv[1]
 with open(path, "r", encoding="utf-8") as f:
@@ -160,6 +230,21 @@ if pin_match_count < 1:
     )
 if profile != "internal":
     gate_errors.append(f"resolved.profile={profile!r} (want 'internal')")
+
+strict = os.getenv("ZT_ACTUAL_GATE_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
+if strict:
+    if data.get("ok") is not True:
+        gate_errors.append(
+            f"strict mode: setup_ok={data.get('ok')} error_code={data.get('error_code')}"
+        )
+    strict_checks = [
+        "secure_pack_root_pubkey_fingerprint",
+        "team_boundary_signer_pin_consistency",
+    ]
+    for name in strict_checks:
+        status = checks.get(name)
+        if status != "ok":
+            gate_errors.append(f"strict mode: {name}={status} (want ok)")
 
 if gate_errors:
     print("zt setup --json actual repo gate FAILED")
