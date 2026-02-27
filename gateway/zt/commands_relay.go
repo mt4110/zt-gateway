@@ -85,7 +85,11 @@ func runRelaySlackCommand(args []string) error {
 		}
 	}
 	if strings.TrimSpace(webhookURL) != "" {
-		if err := postWebhookJSON(webhookURL, body); err != nil {
+		normalizedURL, err := normalizeRelayWebhookURL("slack", webhookURL)
+		if err != nil {
+			return err
+		}
+		if err := postWebhookJSON(normalizedURL, body); err != nil {
 			return err
 		}
 		fmt.Println("[RELAY] Slack webhook posted.")
@@ -128,7 +132,11 @@ func runRelayDiscordCommand(args []string) error {
 		}
 	}
 	if strings.TrimSpace(webhookURL) != "" {
-		if err := postWebhookJSON(webhookURL, body); err != nil {
+		normalizedURL, err := normalizeRelayWebhookURL("discord", webhookURL)
+		if err != nil {
+			return err
+		}
+		if err := postWebhookJSON(normalizedURL, body); err != nil {
 			return err
 		}
 		fmt.Println("[RELAY] Discord webhook posted.")
@@ -654,6 +662,47 @@ func postWebhookJSON(url string, payload []byte) error {
 		return fmt.Errorf("webhook failed: status=%s body=%s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func normalizeRelayWebhookURL(channel, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("webhook URL is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() {
+		return "", fmt.Errorf("webhook URL must be absolute HTTPS URL")
+	}
+	if strings.ToLower(strings.TrimSpace(u.Scheme)) != "https" {
+		return "", fmt.Errorf("webhook URL must use https")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("webhook URL must not include user info")
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if !relayWebhookHostAllowed(channel, host) {
+		return "", fmt.Errorf("webhook host is not allowed for channel %s", strings.TrimSpace(channel))
+	}
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func relayWebhookHostAllowed(channel, host string) bool {
+	if host == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "slack":
+		return relayWebhookHostMatches(host, "slack.com") || relayWebhookHostMatches(host, "slack-gov.com")
+	case "discord":
+		return relayWebhookHostMatches(host, "discord.com") || relayWebhookHostMatches(host, "discordapp.com")
+	default:
+		return false
+	}
+}
+
+func relayWebhookHostMatches(host, base string) bool {
+	return host == base || strings.HasSuffix(host, "."+base)
 }
 
 func copyRelayFile(src, dst string) error {

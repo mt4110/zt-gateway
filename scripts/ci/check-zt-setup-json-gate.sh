@@ -78,8 +78,13 @@ local_sor_db_path="${tmp_repo}/.zt-spool/local-sor-gate.db"
   ZT_SECURE_PACK_SIGNER_FINGERPRINTS="${fpr}" \
   ZT_LOCAL_SOR_MASTER_KEY_B64="${local_sor_key}" \
   ZT_LOCAL_SOR_DB_PATH="${local_sor_db_path}" \
-  "${zt_bin}" setup --json > "${json_out}"
+  "${zt_bin}" setup --json > "${json_out}" || true
 )
+
+if [[ ! -s "${json_out}" ]]; then
+  echo "zt setup --json fixture gate failed: no JSON output captured" >&2
+  exit 1
+fi
 
 python3 - "${json_out}" <<'PY'
 import json, sys
