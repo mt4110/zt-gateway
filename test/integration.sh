@@ -58,6 +58,25 @@ done
 
 PACKET_GLOB="bundle_${CLIENT_NAME}_*.spkg.tgz"
 
+compute_break_glass_expiry_rfc3339() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) + timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+PY
+        return 0
+    fi
+    if date -u -d '+30 minutes' '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+        date -u -d '+30 minutes' '+%Y-%m-%dT%H:%M:%SZ'
+        return 0
+    fi
+    if date -u -v+30M '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+        date -u -v+30M '+%Y-%m-%dT%H:%M:%SZ'
+        return 0
+    fi
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
 # Clean up previous artifacts
 rm -rf artifact.zp
 rm -f bundle_*.spkg.tgz
@@ -163,13 +182,15 @@ EOF
 # Create dummy files
 echo "This is safe content." > safe.txt
 echo "Executable content" > blocked.exe
+BREAK_GLASS_EXPIRES_AT="$(compute_break_glass_expiry_rfc3339)"
+BREAK_GLASS_REASON="incident=ci-smoketest-${CLIENT_NAME};approved_by=ci;expires_at=${BREAK_GLASS_EXPIRES_AT}"
 
 # Case 1: Safe File
 echo "[TEST] Case 1: Sending safe.txt (Should Succeed)"
 # Assuming 'nix run' is too slow for tight loop dev, but good for CI.
 # We will use 'go run' for speed if acceptable, but let's stick to 'nix run' to match "Goal" criteria.
 # To speed up local runs, we can use the binaries directly if built, but 'nix run' is the contract.
-nix run .#zt -- send --client "$CLIENT_NAME" --allow-degraded-scan --force-public safe.txt
+nix run .#zt -- send --client "$CLIENT_NAME" --allow-degraded-scan --break-glass-reason "$BREAK_GLASS_REASON" --force-public safe.txt
 
 set -- $PACKET_GLOB
 if [ -e "$1" ]; then
@@ -191,7 +212,7 @@ rm -f bundle_*.spkg.tgz
 # Case 2: Blocked File
 echo "[TEST] Case 2: Sending blocked.exe (Should Fail with Exit 1)"
 set +e
-nix run .#zt -- send --client "$CLIENT_NAME" --allow-degraded-scan --force-public blocked.exe
+nix run .#zt -- send --client "$CLIENT_NAME" --allow-degraded-scan --break-glass-reason "$BREAK_GLASS_REASON" --force-public blocked.exe
 EXIT_CODE=$?
 set -e
 
