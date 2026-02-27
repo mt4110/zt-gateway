@@ -10,10 +10,10 @@
 - 実装手順
 - マイルストーンとExit Criteria
 
-関連:
+関連（履歴資料）:
 
-- `docs/STRATEGY_PLAN_V1.0.md`
-- `docs/COMPETITIVE_EVALUATION_V1.0.md`
+- Strategy Plan v1.0
+- Competitive Evaluation v1.0
 
 ## 1. 設計原則 (固定)
 
