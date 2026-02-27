@@ -173,6 +173,39 @@ func TestResolveDashboardControlPlaneClient_IncludesBearerToken(t *testing.T) {
 	}
 }
 
+func TestResolveDashboardControlPlaneClient_CpEventsFastPathPreservesConfigBearer(t *testing.T) {
+	repoRoot := t.TempDir()
+	cfgPath := filepath.Join(repoRoot, "policy", "zt_client.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	cfg := "control_plane_url='https://cp.example'\nbearer_token='jwt-token'\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	prev := cpEvents
+	cpEvents = &eventSpool{
+		cfg: controlPlaneConfig{
+			BaseURL: "https://cp.example",
+			APIKey:  "",
+		},
+	}
+	t.Cleanup(func() {
+		cpEvents = prev
+	})
+
+	baseURL, apiKey, bearer := resolveDashboardControlPlaneClient(repoRoot)
+	if baseURL != "https://cp.example" {
+		t.Fatalf("baseURL = %q, want https://cp.example", baseURL)
+	}
+	if apiKey != "" {
+		t.Fatalf("apiKey = %q, want empty", apiKey)
+	}
+	if bearer != "jwt-token" {
+		t.Fatalf("bearer = %q, want jwt-token", bearer)
+	}
+}
+
 func TestCollectDashboardAlertStatus_IncludesAnomalyFalsePositiveSignal(t *testing.T) {
 	t.Setenv("ZT_DASHBOARD_ANOMALY_FALSE_POSITIVE_THRESHOLD", "0.20")
 	alerts := collectDashboardAlertStatus(

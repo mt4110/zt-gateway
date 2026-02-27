@@ -30,6 +30,7 @@ type controlPlaneSCIMSyncManager struct {
 
 type controlPlaneSCIMMappedUser struct {
 	Subject   string   `json:"subject"`
+	Issuer    string   `json:"issuer,omitempty"`
 	Role      string   `json:"role"`
 	TenantID  string   `json:"tenant_id,omitempty"`
 	Groups    []string `json:"groups,omitempty"`
@@ -48,6 +49,7 @@ type controlPlaneSCIMSyncGroup struct {
 
 type controlPlaneSCIMSyncUser struct {
 	Subject  string   `json:"subject"`
+	Issuer   string   `json:"issuer,omitempty"`
 	Role     string   `json:"role,omitempty"`
 	TenantID string   `json:"tenant_id,omitempty"`
 	Groups   []string `json:"groups,omitempty"`
@@ -105,7 +107,23 @@ func (m *controlPlaneSCIMSyncManager) loadState() error {
 	}
 	m.lastSyncedAt = strings.TrimSpace(state.LastSyncedAt)
 	if len(state.Users) > 0 {
-		m.users = state.Users
+		normalized := make(map[string]controlPlaneSCIMMappedUser, len(state.Users))
+		for rawKey, user := range state.Users {
+			subject := strings.TrimSpace(user.Subject)
+			if subject == "" {
+				subject = strings.TrimSpace(rawKey)
+			}
+			if subject == "" {
+				continue
+			}
+			key := strings.TrimSpace(rawKey)
+			if strings.Contains(key, "\x1f") {
+				normalized[key] = user
+				continue
+			}
+			normalized[controlPlaneSCIMPrincipalKey(subject, user.Issuer)] = user
+		}
+		m.users = normalized
 	}
 	return nil
 }
@@ -155,6 +173,7 @@ func (m *controlPlaneSCIMSyncManager) applySync(req controlPlaneSCIMSyncRequest,
 		if subject == "" {
 			continue
 		}
+		issuer := strings.TrimSpace(user.Issuer)
 		roles := make([]string, 0, 1+len(user.Groups))
 		if role, ok := parseDashboardRole(user.Role); ok {
 			roles = append(roles, role)
@@ -175,8 +194,9 @@ func (m *controlPlaneSCIMSyncManager) applySync(req controlPlaneSCIMSyncRequest,
 			role = dashboardRoleViewer
 		}
 		subjects = append(subjects, subject)
-		users[subject] = controlPlaneSCIMMappedUser{
+		users[controlPlaneSCIMPrincipalKey(subject, issuer)] = controlPlaneSCIMMappedUser{
 			Subject:   subject,
+			Issuer:    issuer,
 			Role:      role,
 			TenantID:  strings.TrimSpace(user.TenantID),
 			Groups:    groups,
@@ -235,7 +255,15 @@ func reduceSCIMDashboardRole(in []string) string {
 	return best
 }
 
-func (m *controlPlaneSCIMSyncManager) resolveUser(subject string) (controlPlaneSCIMMappedUser, bool) {
+func controlPlaneSCIMPrincipalKey(subject, issuer string) string {
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return ""
+	}
+	return strings.TrimSpace(issuer) + "\x1f" + subject
+}
+
+func (m *controlPlaneSCIMSyncManager) resolveUser(subject, issuer string) (controlPlaneSCIMMappedUser, bool) {
 	if m == nil {
 		return controlPlaneSCIMMappedUser{}, false
 	}
@@ -243,9 +271,10 @@ func (m *controlPlaneSCIMSyncManager) resolveUser(subject string) (controlPlaneS
 	if subject == "" {
 		return controlPlaneSCIMMappedUser{}, false
 	}
+	issuer = strings.TrimSpace(issuer)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	item, ok := m.users[subject]
+	item, ok := m.users[controlPlaneSCIMPrincipalKey(subject, issuer)]
 	if !ok {
 		return controlPlaneSCIMMappedUser{}, false
 	}
@@ -268,7 +297,12 @@ func (s *server) applySCIMMapping(ctx controlPlaneAuthContext) controlPlaneAuthC
 	if s == nil || s.scim == nil {
 		return ctx
 	}
-	mapped, ok := s.scim.resolveUser(ctx.Subject)
+	mapped, ok := s.scim.resolveUser(ctx.Subject, ctx.Issuer)
+	if !ok && s.sso != nil && strings.TrimSpace(ctx.Issuer) != "" &&
+		strings.TrimSpace(ctx.Issuer) == strings.TrimSpace(s.sso.Issuer) {
+		// Backward-compatible fallback for legacy mappings that predate issuer scoping.
+		mapped, ok = s.scim.resolveUser(ctx.Subject, "")
+	}
 	if !ok {
 		return ctx
 	}

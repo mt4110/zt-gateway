@@ -187,7 +187,14 @@ func fetchDashboardJSON(rawURL string, headers map[string]string) (map[string]an
 func resolveDashboardControlPlaneClient(repoRoot string) (string, string, string) {
 	if cpEvents != nil {
 		if strings.TrimSpace(cpEvents.cfg.BaseURL) != "" {
-			return strings.TrimSpace(cpEvents.cfg.BaseURL), strings.TrimSpace(cpEvents.cfg.APIKey), strings.TrimSpace(os.Getenv("ZT_CONTROL_PLANE_BEARER_TOKEN"))
+			bearerToken := strings.TrimSpace(os.Getenv("ZT_CONTROL_PLANE_BEARER_TOKEN"))
+			if bearerToken == "" {
+				cfg, err := loadZTClientConfig(repoRoot)
+				if err == nil {
+					bearerToken, _ = resolveControlPlaneBearerToken(cfg)
+				}
+			}
+			return strings.TrimSpace(cpEvents.cfg.BaseURL), strings.TrimSpace(cpEvents.cfg.APIKey), bearerToken
 		}
 	}
 	cfg, err := loadZTClientConfig(repoRoot)

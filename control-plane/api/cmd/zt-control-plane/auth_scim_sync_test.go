@@ -23,7 +23,7 @@ func TestAuthenticateControlPlaneRequest_SCIMRoleMappingApplied(t *testing.T) {
 			{GroupID: "g-sec-admin", Role: dashboardRoleAdmin},
 		},
 		Users: []controlPlaneSCIMSyncUser{
-			{Subject: "user-1", TenantID: "tenant-a", Groups: []string{"g-sec-admin"}},
+			{Subject: "user-1", Issuer: "https://issuer.example", TenantID: "tenant-a", Groups: []string{"g-sec-admin"}},
 		},
 	}, time.Now().UTC()); err != nil {
 		t.Fatalf("applySync: %v", err)
@@ -62,6 +62,60 @@ func TestAuthenticateControlPlaneRequest_SCIMRoleMappingApplied(t *testing.T) {
 	}
 	if ctx.TenantID != "tenant-a" {
 		t.Fatalf("ctx.TenantID = %q, want tenant-a", ctx.TenantID)
+	}
+}
+
+func TestAuthenticateControlPlaneRequest_SCIMRoleMappingIsolatedByIssuer(t *testing.T) {
+	t.Setenv(controlPlaneSCIMSyncEnabledEnv, "1")
+	t.Setenv(controlPlaneSCIMSyncStateFileEnv, filepath.Join(t.TempDir(), "scim_state.json"))
+	scim, err := loadControlPlaneSCIMSyncManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("loadControlPlaneSCIMSyncManager: %v", err)
+	}
+	if _, err := scim.applySync(controlPlaneSCIMSyncRequest{
+		Users: []controlPlaneSCIMSyncUser{
+			{Subject: "user-1", Issuer: "https://issuer.example", Role: dashboardRoleAdmin, TenantID: "tenant-a"},
+		},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("applySync: %v", err)
+	}
+
+	srv := &server{
+		sso: &controlPlaneSSOConfig{
+			Enabled: true,
+			Issuer:  "https://issuer.example",
+			TrustedIssuers: map[string]struct{}{
+				"https://issuer.example":     {},
+				"https://issuer-alt.example": {},
+			},
+			Audience:     "zt-cp",
+			RoleClaim:    "role",
+			TenantClaim:  "tenant_id",
+			SubjectClaim: "sub",
+			AdminRoles: map[string]struct{}{
+				dashboardRoleAdmin: {},
+			},
+			HS256Secret: []byte("sso-secret"),
+		},
+		scim: scim,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/event-keys", nil)
+	req.Header.Set("Authorization", "Bearer "+mustTestJWT(t, []byte("sso-secret"), map[string]any{
+		"iss":  "https://issuer-alt.example",
+		"aud":  "zt-cp",
+		"sub":  "user-1",
+		"role": dashboardRoleViewer,
+		"exp":  time.Now().Add(1 * time.Hour).Unix(),
+	}))
+	ctx, err := srv.authenticateControlPlaneRequest(req, false)
+	if err != nil {
+		t.Fatalf("authenticateControlPlaneRequest returned error: %v", err)
+	}
+	if ctx.Role != dashboardRoleViewer {
+		t.Fatalf("ctx.Role = %q, want %q", ctx.Role, dashboardRoleViewer)
+	}
+	if ctx.TenantID != "" {
+		t.Fatalf("ctx.TenantID = %q, want empty", ctx.TenantID)
 	}
 }
 
@@ -125,7 +179,7 @@ func TestApplySync_RollsBackInMemoryStateOnSaveFailure(t *testing.T) {
 		t.Fatalf("WriteFile(parentFile): %v", err)
 	}
 	scim.cfg.StateFile = filepath.Join(parentFile, "scim_state.json")
-	scim.users["legacy-user"] = controlPlaneSCIMMappedUser{Subject: "legacy-user", Role: dashboardRoleViewer}
+	scim.users[controlPlaneSCIMPrincipalKey("legacy-user", "")] = controlPlaneSCIMMappedUser{Subject: "legacy-user", Role: dashboardRoleViewer}
 	scim.lastSyncedAt = "2026-02-01T00:00:00Z"
 
 	_, err = scim.applySync(controlPlaneSCIMSyncRequest{
@@ -134,10 +188,10 @@ func TestApplySync_RollsBackInMemoryStateOnSaveFailure(t *testing.T) {
 	if err == nil {
 		t.Fatalf("applySync error=nil, want save failure")
 	}
-	if _, ok := scim.resolveUser("legacy-user"); !ok {
+	if _, ok := scim.resolveUser("legacy-user", ""); !ok {
 		t.Fatalf("legacy user missing after failed applySync")
 	}
-	if _, ok := scim.resolveUser("new-user"); ok {
+	if _, ok := scim.resolveUser("new-user", ""); ok {
 		t.Fatalf("new user should not be applied on save failure")
 	}
 }
