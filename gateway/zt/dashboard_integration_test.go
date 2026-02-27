@@ -70,6 +70,7 @@ func TestDispatchDashboardAlerts_DryRunAudited(t *testing.T) {
 	repoRoot := setupDashboardAlertDispatchTestEnv(t)
 	t.Setenv("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED", "1")
 	t.Setenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS", "hooks.example.com")
+	t.Setenv("ZT_DASHBOARD_ALERT_WEBHOOK_URL", "https://hooks.example.com/dispatch")
 	alert := dashboardAlertStatus{
 		Level: "medium",
 		Items: []dashboardAlertItem{
@@ -98,6 +99,7 @@ func TestDispatchDashboardAlerts_FailedPostAudited(t *testing.T) {
 	repoRoot := setupDashboardAlertDispatchTestEnv(t)
 	t.Setenv("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED", "1")
 	t.Setenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS", "127.0.0.1")
+	t.Setenv("ZT_DASHBOARD_ALERT_WEBHOOK_URL", "https://127.0.0.1:1/dispatch")
 	alert := dashboardAlertStatus{
 		Level: "high",
 		Items: []dashboardAlertItem{

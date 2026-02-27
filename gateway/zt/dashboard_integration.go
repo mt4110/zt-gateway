@@ -649,22 +649,37 @@ func dispatchDashboardAlerts(repoRoot string, alert dashboardAlertStatus, req da
 		auditReasonCode = "invalid_channel"
 		return nil, fmt.Errorf("invalid_channel")
 	}
-	webhookURL := strings.TrimSpace(req.WebhookURL)
-	if webhookURL == "" {
-		switch channel {
-		case "slack":
-			webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_SLACK_WEBHOOK_URL"))
-		case "discord":
-			webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_DISCORD_WEBHOOK_URL"))
-		case "line":
-			webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_LINE_WEBHOOK_URL"))
-		default:
-			webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_WEBHOOK_URL"))
-		}
+	requestedWebhookURL := strings.TrimSpace(req.WebhookURL)
+	webhookURL := ""
+	switch channel {
+	case "slack":
+		webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_SLACK_WEBHOOK_URL"))
+	case "discord":
+		webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_DISCORD_WEBHOOK_URL"))
+	case "line":
+		webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_LINE_WEBHOOK_URL"))
+	default:
+		webhookURL = strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ALERT_WEBHOOK_URL"))
 	}
 	if webhookURL == "" {
 		auditReasonCode = "webhook_url_required"
 		return nil, fmt.Errorf("webhook_url_required")
+	}
+	if requestedWebhookURL != "" {
+		normalizedConfigured, err := normalizeDashboardWebhookURLForCompare(webhookURL)
+		if err != nil {
+			auditReasonCode = "webhook_https_required"
+			return nil, fmt.Errorf("webhook_https_required")
+		}
+		normalizedRequested, err := normalizeDashboardWebhookURLForCompare(requestedWebhookURL)
+		if err != nil {
+			auditReasonCode = "webhook_https_required"
+			return nil, fmt.Errorf("webhook_https_required")
+		}
+		if normalizedRequested != normalizedConfigured {
+			auditReasonCode = "webhook_override_not_allowed"
+			return nil, fmt.Errorf("webhook_override_not_allowed")
+		}
 	}
 	u, err := url.Parse(webhookURL)
 	if err != nil || strings.ToLower(strings.TrimSpace(u.Scheme)) != "https" {
@@ -733,6 +748,22 @@ func buildDashboardAlertMessage(alert dashboardAlertStatus) string {
 		lines = append(lines, fmt.Sprintf("- ... and %d more", len(alert.Items)-max))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func normalizeDashboardWebhookURLForCompare(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("webhook URL is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() {
+		return "", fmt.Errorf("webhook URL must be absolute HTTPS URL")
+	}
+	if strings.ToLower(strings.TrimSpace(u.Scheme)) != "https" {
+		return "", fmt.Errorf("webhook URL must use https")
+	}
+	u.Fragment = ""
+	return u.String(), nil
 }
 
 type dashboardAlertDispatchRequest struct {
