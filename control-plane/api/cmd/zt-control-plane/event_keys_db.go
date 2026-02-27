@@ -252,6 +252,9 @@ create table if not exists event_ingest (
 );
 create index if not exists idx_event_ingest_kind_received_at on event_ingest(kind, received_at desc);
 create index if not exists idx_event_ingest_event_id on event_ingest(event_id);
+create index if not exists idx_event_ingest_tenant_received_at on event_ingest(envelope_tenant_id, received_at desc);
+create index if not exists idx_event_ingest_tenant_kind_received_at on event_ingest(envelope_tenant_id, kind, received_at desc);
+create index if not exists idx_event_ingest_signature_anomaly_time on event_ingest(envelope_present, envelope_verified, received_at desc);
 
 create table if not exists event_signing_keys (
   key_id text primary key,

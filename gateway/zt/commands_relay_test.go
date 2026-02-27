@@ -132,3 +132,54 @@ func TestListRelayAutoCandidates(t *testing.T) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 }
+
+func TestNormalizeRelayWebhookURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		channel string
+		raw     string
+		wantErr bool
+	}{
+		{
+			name:    "slack_valid",
+			channel: "slack",
+			raw:     "https://hooks.slack.com/services/T000/B000/XXX",
+			wantErr: false,
+		},
+		{
+			name:    "discord_valid",
+			channel: "discord",
+			raw:     "https://discord.com/api/webhooks/123/token",
+			wantErr: false,
+		},
+		{
+			name:    "slack_rejects_discord_host",
+			channel: "slack",
+			raw:     "https://discord.com/api/webhooks/123/token",
+			wantErr: true,
+		},
+		{
+			name:    "discord_rejects_http",
+			channel: "discord",
+			raw:     "http://discord.com/api/webhooks/123/token",
+			wantErr: true,
+		},
+		{
+			name:    "rejects_unknown_host",
+			channel: "discord",
+			raw:     "https://example.com/webhook",
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeRelayWebhookURL(tc.channel, tc.raw)
+			if tc.wantErr && err == nil {
+				t.Fatalf("normalizeRelayWebhookURL() error=nil, want error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("normalizeRelayWebhookURL() error=%v, want nil", err)
+			}
+		})
+	}
+}

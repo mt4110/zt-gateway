@@ -31,6 +31,7 @@ var securePackSignerFingerprintPins = []string{}
 
 var verifyToolPinFunc = verifyToolPin
 var verifyPacketWithSignerFunc = pack.VerifyPacketWithSigner
+var unpackPacketFunc = pack.UnpackPacket
 
 func verifySupplyChainLock(cfg *config.Config) error {
 	if cfg == nil {
@@ -326,6 +327,47 @@ func fingerprintPinned(actual string, allowed []string) bool {
 	return false
 }
 
+func resolveSignerFingerprintPinsForContract() ([]string, error) {
+	allowedPins, err := resolveSecurePackSignerFingerprintPins()
+	if err != nil {
+		return nil, withCode(ErrCodeSignerPinConfigInvalid, fmt.Errorf("signer fingerprint pin configuration invalid: %w", err))
+	}
+	if len(allowedPins) == 0 {
+		return nil, withCode(
+			ErrCodeSignerPinMissing,
+			fmt.Errorf(
+				"no trusted signer fingerprint pins configured (set %s or %s, set %s, or provide SIGNERS_ALLOWLIST.txt)",
+				securePackSignerFingerprintEnv,
+				securePackSignerFingerprintZTEnv,
+				securePackSignersAllowlistFileEnv,
+			),
+		)
+	}
+	return allowedPins, nil
+}
+
+func verifySignerFingerprintPinContractWithAllowed(inputPath string, allowedPins []string) (string, error) {
+	actualSignerFingerprint, err := verifyPacketWithSignerFunc(inputPath)
+	if err != nil {
+		return "", err
+	}
+	if !fingerprintPinned(actualSignerFingerprint, allowedPins) {
+		return "", withCode(
+			ErrCodeSignerPinMismatch,
+			fmt.Errorf("packet signer fingerprint mismatch: got %s, allowed=%s", actualSignerFingerprint, strings.Join(allowedPins, ",")),
+		)
+	}
+	return actualSignerFingerprint, nil
+}
+
+func verifySignerFingerprintPinContract(inputPath string) (string, error) {
+	allowedPins, err := resolveSignerFingerprintPinsForContract()
+	if err != nil {
+		return "", err
+	}
+	return verifySignerFingerprintPinContractWithAllowed(inputPath, allowedPins)
+}
+
 // SenderWorkflow handles the encryption and packing process
 func SenderWorkflow(cfg *config.Config, client string) (string, error) {
 	if err := verifySupplyChainLock(cfg); err != nil {
@@ -414,6 +456,13 @@ func ReceiverWorkflow(cfg *config.Config, inputPath string, outDir string) (stri
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
 		return "", fmt.Errorf("file not found: %s", inputPath)
 	}
+	allowedPins, pinErr := resolveSignerFingerprintPinsForContract()
+	if pinErr != nil {
+		return "", pinErr
+	}
+	if _, err := verifySignerFingerprintPinContractWithAllowed(inputPath, allowedPins); err != nil {
+		return "", err
+	}
 
 	// Auto-generate outDir if empty
 	if outDir == "" {
@@ -422,11 +471,12 @@ func ReceiverWorkflow(cfg *config.Config, inputPath string, outDir string) (stri
 	}
 
 	opts := pack.UnpackOptions{
-		InputPath: inputPath,
-		OutDir:    outDir,
+		InputPath:                 inputPath,
+		OutDir:                    outDir,
+		AllowedSignerFingerprints: allowedPins,
 	}
 
-	return pack.UnpackPacket(opts)
+	return unpackPacketFunc(opts)
 }
 
 // VerifyWorkflowWithSigner handles packet verification and returns verified signer fingerprint.
@@ -434,33 +484,7 @@ func VerifyWorkflowWithSigner(inputPath string) (string, error) {
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
 		return "", fmt.Errorf("file not found: %s", inputPath)
 	}
-	allowedPins, err := resolveSecurePackSignerFingerprintPins()
-	if err != nil {
-		return "", withCode(ErrCodeSignerPinConfigInvalid, fmt.Errorf("signer fingerprint pin configuration invalid: %w", err))
-	}
-	if len(allowedPins) == 0 {
-		return "", withCode(
-			ErrCodeSignerPinMissing,
-			fmt.Errorf(
-				"no trusted signer fingerprint pins configured (set %s or %s, set %s, or provide SIGNERS_ALLOWLIST.txt)",
-				securePackSignerFingerprintEnv,
-				securePackSignerFingerprintZTEnv,
-				securePackSignersAllowlistFileEnv,
-			),
-		)
-	}
-
-	actualSignerFingerprint, err := verifyPacketWithSignerFunc(inputPath)
-	if err != nil {
-		return "", err
-	}
-	if !fingerprintPinned(actualSignerFingerprint, allowedPins) {
-		return "", withCode(
-			ErrCodeSignerPinMismatch,
-			fmt.Errorf("packet signer fingerprint mismatch: got %s, allowed=%s", actualSignerFingerprint, strings.Join(allowedPins, ",")),
-		)
-	}
-	return actualSignerFingerprint, nil
+	return verifySignerFingerprintPinContract(inputPath)
 }
 
 // VerifyWorkflow handles the packet verification.

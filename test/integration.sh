@@ -13,6 +13,26 @@ EOF
 }
 
 CLIENT_NAME="local-smoketest"
+bootstrap_local_sor_key_b64() {
+    scope="${1:-integration}"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$scope" <<'PY'
+import base64
+import hashlib
+import sys
+
+scope = (sys.argv[1] if len(sys.argv) > 1 else "integration").strip() or "integration"
+seed = ("zt-local-sor-gate-key:" + scope).encode("utf-8")
+print(base64.b64encode(hashlib.sha256(seed).digest()).decode("ascii"))
+PY
+        return 0
+    fi
+    if command -v openssl >/dev/null 2>&1; then
+        printf "zt-local-sor-gate-key:%s" "$scope" | openssl dgst -binary -sha256 | openssl base64 -A
+        return 0
+    fi
+    return 1
+}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --client)
@@ -61,6 +81,11 @@ cleanup() {
         fi
         rm -f "${LOCAL_RECIP_BAK}"
     fi
+    case "${ZT_LOCAL_SOR_DB_PATH:-}" in
+        "$(pwd)"/tmp/local-sor-integration-*)
+            rm -f "${ZT_LOCAL_SOR_DB_PATH:-}"
+            ;;
+    esac
     rm -rf artifact.zp safe.txt blocked.exe
     rm -f bundle_*.spkg.tgz
 }
@@ -117,6 +142,18 @@ if [ -z "$SIGNER_PINS" ]; then
     exit 1
 fi
 export ZT_SECURE_PACK_SIGNER_FINGERPRINTS="$SIGNER_PINS"
+
+if [ -z "${ZT_LOCAL_SOR_MASTER_KEY_B64:-}" ] && [ -z "${ZT_LOCAL_SOR_ALLOW_PLAINTEXT_DEV:-}" ]; then
+    BOOTSTRAP_KEY="$(bootstrap_local_sor_key_b64 "integration-${CLIENT_NAME}" || true)"
+    if [ -z "$BOOTSTRAP_KEY" ]; then
+        echo "[FAIL] Failed to bootstrap ZT_LOCAL_SOR_MASTER_KEY_B64 (python3/openssl required)." >&2
+        exit 1
+    fi
+    export ZT_LOCAL_SOR_MASTER_KEY_B64="$BOOTSTRAP_KEY"
+fi
+if [ -z "${ZT_LOCAL_SOR_DB_PATH:-}" ]; then
+    export ZT_LOCAL_SOR_DB_PATH="$(pwd)/tmp/local-sor-integration-${CLIENT_NAME}.db"
+fi
 
 cat > "$SCAN_POLICY_FILE" <<'EOF'
 required_scanners = []

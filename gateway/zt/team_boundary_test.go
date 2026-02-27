@@ -316,6 +316,109 @@ func TestEnforceTeamBoundaryForSend_BreakGlassGuardrailTokenAccepted(t *testing.
 	}
 }
 
+func TestEnforceTeamBoundaryDegradedScanOverride_DisabledFailsClosed(t *testing.T) {
+	pol := teamBoundaryPolicy{
+		Enabled:                   true,
+		TenantID:                  "corp",
+		TeamID:                    "secops",
+		BoundaryPolicyVersion:     "v1",
+		AllowedRecipients:         []string{"clientA"},
+		AllowedShareRoutes:        []string{"stdout"},
+		AllowedSignerFingerprints: []string{"0123456789ABCDEF0123456789ABCDEF01234567"},
+		BreakGlassEnabled:         false,
+	}
+	_, _, err := enforceTeamBoundaryDegradedScanOverride(pol, sendOptions{
+		AllowDegradedScan: true,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := classifyTeamBoundaryEnforcementError(err); got != teamBoundaryBreakGlassReasonRequiredCode {
+		t.Fatalf("enforcement code = %q, want %q", got, teamBoundaryBreakGlassReasonRequiredCode)
+	}
+}
+
+func TestEnforceTeamBoundaryDegradedScanOverride_ReasonRequired(t *testing.T) {
+	pol := teamBoundaryPolicy{
+		Enabled:                   true,
+		TenantID:                  "corp",
+		TeamID:                    "secops",
+		BoundaryPolicyVersion:     "v1",
+		AllowedRecipients:         []string{"clientA"},
+		AllowedShareRoutes:        []string{"stdout"},
+		AllowedSignerFingerprints: []string{"0123456789ABCDEF0123456789ABCDEF01234567"},
+		BreakGlassEnabled:         true,
+		BreakGlassRequireReason:   true,
+		BreakGlassRequireApprover: true,
+		BreakGlassMaxTTLMinutes:   60,
+	}
+	_, _, err := enforceTeamBoundaryDegradedScanOverride(pol, sendOptions{
+		AllowDegradedScan: true,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := classifyTeamBoundaryEnforcementError(err); got != teamBoundaryBreakGlassReasonRequiredCode {
+		t.Fatalf("enforcement code = %q, want %q", got, teamBoundaryBreakGlassReasonRequiredCode)
+	}
+}
+
+func TestEnforceTeamBoundaryDegradedScanOverride_TokenAccepted(t *testing.T) {
+	pol := teamBoundaryPolicy{
+		Enabled:                   true,
+		TenantID:                  "corp",
+		TeamID:                    "secops",
+		BoundaryPolicyVersion:     "v1",
+		AllowedRecipients:         []string{"clientA"},
+		AllowedShareRoutes:        []string{"stdout"},
+		AllowedSignerFingerprints: []string{"0123456789ABCDEF0123456789ABCDEF01234567"},
+		BreakGlassEnabled:         true,
+		BreakGlassRequireReason:   true,
+		BreakGlassRequireApprover: true,
+		BreakGlassMaxTTLMinutes:   60,
+	}
+	expiresAt := time.Now().UTC().Add(30 * time.Minute).Format(time.RFC3339)
+	used, reason, err := enforceTeamBoundaryDegradedScanOverride(pol, sendOptions{
+		AllowDegradedScan: true,
+		BreakGlassReason:  "incident=inc-9303;approved_by=alice;expires_at=" + expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("enforceTeamBoundaryDegradedScanOverride() error = %v", err)
+	}
+	if !used {
+		t.Fatalf("break-glass used = false, want true")
+	}
+	if !strings.Contains(reason, "incident=inc-9303") {
+		t.Fatalf("reason = %q", reason)
+	}
+}
+
+func TestEnforceTeamBoundaryDegradedScanOverride_TokenExpired(t *testing.T) {
+	pol := teamBoundaryPolicy{
+		Enabled:                   true,
+		TenantID:                  "corp",
+		TeamID:                    "secops",
+		BoundaryPolicyVersion:     "v1",
+		AllowedRecipients:         []string{"clientA"},
+		AllowedShareRoutes:        []string{"stdout"},
+		AllowedSignerFingerprints: []string{"0123456789ABCDEF0123456789ABCDEF01234567"},
+		BreakGlassEnabled:         true,
+		BreakGlassRequireReason:   true,
+		BreakGlassRequireApprover: true,
+		BreakGlassMaxTTLMinutes:   60,
+	}
+	_, _, err := enforceTeamBoundaryDegradedScanOverride(pol, sendOptions{
+		AllowDegradedScan: true,
+		BreakGlassReason:  "incident=inc-9303;approved_by=alice;expires_at=2000-01-01T00:00:00Z",
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := classifyTeamBoundaryEnforcementError(err); got != teamBoundaryBreakGlassTokenExpiredCode {
+		t.Fatalf("enforcement code = %q, want %q", got, teamBoundaryBreakGlassTokenExpiredCode)
+	}
+}
+
 func TestEnforceTeamBoundaryForSigner_BreakGlassReasonRequired(t *testing.T) {
 	pol := teamBoundaryPolicy{
 		Enabled:                   true,
@@ -738,6 +841,23 @@ func TestBuildTeamBoundarySetupChecks_SignerPinReadinessOKWhenBoundaryDisabled(t
 	}
 	if c.Code != "" {
 		t.Fatalf("code = %q, want empty", c.Code)
+	}
+}
+
+func TestResolveTeamBoundaryPolicy_RequiredAliasEnv(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv(teamBoundaryRequiredEnv, "")
+	t.Setenv(teamBoundaryRequiredV094Env, "1")
+
+	_, active, err := resolveTeamBoundaryPolicy(repoRoot)
+	if err == nil {
+		t.Fatalf("expected error when %s is set and policy file is missing", teamBoundaryRequiredV094Env)
+	}
+	if !active {
+		t.Fatalf("active = false, want true")
+	}
+	if !strings.Contains(err.Error(), "required but missing") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

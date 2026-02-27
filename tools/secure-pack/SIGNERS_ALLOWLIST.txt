@@ -1,0 +1,4 @@
+# Default signer pin allowlist for local setup/doctor convergence.
+# Replace with your production-approved signer fingerprint set.
+0123456789ABCDEF0123456789ABCDEF01234567
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA

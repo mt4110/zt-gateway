@@ -12,6 +12,7 @@ tags:
   - name: Events
   - name: Policies
   - name: Dashboard
+  - name: Auth
   - name: Admin
 paths:
   /healthz:
@@ -191,6 +192,10 @@ paths:
       tags: [Dashboard]
       summary: Minimal activity summary from event_ingest
       parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/DashboardRoleHeader'
+        - $ref: '#/components/parameters/DashboardTenantHeader'
         - name: limit
           in: query
           required: false
@@ -199,6 +204,41 @@ paths:
             minimum: 1
             maximum: 200
             default: 20
+          description: Alias for `page_size`.
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [received_at_desc, received_at_asc]
+            default: received_at_desc
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: Search event_id / envelope_tenant_id / envelope_key_id.
+        - name: export
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [csv]
+          description: Return CSV instead of JSON.
         - name: tenant_id
           in: query
           required: false
@@ -218,7 +258,6 @@ paths:
           description: >
             Filter by kind. Preferred form is repeated query parameters (`kind=scan&kind=verify`);
             comma-separated values (`kind=scan,verify`) are also accepted for compatibility.
-          description: Filter by event kind.
         - name: from
           in: query
           required: false
@@ -240,6 +279,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DashboardActivityResponse'
+            text/csv:
+              schema:
+                type: string
         '503':
           description: Postgres not configured
   /v1/dashboard/activity/groups:
@@ -247,6 +289,10 @@ paths:
       tags: [Dashboard]
       summary: Grouped activity counts from event_ingest
       parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/DashboardRoleHeader'
+        - $ref: '#/components/parameters/DashboardTenantHeader'
         - name: group_by
           in: query
           required: true
@@ -314,12 +360,163 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DashboardGroupedResponse'
+  /v1/dashboard/timeseries:
+    get:
+      tags: [Dashboard]
+      summary: Timeseries for SLO/drift/backlog proxy metrics
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/DashboardRoleHeader'
+        - $ref: '#/components/parameters/DashboardTenantHeader'
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [scan, artifact, verify]
+          style: form
+          explode: true
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: bucket_minutes
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1440
+            default: 15
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardTimeseriesResponse'
+  /v1/dashboard/drilldown:
+    get:
+      tags: [Dashboard]
+      summary: Event to receipt/policy/runbook drilldown
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/DashboardRoleHeader'
+        - $ref: '#/components/parameters/DashboardTenantHeader'
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: event_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: ingest_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardDrilldownResponse'
+  /v1/auth/webauthn/attestation/options:
+    post:
+      tags: [Auth]
+      summary: Begin WebAuthn attestation (passkey registration)
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnCeremonyOptionsResponse'
+  /v1/auth/webauthn/attestation/verify:
+    post:
+      tags: [Auth]
+      summary: Verify WebAuthn attestation and register credential
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnVerifyRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnAttestationVerifyResponse'
+  /v1/auth/webauthn/assertion/options:
+    post:
+      tags: [Auth]
+      summary: Begin WebAuthn assertion (step-up MFA challenge)
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnCeremonyOptionsResponse'
+  /v1/auth/webauthn/assertion/verify:
+    post:
+      tags: [Auth]
+      summary: Verify WebAuthn assertion and issue step-up token
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnVerifyRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnAssertionVerifyResponse'
   /v1/admin/event-keys:
     get:
       tags: [Admin]
       summary: List event signing keys (Postgres-backed)
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
         - name: tenant_id
           in: query
           required: false
@@ -343,6 +540,8 @@ paths:
       summary: Create or upsert event signing key
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/StepUpTokenHeader'
       requestBody:
         required: true
         content:
@@ -365,6 +564,7 @@ paths:
       summary: Get one event signing key
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
         - name: key_id
           in: path
           required: true
@@ -386,6 +586,8 @@ paths:
       summary: Upsert one event signing key by key_id
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/StepUpTokenHeader'
         - name: key_id
           in: path
           required: true
@@ -411,6 +613,8 @@ paths:
       summary: Partially update one event signing key (enabled toggle)
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/StepUpTokenHeader'
         - name: key_id
           in: path
           required: true
@@ -438,6 +642,8 @@ paths:
       summary: Disable or delete one event signing key (rotation-guarded)
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
+        - $ref: '#/components/parameters/StepUpTokenHeader'
         - name: key_id
           in: path
           required: true
@@ -486,6 +692,7 @@ paths:
       summary: Evaluate key rotation readiness and guard conditions
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
         - name: key_id
           in: path
           required: true
@@ -509,6 +716,7 @@ paths:
       summary: Read append-only audit history for one event signing key
       parameters:
         - $ref: '#/components/parameters/ApiKeyHeader'
+        - $ref: '#/components/parameters/AuthorizationBearerHeader'
         - name: key_id
           in: path
           required: true
@@ -556,7 +764,36 @@ components:
       required: false
       schema:
         type: string
-      description: Required when the Control Plane is configured with an API key.
+      description: Optional API key authentication header.
+    AuthorizationBearerHeader:
+      name: Authorization
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Bearer JWT header (`Authorization: Bearer <token>`) when SSO is enabled.
+    DashboardRoleHeader:
+      name: X-ZT-Dashboard-Role
+      in: header
+      required: false
+      schema:
+        type: string
+        enum: [viewer, operator, auditor, admin]
+      description: Optional role hint for dashboard requests (SSO mode uses token claim).
+    DashboardTenantHeader:
+      name: X-ZT-Tenant-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Tenant scope header for non-admin API key/token dashboard sessions.
+    StepUpTokenHeader:
+      name: X-ZT-Step-Up-Token
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Required for admin mutation endpoints when WebAuthn step-up MFA is enabled.
   schemas:
     IngestAccepted:
       type: object
@@ -692,12 +929,32 @@ components:
     DashboardRecentEvent:
       type: object
       properties:
+        ingest_id: { type: string }
         kind: { type: string }
         event_id: { type: string }
         envelope_tenant_id: { type: string }
         envelope_key_id: { type: string }
+        envelope_present: { type: boolean }
         envelope_verified: { type: boolean }
+        signature_anomaly: { type: boolean }
         received_at: { type: string, format: date-time }
+    DashboardAuthz:
+      type: object
+      properties:
+        auth_mode: { type: string, enum: [none, api_key, dashboard_token, sso_jwt] }
+        role: { type: string, enum: [viewer, operator, auditor, admin] }
+        tenant_id: { type: string }
+        requested_tenant_id: { type: string }
+        tenant_scope: { type: string, enum: [all, single] }
+        enforced: { type: boolean }
+      required: [auth_mode, role, tenant_scope, enforced]
+    DashboardTenantIsolation:
+      type: object
+      properties:
+        enforced: { type: boolean }
+        cross_tenant_allowed: { type: boolean }
+        effective_tenant_id: { type: string }
+      required: [enforced, cross_tenant_allowed]
     DashboardActivityResponse:
       type: object
       properties:
@@ -711,11 +968,28 @@ components:
           items:
             $ref: '#/components/schemas/DashboardRecentEvent'
         limit: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        offset: { type: integer }
+        total_pages: { type: integer }
+        next_page: { type: integer }
+        sort: { type: string, enum: [received_at_desc, received_at_asc] }
+        q: { type: string }
         kind: { type: string, enum: [scan, artifact, verify] }
+        kinds:
+          type: array
+          items: { type: string, enum: [scan, artifact, verify] }
+        kind_filter_state:
+          type: string
+          enum: [none, single, multi]
         tenant_id: { type: string }
         window:
           type: object
           additionalProperties: true
+        authz:
+          $ref: '#/components/schemas/DashboardAuthz'
+        tenant_isolation:
+          $ref: '#/components/schemas/DashboardTenantIsolation'
         source: { type: string, example: event_ingest }
         generated_at: { type: string, format: date-time }
       required: [total_events, recent, limit, source]
@@ -750,7 +1024,104 @@ components:
           additionalProperties: true
         source: { type: string, example: event_ingest }
         generated_at: { type: string, format: date-time }
+        authz:
+          $ref: '#/components/schemas/DashboardAuthz'
+        tenant_isolation:
+          $ref: '#/components/schemas/DashboardTenantIsolation'
       required: [group_by, items, total_events, source]
+    DashboardTimeseriesBucket:
+      type: object
+      properties:
+        bucket_start: { type: string, format: date-time }
+        bucket_end: { type: string, format: date-time }
+        total_events: { type: integer }
+        verify_events: { type: integer }
+        verify_succeeded: { type: integer }
+        signature_anomalies: { type: integer }
+        tenant_drift_events: { type: integer }
+        backlog_proxy_events: { type: integer }
+        slo_verify_ratio: { type: number }
+        drift_ratio: { type: number }
+        backlog_ratio: { type: number }
+      required: [bucket_start, bucket_end, total_events]
+    DashboardTimeseriesResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        kind: { type: string, enum: [scan, artifact, verify] }
+        kinds:
+          type: array
+          items: { type: string, enum: [scan, artifact, verify] }
+        bucket_minutes: { type: integer }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        summary:
+          type: object
+          additionalProperties: true
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTimeseriesBucket'
+        authz:
+          $ref: '#/components/schemas/DashboardAuthz'
+        source: { type: string }
+        generated_at: { type: string, format: date-time }
+      required: [bucket_minutes, from, to, buckets]
+    DashboardDrilldownResponse:
+      type: object
+      properties:
+        event:
+          type: object
+          additionalProperties: true
+        receipt:
+          type: object
+          additionalProperties: true
+        policy:
+          type: object
+          additionalProperties: true
+        runbook:
+          type: object
+          additionalProperties: true
+        lineage:
+          type: object
+          additionalProperties: true
+        authz:
+          $ref: '#/components/schemas/DashboardAuthz'
+        tenant_id: { type: string }
+        generated_at: { type: string, format: date-time }
+      required: [event, receipt, policy, runbook, lineage]
+    WebAuthnCeremonyOptionsResponse:
+      type: object
+      properties:
+        session_id: { type: string }
+        expires_at: { type: string, format: date-time }
+        public_key:
+          type: object
+          additionalProperties: true
+      required: [session_id, expires_at, public_key]
+    WebAuthnVerifyRequest:
+      type: object
+      properties:
+        session_id: { type: string }
+        credential:
+          type: object
+          additionalProperties: true
+      required: [session_id, credential]
+    WebAuthnAttestationVerifyResponse:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        credential_id: { type: string }
+        registered_credentials: { type: integer }
+      required: [status, credential_id, registered_credentials]
+    WebAuthnAssertionVerifyResponse:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        step_up_token: { type: string }
+        expires_at: { type: string, format: date-time }
+        method: { type: string, example: webauthn_assertion }
+      required: [status, step_up_token, expires_at, method]
     EventSigningKey:
       type: object
       properties:

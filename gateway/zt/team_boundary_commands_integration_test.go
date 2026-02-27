@@ -11,6 +11,7 @@ import (
 
 const (
 	teamBoundarySendEnvPresentHelperEnv   = "ZT_TEST_HELPER_SEND_BOUNDARY_BREAK_GLASS_ENV_PRESENT"
+	teamBoundarySendDegradedHelperEnv     = "ZT_TEST_HELPER_SEND_BOUNDARY_DEGRADED_REQUIRES_BREAK_GLASS"
 	teamBoundaryVerifyEnvPresentHelperEnv = "ZT_TEST_HELPER_VERIFY_BOUNDARY_BREAK_GLASS_ENV_PRESENT"
 	teamBoundaryHelperRepoRootEnv         = "ZT_TEST_HELPER_REPO_ROOT"
 	teamBoundaryHelperInputPathEnv        = "ZT_TEST_HELPER_INPUT_PATH"
@@ -63,6 +64,58 @@ func TestRunSend_TeamBoundaryBreakGlassEnvPresentFailFast_Helper(t *testing.T) {
 	runSend(newToolAdapters(repoRoot), sendOptions{
 		InputFile: inputPath,
 		Client:    "clientA",
+	})
+	t.Fatalf("runSend returned without os.Exit")
+}
+
+func TestRunSend_TeamBoundaryAllowDegradedRequiresBreakGlass(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTeamBoundaryCommandTestPolicy(t, repoRoot, false)
+	inputPath := filepath.Join(repoRoot, "safe.txt")
+	if err := os.WriteFile(inputPath, []byte("safe-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunSend_TeamBoundaryAllowDegradedRequiresBreakGlass_Helper$")
+	cmd.Env = append(os.Environ(),
+		teamBoundarySendDegradedHelperEnv+"=1",
+		teamBoundaryHelperRepoRootEnv+"="+repoRoot,
+		teamBoundaryHelperInputPathEnv+"="+inputPath,
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected failure; output=%s", string(out))
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("unexpected error type: %T (%v)", err, err)
+	}
+	if exitErr.ExitCode() != 1 {
+		t.Fatalf("exit code = %d, want 1 (output=%s)", exitErr.ExitCode(), string(out))
+	}
+	if !strings.Contains(string(out), "ZT_ERROR_CODE="+ztErrorCodeSendBoundaryBreakGlassReasonRequired) {
+		t.Fatalf("missing error code %s in output:\n%s", ztErrorCodeSendBoundaryBreakGlassReasonRequired, string(out))
+	}
+}
+
+func TestRunSend_TeamBoundaryAllowDegradedRequiresBreakGlass_Helper(t *testing.T) {
+	if os.Getenv(teamBoundarySendDegradedHelperEnv) != "1" {
+		t.Skip("helper subprocess")
+	}
+	repoRoot := strings.TrimSpace(os.Getenv(teamBoundaryHelperRepoRootEnv))
+	inputPath := strings.TrimSpace(os.Getenv(teamBoundaryHelperInputPathEnv))
+	if repoRoot == "" || inputPath == "" {
+		t.Fatalf("missing helper env: repoRoot=%q inputPath=%q", repoRoot, inputPath)
+	}
+	prevEvents := cpEvents
+	cpEvents = nil
+	defer func() { cpEvents = prevEvents }()
+	runSend(newToolAdapters(repoRoot), sendOptions{
+		InputFile:         inputPath,
+		Client:            "clientA",
+		AllowDegradedScan: true,
+		ShareRoutes:       []string{"stdout"},
+		BreakGlassReason:  "",
 	})
 	t.Fatalf("runSend returned without os.Exit")
 }

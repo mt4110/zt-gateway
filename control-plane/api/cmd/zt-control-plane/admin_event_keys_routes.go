@@ -22,9 +22,16 @@ type adminEventKeyPatchRequest struct {
 }
 
 func (s *server) handleAdminEventKeys(w http.ResponseWriter, r *http.Request) {
-	if err := s.checkAPIKey(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+	authCtx, err := s.authenticateControlPlaneRequest(r, true)
+	if err != nil {
+		writeControlPlaneAuthError(w, err)
 		return
+	}
+	if r.Method != http.MethodGet && s.stepUp != nil {
+		if err := s.stepUp.validateAdminMutationStepUp(r, authCtx); err != nil {
+			writeControlPlaneStepUpError(w, err)
+			return
+		}
 	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "postgres_not_configured"})
@@ -64,13 +71,13 @@ func (s *server) handleAdminEventKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "post_does_not_accept_path_key_id"})
 			return
 		}
-		s.handleAdminEventKeysUpsert(w, r, "", false)
+		s.handleAdminEventKeysUpsert(w, r, "", false, authCtx)
 	case http.MethodPut:
-		s.handleAdminEventKeysUpsert(w, r, keyIDInPath, true)
+		s.handleAdminEventKeysUpsert(w, r, keyIDInPath, true, authCtx)
 	case http.MethodPatch:
-		s.handleAdminEventKeysPatch(w, r, keyIDInPath)
+		s.handleAdminEventKeysPatch(w, r, keyIDInPath, authCtx)
 	case http.MethodDelete:
-		s.handleAdminEventKeysDelete(w, r, keyIDInPath)
+		s.handleAdminEventKeysDelete(w, r, keyIDInPath, authCtx)
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 	}

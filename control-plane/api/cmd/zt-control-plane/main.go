@@ -17,6 +17,10 @@ type server struct {
 	dataDir                 string
 	policyDir               string
 	apiKey                  string
+	sso                     *controlPlaneSSOConfig
+	scim                    *controlPlaneSCIMSyncManager
+	stepUp                  *controlPlaneStepUpManager
+	allowUnsignedEvents     bool
 	eventVerifyPub          ed25519.PublicKey
 	policySigner            *policyBundleSigner
 	eventKeyRegistryEnabled bool
@@ -78,6 +82,12 @@ func main() {
 	dataDir := getenvDefault("ZT_CP_DATA_DIR", filepath.Join(cwd, "control-plane", "data"))
 	policyDir := getenvDefault("ZT_CP_POLICY_DIR", filepath.Join(cwd, "policy"))
 	apiKey := strings.TrimSpace(os.Getenv("ZT_CP_API_KEY"))
+	allowUnsignedEvents := resolveControlPlaneAllowUnsignedEvents()
+	securityStrict := envBoolCP(controlPlaneSecurityStrictEnv)
+	ssoConfig, err := loadControlPlaneSSOConfig()
+	if err != nil {
+		log.Fatalf("invalid control-plane SSO config: %v", err)
+	}
 	verifyPub, err := parseEd25519PublicKeyEnv("ZT_CP_EVENT_VERIFY_PUBKEY_B64")
 	if err != nil {
 		log.Fatalf("invalid ZT_CP_EVENT_VERIFY_PUBKEY_B64: %v", err)
@@ -108,6 +118,17 @@ func main() {
 		}
 		eventKeyRegistryEnabled = ok
 	}
+	if err := validateControlPlaneSecurityConfig(securityStrict, apiKey, ssoConfig != nil && ssoConfig.Enabled, verifyPub, eventKeyRegistryEnabled, allowUnsignedEvents); err != nil {
+		log.Fatalf("invalid control-plane security config: %v", err)
+	}
+	stepUp, err := loadControlPlaneStepUpManager(dataDir)
+	if err != nil {
+		log.Fatalf("invalid control-plane webauthn config: %v", err)
+	}
+	scim, err := loadControlPlaneSCIMSyncManager(dataDir)
+	if err != nil {
+		log.Fatalf("invalid control-plane scim sync config: %v", err)
+	}
 
 	if err := os.MkdirAll(filepath.Join(dataDir, "events"), 0o755); err != nil {
 		log.Fatalf("failed to create data dir: %v", err)
@@ -117,6 +138,10 @@ func main() {
 		dataDir:                 dataDir,
 		policyDir:               policyDir,
 		apiKey:                  apiKey,
+		sso:                     ssoConfig,
+		scim:                    scim,
+		stepUp:                  stepUp,
+		allowUnsignedEvents:     allowUnsignedEvents,
 		eventVerifyPub:          verifyPub,
 		policySigner:            policySigner,
 		eventKeyRegistryEnabled: eventKeyRegistryEnabled,
@@ -135,8 +160,15 @@ func main() {
 	mux.HandleFunc("/v1/rules/latest", s.handleRulesLatest)
 	mux.HandleFunc("/v1/dashboard/activity", s.handleDashboardActivity)
 	mux.HandleFunc("/v1/dashboard/activity/groups", s.handleDashboardActivityGroups)
+	mux.HandleFunc("/v1/dashboard/timeseries", s.handleDashboardTimeseries)
+	mux.HandleFunc("/v1/dashboard/drilldown", s.handleDashboardDrilldown)
+	mux.HandleFunc("/v1/auth/webauthn/attestation/options", s.handleWebAuthnAttestationOptions)
+	mux.HandleFunc("/v1/auth/webauthn/attestation/verify", s.handleWebAuthnAttestationVerify)
+	mux.HandleFunc("/v1/auth/webauthn/assertion/options", s.handleWebAuthnAssertionOptions)
+	mux.HandleFunc("/v1/auth/webauthn/assertion/verify", s.handleWebAuthnAssertionVerify)
 	mux.HandleFunc("/v1/admin/event-keys", s.handleAdminEventKeys)
 	mux.HandleFunc("/v1/admin/event-keys/", s.handleAdminEventKeys)
+	mux.HandleFunc("/v1/admin/scim/sync", s.handleAdminSCIMSync)
 
 	log.Printf("zt-control-plane listening on %s (data=%s policy=%s)", addr, dataDir, policyDir)
 	if err := http.ListenAndServe(addr, loggingMiddleware(mux)); err != nil {

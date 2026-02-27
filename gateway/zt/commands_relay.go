@@ -22,6 +22,8 @@ import (
 
 const (
 	googleDriveAccessTokenEnv = "ZT_GOOGLE_DRIVE_ACCESS_TOKEN"
+	relaySlackWebhookEnv      = "ZT_RELAY_SLACK_WEBHOOK_URL"
+	relayDiscordWebhookEnv    = "ZT_RELAY_DISCORD_WEBHOOK_URL"
 )
 
 var googleDriveUploadEndpoint = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
@@ -78,14 +80,23 @@ func runRelaySlackCommand(args []string) error {
 	payload := map[string]string{"text": text}
 	body, _ := json.Marshal(payload)
 
-	if jsonOut || strings.TrimSpace(webhookURL) == "" {
+	if strings.TrimSpace(webhookURL) != "" {
+		fmt.Println("[RELAY] --webhook-url is ignored for security. Set ZT_RELAY_SLACK_WEBHOOK_URL instead.")
+	}
+	dispatchWebhookURL := strings.TrimSpace(os.Getenv(relaySlackWebhookEnv))
+
+	if jsonOut || dispatchWebhookURL == "" {
 		fmt.Printf("%s\n", string(body))
-		if strings.TrimSpace(webhookURL) == "" {
+		if dispatchWebhookURL == "" {
 			fmt.Println("[RELAY] Slack webhook not set; payload printed only.")
 		}
 	}
-	if strings.TrimSpace(webhookURL) != "" {
-		if err := postWebhookJSON(webhookURL, body); err != nil {
+	if dispatchWebhookURL != "" {
+		normalizedURL, err := normalizeRelayWebhookURL("slack", dispatchWebhookURL)
+		if err != nil {
+			return err
+		}
+		if err := postWebhookJSON(normalizedURL, body); err != nil {
 			return err
 		}
 		fmt.Println("[RELAY] Slack webhook posted.")
@@ -121,14 +132,23 @@ func runRelayDiscordCommand(args []string) error {
 	payload := map[string]string{"content": content}
 	body, _ := json.Marshal(payload)
 
-	if jsonOut || strings.TrimSpace(webhookURL) == "" {
+	if strings.TrimSpace(webhookURL) != "" {
+		fmt.Println("[RELAY] --webhook-url is ignored for security. Set ZT_RELAY_DISCORD_WEBHOOK_URL instead.")
+	}
+	dispatchWebhookURL := strings.TrimSpace(os.Getenv(relayDiscordWebhookEnv))
+
+	if jsonOut || dispatchWebhookURL == "" {
 		fmt.Printf("%s\n", string(body))
-		if strings.TrimSpace(webhookURL) == "" {
+		if dispatchWebhookURL == "" {
 			fmt.Println("[RELAY] Discord webhook not set; payload printed only.")
 		}
 	}
-	if strings.TrimSpace(webhookURL) != "" {
-		if err := postWebhookJSON(webhookURL, body); err != nil {
+	if dispatchWebhookURL != "" {
+		normalizedURL, err := normalizeRelayWebhookURL("discord", dispatchWebhookURL)
+		if err != nil {
+			return err
+		}
+		if err := postWebhookJSON(normalizedURL, body); err != nil {
 			return err
 		}
 		fmt.Println("[RELAY] Discord webhook posted.")
@@ -638,7 +658,11 @@ func resolveRelayShareMessage(packetPath, format string) (receiverShareMessage, 
 }
 
 func postWebhookJSON(url string, payload []byte) error {
-	req, err := http.NewRequest(http.MethodPost, strings.TrimSpace(url), bytes.NewReader(payload))
+	parsedURL, err := normalizeWebhookDispatchURL(url)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, parsedURL, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -654,6 +678,77 @@ func postWebhookJSON(url string, payload []byte) error {
 		return fmt.Errorf("webhook failed: status=%s body=%s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func normalizeWebhookDispatchURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("webhook URL is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() {
+		return "", fmt.Errorf("webhook URL must be absolute HTTPS URL")
+	}
+	if strings.ToLower(strings.TrimSpace(u.Scheme)) != "https" {
+		return "", fmt.Errorf("webhook URL must use https")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("webhook URL must not include user info")
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if !webhookDispatchHostAllowed(host) {
+		return "", fmt.Errorf("webhook host is not allowed")
+	}
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func webhookDispatchHostAllowed(host string) bool {
+	if host == "" {
+		return false
+	}
+	// Relay commands allow official Slack/Discord webhook domains by default.
+	if relayWebhookHostAllowed("slack", host) || relayWebhookHostAllowed("discord", host) {
+		return true
+	}
+	// Dashboard dispatch can extend allow-list via explicit environment policy.
+	allowHosts := parseDashboardAlertAllowHosts(os.Getenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS"))
+	_, ok := allowHosts[host]
+	return ok
+}
+
+func normalizeRelayWebhookURL(channel, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("webhook URL is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("webhook URL must be absolute HTTPS URL")
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if !relayWebhookHostAllowed(channel, host) {
+		return "", fmt.Errorf("webhook host is not allowed for channel %s", strings.TrimSpace(channel))
+	}
+	return normalizeWebhookDispatchURL(raw)
+}
+
+func relayWebhookHostAllowed(channel, host string) bool {
+	if host == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "slack":
+		return relayWebhookHostMatches(host, "slack.com") || relayWebhookHostMatches(host, "slack-gov.com")
+	case "discord":
+		return relayWebhookHostMatches(host, "discord.com") || relayWebhookHostMatches(host, "discordapp.com")
+	default:
+		return false
+	}
+}
+
+func relayWebhookHostMatches(host, base string) bool {
+	return host == base || strings.HasSuffix(host, "."+base)
 }
 
 func copyRelayFile(src, dst string) error {

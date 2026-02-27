@@ -213,7 +213,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.policy_load_failed", boundaryErr.Error(), decision)
 		printZTErrorCode(ztErrorCodeSendBoundaryPolicy)
 		fmt.Printf("[BLOCKED] Team boundary policy failed: %v\n", boundaryErr)
-		fmt.Printf("[HINT] Repair %s or disable strict requirement (`%s=0`) only in non-boundary mode.\n", teamBoundaryPolicyFileLabel, teamBoundaryRequiredEnv)
+		fmt.Printf("[HINT] Repair %s or disable strict requirement (`%s=0` / `%s=0`) only in non-boundary mode.\n", teamBoundaryPolicyFileLabel, teamBoundaryRequiredEnv, teamBoundaryRequiredV094Env)
 		if opts.SyncNow {
 			runSyncEvents(true)
 		}
@@ -248,6 +248,24 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 			}
 			trustFail(errorCode)
 			os.Exit(1)
+		}
+		degradedBreakGlassUsed, degradedBreakGlassReason, degradedErr := enforceTeamBoundaryDegradedScanOverride(boundaryPolicy, opts)
+		if degradedErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(degradedErr)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.contract_failed", degradedErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary contract failed: %v\n", degradedErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		if !breakGlassUsed && degradedBreakGlassUsed {
+			breakGlassUsed = true
+			breakGlassReason = degradedBreakGlassReason
 		}
 		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, breakGlassUsed, breakGlassReason))
 		if breakGlassUsed {
@@ -422,6 +440,14 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 
 	// 2. secure-rebuild (Sanitizer) - only for SCAN_REBUILD
 	sanitizedPath := inputPath
+	inputSHA := hashPathSHA256(inputPath)
+	rebuildProvenance := map[string]any{
+		"policy_mode":                 string(mode),
+		"input_sha256":                inputSHA,
+		"requested":                   mode == ExtModeScanRebuild,
+		"tool":                        "secure-rebuild",
+		"supported_scan_rebuild_exts": secureRebuildSupportedExtensions(),
+	}
 	if mode == ExtModeScanRebuild {
 		fmt.Println("[Step 2/3] Sanitizing (secure-rebuild)...")
 		tmpFile, err := os.CreateTemp("", "zt-sanitized-*"+filepath.Ext(inputPath))
@@ -442,10 +468,19 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 			trustFail(ztErrorCodeSendSanitizeFail)
 			os.Exit(1)
 		}
+		outputSHA := hashPathSHA256(sanitizedPath)
+		rebuildProvenance["status"] = "sanitized"
+		rebuildProvenance["method"] = "decode_reencode"
+		rebuildProvenance["output_sha256"] = outputSHA
+		rebuildProvenance["changed"] = inputSHA != "" && outputSHA != "" && inputSHA != outputSHA
 		fmt.Println("Sanitization complete.")
 	} else {
 		fmt.Println("[Step 2/3] Sanitizing (secure-rebuild)...")
 		fmt.Println("Skipped (SCAN_ONLY policy).")
+		rebuildProvenance["status"] = "skipped"
+		rebuildProvenance["reason"] = "policy_scan_only"
+		rebuildProvenance["output_sha256"] = inputSHA
+		rebuildProvenance["changed"] = false
 	}
 
 	// 3. secure-pack
@@ -464,7 +499,7 @@ func runSend(adapters *toolAdapters, opts sendOptions) {
 		var scanMeta map[string]any
 		_ = json.Unmarshal(output, &scanMeta)
 		finalDecision := decisionFromScanResultWithPosture(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"), scanPosture)
-		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"), finalDecision)
+		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"), finalDecision, rebuildProvenance)
 		if auditFail := consumeAuditAppendFailureState(); auditFail != nil {
 			printZTErrorCode(ztErrorCodeSendAuditAppendFail)
 			fmt.Printf("[FAIL] Packet was generated but audit trail append failed (endpoint=%s): %s\n", auditFail.Endpoint, auditFail.Message)

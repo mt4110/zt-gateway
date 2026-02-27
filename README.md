@@ -144,6 +144,8 @@ go run ./gateway/zt setup --json
 - `danger.level=high|medium|low` で運用リスクを集約表示
 - `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`）
 - `Local Lock` は dashboard から lock/unlock 操作でき、`send` と `relay` を停止できます（fail-closed）
+- v0.9.5/0.9.6 で `control_plane` / `kpi` / `incidents` / `alerts` を同一JSONに統合（ローカル+CP統合モデル）
+- incident 操作（`lock` / `unlock` / `break_glass_start` / `break_glass_end`）は `.zt-spool/dashboard_incidents.jsonl` に監査記録
 
 ロック状態ファイル（既定）:
 
@@ -161,8 +163,172 @@ go run ./gateway/zt setup --json
 ```bash
 go run ./gateway/zt dashboard
 # または
-go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock'
+go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock, .kpi, .alerts, .control_plane'
 ```
+
+Local dashboard API（LFC-1005: クライアント別資産ビュー）:
+
+- `GET /api/clients` : クライアント一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/clients/{client_id}` : クライアント単位の資産一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `sort`:
+  - clients: `created_at_desc|created_at_asc|last_seen_desc|last_seen_asc`
+  - assets: `last_seen_desc|last_seen_asc|created_at_desc|created_at_asc`
+- tenant 固定運用時（`ZT_DASHBOARD_TENANT_ID` 設定）は fail-closed で検証
+  - 未指定: `tenant_scope_required`
+  - 不一致: `tenant_scope_violation`
+
+Local dashboard API（LFC-1006: 鍵ライフサイクル可視化）:
+
+- `GET /api/keys` : 鍵一覧（`tenant_id`, `q`, `status`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/keys/{key_id}` : 鍵詳細
+- `POST /api/keys/{key_id}/status` : 鍵状態遷移（body: `status`, `reason`, `actor`, `evidence_ref`）
+  - status: `active|rotating|revoked|compromised`
+  - 遷移時は `local_sor_incidents(action=key_status_transition)` に監査記録
+- `compromised` 鍵が1件以上ある場合、`danger` は fail-closed で `high` になる
+
+Local dashboard API（LFC-1007: Key Repair MVP）:
+
+- `GET /api/key-repair/jobs` : 修復ジョブ一覧（`tenant_id`, `key_id`, `q`, `state`, `page`, `page_size`, `sort`, `export=csv`）
+- `POST /api/key-repair/jobs` : 修復ジョブ起票（body: `key_id`, `trigger`, `operator`, `summary`, `evidence_ref`, `runbook_id`）
+- `GET /api/key-repair/jobs/{job_id}` : 修復ジョブ詳細
+- `POST /api/key-repair/jobs/{job_id}/transition` : 状態遷移（body: `state`, `operator`, `summary`, `evidence_ref`, `runbook_id`）
+  - state: `detected -> contained -> rekeyed -> rewrapped -> completed`（`failed` は各段階から遷移可）
+- 鍵が `compromised` になると、`key_repair_detected` を自動起票（runbook付き）
+- `key_repair` の open job がある間は `danger` に `key_repair_in_progress`（high）を表示
+
+Local dashboard API（LFC-1008: 利用回数/KPI集計）:
+
+- `GET /api/kpi` : dashboard と同一計算の KPI/SLO を返却
+- KPI は `local_sor_exchanges` を一次ソースに集計
+  - `exchange_total`, `send_count`, `receive_count`, `verify_receipts_total`, `verify_pass_count`, `verify_fail_count`
+- tenant SLO 表示:
+  - `tenant_id`
+  - `verify_pass_slo_target`（`ZT_DASHBOARD_SLO_VERIFY_PASS_TARGET`, default `0.99`）
+  - `verify_pass_slo_met`, `backlog_slo_met`
+- backlog は `backlog_threshold_seconds` と `event_sync` の oldest age で判定
+
+Local dashboard API（LFC-1009: 署名保有者数 MVP）:
+
+- `GET /api/signature-holders` : tenant 単位の署名保有者一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/clients/{client_id}/signature-holders` : client drill-down（同じ query/CSV をサポート）
+- `signature_id` は signer fingerprint を使用
+- 表示項目:
+  - `holder_count_estimated`（distinct client 数）
+  - `holder_count_confirmed`（verify pass を返した distinct client 数）
+  - `event_count` / `client_event_count`（算出根拠イベント件数）
+- receipt 取込時に `local_sor_signature_holders` を自動更新
+
+Local dashboard API（LFC-1010: 外部通知安全ゲート）:
+
+- `POST /api/alerts/dispatch` : 外部通知送信（body: `channel`, `webhook_url`, `dry_run`）
+  - `channel`: `slack|discord|line|webhook`（未指定時は `webhook`）
+- fail-closed 条件:
+  - `ZT_DASHBOARD_ALERT_DISPATCH_ENABLED=1` が未設定なら拒否
+  - webhook URL が HTTPS 以外なら拒否
+  - `ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS` が空/不一致なら拒否
+- 送信 payload は最小化（`level/count` と alert code のみ。詳細メッセージは外部送信しない）
+- 送信結果（`rejected|dry_run|failed|sent`）は監査ログ `.zt-spool/events.jsonl` に
+  `event_type=dashboard_alert_dispatch` として記録
+
+Control Plane dashboard API（tenant/role authz）:
+
+- `GET /v1/dashboard/activity` : 検索/ページング/CSV export（`q`, `page`, `page_size`, `export=csv`）
+- `GET /v1/dashboard/activity/groups` : tenant/kind 集計
+- `GET /v1/dashboard/timeseries` : SLO/drift/backlog-proxy の時系列
+- `GET /v1/dashboard/drilldown` : event -> receipt -> policy -> runbook
+- `POST /v1/admin/scim/sync` : SCIM 同期（admin only, role mapping 反映）
+- `GET /v1/admin/scim/sync` : SCIM 同期状態（適用ユーザー数 / 最終同期時刻）
+
+認証/認可ヘッダ:
+
+- `X-API-Key`（`ZT_CP_API_KEY` を設定している場合は必須）
+- `Authorization: Bearer <JWT>`（`ZT_CP_SSO_ENABLED=1` の場合）
+- `X-ZT-Dashboard-Role` (`viewer|operator|auditor|admin`)
+- `X-ZT-Tenant-ID`（auth有効時に非adminは必須）
+  - SSO時は tenant はJWT claim（`ZT_CP_SSO_TENANT_CLAIM`）を優先
+
+SSO（OIDC/SAML連携のJWT検証）を有効化する例:
+
+```bash
+export ZT_CP_SSO_ENABLED=1
+export ZT_CP_SSO_ISSUER="https://issuer.example.com/"
+export ZT_CP_SSO_AUDIENCE="zt-control-plane"
+export ZT_CP_SSO_ROLE_CLAIM="role"        # default: role
+export ZT_CP_SSO_TENANT_CLAIM="tenant_id" # default: tenant_id
+export ZT_CP_SSO_ADMIN_ROLES="admin,security-admin"
+export ZT_CP_SSO_JWT_HS256_SECRET="<shared-secret>"
+# RS256 を使う場合は代わりに:
+# export ZT_CP_SSO_JWT_RS256_PUBKEY_PEM="$(cat ./keys/sso_rsa_pub.pem)"
+```
+
+Passkey/WebAuthn 二段目認証（LFC-1004）を有効化する例:
+
+```bash
+export ZT_CP_WEBAUTHN_ENABLED=1
+export ZT_CP_WEBAUTHN_RP_ID="localhost"
+export ZT_CP_WEBAUTHN_RP_ORIGIN="http://localhost:3000"
+# 管理変更APIにstep-up必須（default: enabled when WEBAuthn enabled）
+export ZT_CP_WEBAUTHN_ENFORCE_ADMIN_MUTATIONS=1
+```
+
+WebAuthn ceremony API:
+
+- `POST /v1/auth/webauthn/attestation/options`
+- `POST /v1/auth/webauthn/attestation/verify`
+- `POST /v1/auth/webauthn/assertion/options`
+- `POST /v1/auth/webauthn/assertion/verify`（`step_up_token` を払い出し）
+
+管理変更API（event keyの POST/PUT/PATCH/DELETE）は、WebAuthn step-up有効時に
+`X-ZT-Step-Up-Token` が無いと fail-closed で拒否されます。
+
+`zt dashboard` から Control Plane へ SSOで接続する場合:
+
+```bash
+export ZT_CONTROL_PLANE_BEARER_TOKEN="<JWT>"
+go run ./gateway/zt dashboard
+```
+
+外部通知（Slack/Discord/LINE/Webhook）は **デフォルト無効**:
+
+- `ZT_DASHBOARD_ALERT_DISPATCH_ENABLED=1` で明示有効化
+- `ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS`（許可ホスト列挙）が空なら送信拒否
+- HTTPS以外の webhook URL は拒否（fail-closed）
+
+v1.1 運用拡張（LFC-1102/1103/1107）:
+
+- signature holders API は `confirmed_coverage_ratio` / `confirmation_status` を返却
+- KPI に `key_repair_auto_recovery_rate`（自動起票ジョブの完了率）を追加
+- KPI に `signature_anomaly_false_positive_ratio` を追加
+- `ZT_DASHBOARD_ANOMALY_FALSE_POSITIVE_THRESHOLD`（default `0.20`）超過時は
+  alerts に `signature_anomaly_false_positive_high` を表示
+
+v1.2 大規模/モバイル統合（LFC-1201〜1207）:
+
+- 管理変更APIの監査メタに mobile MFA コンテキストを記録（`X-ZT-MFA-Platform` / `X-ZT-MFA-Device-ID` / `X-ZT-MFA-Factor` + AMR）
+- SSO を multi-issuer 化:
+  - `ZT_CP_SSO_TRUSTED_ISSUERS`（CSV）
+  - `ZT_CP_SSO_ENTERPRISE_ISSUERS`（CSV）
+  - `ZT_CP_SSO_ENTERPRISE_POLICY=allow_all|enterprise_only|enterprise_or_apple`
+  - `ZT_CP_SSO_APPLE_ISSUER`（default `https://appleid.apple.com`）
+- `/healthz` に HA 計測値を追加（`ha.rpo_*` / `ha.rto_*`）:
+  - `ZT_CP_HA_ENABLED`
+  - `ZT_CP_HA_RPO_OBJECTIVE_SECONDS`（default `60`）
+  - `ZT_CP_HA_RTO_OBJECTIVE_SECONDS`（default `300`）
+- signature holders に realtime 推定遅延 SLO を追加:
+  - `realtime_estimate_lag_seconds`
+  - `realtime_estimate_slo_seconds`
+  - `realtime_estimate_slo_met`
+  - `ZT_DASHBOARD_SIGNATURE_HOLDER_SLO_SECONDS`（default `120`）
+- `zt audit report --template legal-v1 --contract-id <id>` で法務テンプレ付き月次監査レポートを生成
+- 改ざん耐性オプション（外部台帳）:
+  - `ZT_AUDIT_EXTERNAL_LEDGER_ENABLED=1`
+  - `ZT_AUDIT_EXTERNAL_LEDGER_PATH=<path>`（default `.zt-spool/audit-external-ledger.jsonl`）
+
+監査運用（LFC-1104/1106）:
+
+- `zt audit report --month YYYY-MM --json-out <path> --pdf-out <path>` で月次監査レポートを生成
+- `zt audit rotate --retention-days <days>` で月次ローテーションと保持期間削除を実行
+- `ZT_AUDIT_RETENTION_DAYS`（default `90`）で保持日数を設定
 
 ### 3) relay drive の Google Drive API 直upload（任意）
 
@@ -534,6 +700,7 @@ flowchart LR
 - v0.9.0 実装チケット分割は `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`
 - v0.9.1 True Zero Trust hardening 設計は `docs/architecture/V0.9.1_DESIGN.md`
 - v0.9.2 Team/Enterprise Boundary（社内・チーム限定運用）設計ドラフトは `docs/architecture/V0.9.2_DESIGN.md`
+- v0.9.3 残タスク収束（receive trust parity / degraded guardrail / scan posture hardening）設計ドラフトは `docs/architecture/V0.9.3_DESIGN.md`
 - v0.9.2 Team Boundary 運用は `policy/team_boundary.toml`（`enabled=true` で有効）を使用し、緊急時 override は `--break-glass-reason` を明示する（`ZT_BREAK_GLASS_REASON` 常駐は fail-fast）
 - v0.9.2 では `zt config doctor --json` の `team_boundary_signer_pin_consistency` で signer pin 配布ずれ（`policy_team_boundary_signer_split_brain_detected`）を検知できる
 - v0.9.2 では `team_boundary_break_glass_guardrail` で break-glass 戻し忘れ/ガード弱化（`policy_team_boundary_break_glass_*`）を検知できる
@@ -541,6 +708,9 @@ flowchart LR
 - break-glass reason は `incident=<id>;approved_by=<id>;expires_at=<RFC3339>` の期限付き token 形式を推奨
 - v0.9.2 では break-glass 理由不足を `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` / `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` で即時切り分けできる
 - v0.9.2 異常系ユースケース/復旧runbook正本は `docs/V0.9.2_ABNORMAL_USECASES.md`
+- v1.0 セールス向け運用パック（導入チェックリスト / security note / runbook / 5分デモ）は `docs/V1_SALES_OPERATIONS_PACK.md`
+- v1.1 運用拡張の契約固定は `scripts/ci/check-v110-operations-gate.sh` を実行
+- v1.2 大規模/モバイル統合の契約固定は `scripts/ci/check-v120-scale-mobile-gate.sh` を実行
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 

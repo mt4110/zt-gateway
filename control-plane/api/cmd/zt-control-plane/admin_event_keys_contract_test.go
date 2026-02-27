@@ -14,6 +14,7 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	jwt "github.com/golang-jwt/jwt/v5"
 )
 
 func TestAdminEventKeysRouteGuardsContract(t *testing.T) {
@@ -35,9 +36,103 @@ func TestAdminEventKeysRouteGuardsContract(t *testing.T) {
 
 	t.Run("postgres_not_configured", func(t *testing.T) {
 		t.Parallel()
-		srv := &server{}
-		rr := performAdminEventKeysRequestContract(t, srv, http.MethodGet, "/v1/admin/event-keys", "", "")
+		srv := &server{apiKey: "secret"}
+		rr := performAdminEventKeysRequestContract(t, srv, http.MethodGet, "/v1/admin/event-keys", "", "secret")
 		assertStatusAndErrorContract(t, rr, http.StatusServiceUnavailable, "postgres_not_configured")
+	})
+
+	t.Run("sso_missing_bearer", func(t *testing.T) {
+		t.Parallel()
+		srv := &server{
+			db: &sql.DB{},
+			sso: &controlPlaneSSOConfig{
+				Enabled:     true,
+				Issuer:      "https://issuer.example",
+				Audience:    "zt-cp",
+				RoleClaim:   "role",
+				TenantClaim: "tenant_id",
+				AdminRoles: map[string]struct{}{
+					dashboardRoleAdmin: {},
+				},
+				HS256Secret: []byte("sso-secret"),
+			},
+		}
+		rr := performAdminEventKeysRequestContract(t, srv, http.MethodGet, "/v1/admin/event-keys", "", "")
+		assertStatusAndErrorContract(t, rr, http.StatusUnauthorized, "missing_bearer_token")
+	})
+
+	t.Run("sso_viewer_not_allowed", func(t *testing.T) {
+		t.Parallel()
+		srv := &server{
+			db: &sql.DB{},
+			sso: &controlPlaneSSOConfig{
+				Enabled:     true,
+				Issuer:      "https://issuer.example",
+				Audience:    "zt-cp",
+				RoleClaim:   "role",
+				TenantClaim: "tenant_id",
+				AdminRoles: map[string]struct{}{
+					dashboardRoleAdmin: {},
+				},
+				HS256Secret: []byte("sso-secret"),
+			},
+		}
+		token := mustSSOBearerTokenContract(t, []byte("sso-secret"), map[string]any{
+			"iss":       "https://issuer.example",
+			"aud":       "zt-cp",
+			"sub":       "user-1",
+			"role":      dashboardRoleViewer,
+			"tenant_id": "tenant-a",
+			"exp":       time.Now().Add(1 * time.Hour).Unix(),
+		})
+		rr := performAdminEventKeysRequestWithHeadersContract(t, srv, http.MethodGet, "/v1/admin/event-keys", "", "", token, "")
+		assertStatusAndErrorContract(t, rr, http.StatusForbidden, "role_not_allowed")
+	})
+
+	t.Run("sso_admin_reaches_postgres_guard", func(t *testing.T) {
+		t.Parallel()
+		srv := &server{
+			sso: &controlPlaneSSOConfig{
+				Enabled:     true,
+				Issuer:      "https://issuer.example",
+				Audience:    "zt-cp",
+				RoleClaim:   "role",
+				TenantClaim: "tenant_id",
+				AdminRoles: map[string]struct{}{
+					dashboardRoleAdmin: {},
+				},
+				HS256Secret: []byte("sso-secret"),
+			},
+		}
+		token := mustSSOBearerTokenContract(t, []byte("sso-secret"), map[string]any{
+			"iss":       "https://issuer.example",
+			"aud":       "zt-cp",
+			"sub":       "user-2",
+			"role":      dashboardRoleAdmin,
+			"tenant_id": "tenant-a",
+			"exp":       time.Now().Add(1 * time.Hour).Unix(),
+		})
+		rr := performAdminEventKeysRequestWithHeadersContract(t, srv, http.MethodGet, "/v1/admin/event-keys", "", "", token, "")
+		assertStatusAndErrorContract(t, rr, http.StatusServiceUnavailable, "postgres_not_configured")
+	})
+
+	t.Run("mutation_requires_step_up_when_enabled", func(t *testing.T) {
+		t.Parallel()
+		srv, mock, cleanup := newAdminEventKeysContractServer(t)
+		defer cleanup()
+		srv.apiKey = "secret"
+		srv.stepUp = &controlPlaneStepUpManager{
+			cfg: controlPlaneStepUpConfig{
+				Enabled:               true,
+				EnforceAdminMutations: true,
+				AllowAPIKeyBypass:     false,
+			},
+			stepUpTokens: map[string]controlPlaneWebAuthnStepUpToken{},
+		}
+
+		rr := performAdminEventKeysRequestWithHeadersContract(t, srv, http.MethodPost, "/v1/admin/event-keys", `{}`, "secret", "", "")
+		assertStatusAndErrorContract(t, rr, http.StatusForbidden, "mfa_step_up_required")
+		assertNoDBLeakContract(t, mock)
 	})
 
 	t.Run("post_does_not_accept_path_key_id", func(t *testing.T) {
@@ -611,14 +706,35 @@ func TestAdminEventKeysHistoryContract(t *testing.T) {
 
 func performAdminEventKeysRequestContract(t *testing.T, srv *server, method, target, body, apiKey string) *httptest.ResponseRecorder {
 	t.Helper()
+	return performAdminEventKeysRequestWithHeadersContract(t, srv, method, target, body, apiKey, "", "")
+}
+
+func performAdminEventKeysRequestWithHeadersContract(t *testing.T, srv *server, method, target, body, apiKey, bearerToken, stepUpToken string) *httptest.ResponseRecorder {
+	t.Helper()
 	reader := strings.NewReader(body)
 	req := httptest.NewRequest(method, target, reader)
 	if strings.TrimSpace(apiKey) != "" {
 		req.Header.Set("X-API-Key", apiKey)
 	}
+	if strings.TrimSpace(bearerToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
+	}
+	if strings.TrimSpace(stepUpToken) != "" {
+		req.Header.Set(controlPlaneWebAuthnStepUpTokenHeader, strings.TrimSpace(stepUpToken))
+	}
 	rr := httptest.NewRecorder()
 	srv.handleAdminEventKeys(rr, req)
 	return rr
+}
+
+func mustSSOBearerTokenContract(t *testing.T, secret []byte, claims map[string]any) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims(claims))
+	raw, err := token.SignedString(secret)
+	if err != nil {
+		t.Fatalf("SignedString failed: %v", err)
+	}
+	return raw
 }
 
 func decodeJSONContract(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {

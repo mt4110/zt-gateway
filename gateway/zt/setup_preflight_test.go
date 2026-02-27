@@ -464,6 +464,100 @@ func TestCollectSetupPreflightChecks_IncludesTeamBoundaryChecks(t *testing.T) {
 	}
 }
 
+func TestCollectSetupPreflightChecks_IncludesScanPostureChecks(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "extension_policy.toml"), []byte("max_size_mb=50\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "scan_policy.toml"), []byte("required_scanners=[\"ClamAV\"]\nrequire_clamav_db=true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectSetupPreflightChecks(repoRoot)
+	for _, name := range []string{
+		scanPostureRequiredScannersCheckName,
+		scanPostureClamAVDBStrictCheckName,
+		scanPostureBoundaryDegradedOverrideCheckName,
+	} {
+		if _, ok := findSetupCheckByName(got.Checks, name); !ok {
+			t.Fatalf("missing scan posture check: %s", name)
+		}
+	}
+}
+
+func TestCollectSetupPreflightChecksWithPolicy_StrictProfileClamAVRequirement(t *testing.T) {
+	repoRoot := t.TempDir()
+	policyDir := filepath.Join(repoRoot, "policy")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	extPath := filepath.Join(policyDir, "extension_policy.toml")
+	scanPath := filepath.Join(policyDir, "scan_policy.toml")
+	if err := os.WriteFile(extPath, []byte("max_size_mb=50\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scanPath, []byte("required_scanners=[\"ClamAV\",\"YARA\"]\nrequire_clamav_db=false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectSetupPreflightChecksWithPolicy(repoRoot, trustProfilePolicySelection{
+		Name:                trustProfileConfidential,
+		Source:              "test",
+		ExtensionPolicyPath: extPath,
+		ScanPolicyPath:      scanPath,
+	})
+	c, ok := findSetupCheckByName(got.Checks, scanPostureClamAVDBStrictCheckName)
+	if !ok {
+		t.Fatalf("missing check: %s", scanPostureClamAVDBStrictCheckName)
+	}
+	if c.Status != "fail" {
+		t.Fatalf("status = %q, want fail", c.Status)
+	}
+	if c.Code != scanPostureClamAVDBNotRequiredCode {
+		t.Fatalf("code = %q, want %q", c.Code, scanPostureClamAVDBNotRequiredCode)
+	}
+}
+
+func TestCollectSetupPreflightChecks_RebuildSanitizerCoverageFail(t *testing.T) {
+	repoRoot := t.TempDir()
+	policyDir := filepath.Join(repoRoot, "policy")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "extension_policy.toml"), []byte(`
+max_size_mb=50
+scan_only_extensions=[".txt"]
+scan_rebuild_extensions=[".jpg",".pdf"]
+deny_extensions=[".exe"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "scan_policy.toml"), []byte(`
+required_scanners=["ClamAV","YARA"]
+require_clamav_db=true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectSetupPreflightChecks(repoRoot)
+	c, ok := findSetupCheckByName(got.Checks, rebuildSanitizerCoverageCheckName)
+	if !ok {
+		t.Fatalf("missing check: %s", rebuildSanitizerCoverageCheckName)
+	}
+	if c.Status != "fail" {
+		t.Fatalf("status = %q, want fail", c.Status)
+	}
+	if c.Code != rebuildSanitizerUnsupportedExtsCode {
+		t.Fatalf("code = %q, want %q", c.Code, rebuildSanitizerUnsupportedExtsCode)
+	}
+	if !strings.Contains(c.Message, ".pdf") {
+		t.Fatalf("message = %q, want unsupported extension details", c.Message)
+	}
+}
+
 func TestBuildBreakglassTrustedSignersSetupCheck_NoConfigWarn(t *testing.T) {
 	repoRoot := t.TempDir()
 	check, _ := buildBreakglassTrustedSignersSetupCheck(repoRoot)

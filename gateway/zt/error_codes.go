@@ -15,6 +15,8 @@ const (
 	ztErrorCodeVerifyReceiptWrite                     = "ZT_VERIFY_RECEIPT_WRITE_FAILED"
 	ztErrorCodeAuditUsage                             = "ZT_AUDIT_USAGE"
 	ztErrorCodeAuditVerifyFailed                      = "ZT_AUDIT_VERIFY_FAILED"
+	ztErrorCodeAuditReportFailed                      = "ZT_AUDIT_REPORT_FAILED"
+	ztErrorCodeAuditRotateFailed                      = "ZT_AUDIT_ROTATE_FAILED"
 	ztErrorCodeScanInvalidPath                        = "ZT_SCAN_INVALID_PATH"
 	ztErrorCodeScanStatFailed                         = "ZT_SCAN_STAT_FAILED"
 	ztErrorCodeScanInputRejected                      = "ZT_SCAN_INPUT_REJECTED"
@@ -53,6 +55,7 @@ const (
 	ztErrorCodeVerifySignerPinMismatch                = "ZT_VERIFY_SIGNER_PIN_MISMATCH"
 	ztErrorCodeVerifySignerPinConfig                  = "ZT_VERIFY_SIGNER_PIN_CONFIG_INVALID"
 	ztErrorCodeVerifyAuditAppendFail                  = "ZT_VERIFY_AUDIT_APPEND_FAILED"
+	ztErrorCodeLocalSORInitFailed                     = "ZT_LOCAL_SOR_INIT_FAILED"
 )
 
 func printZTErrorCode(code string) {

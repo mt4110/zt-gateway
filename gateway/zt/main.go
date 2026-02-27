@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // ScanResult matches the legacy JSON output from the PoC scanner adapter.
@@ -88,6 +89,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to detect repository root: %v\n", err)
 		os.Exit(1)
+	}
+	localSOR, err = initializeLocalSOR(repoRoot)
+	if err != nil {
+		if strings.TrimSpace(os.Getenv(localSORMasterKeyEnv)) == "" && !envBool(localSORAllowPlaintextEnv) {
+			if !suppressStartupDiagnostics {
+				fmt.Fprintf(os.Stderr, "[Local SoR] init skipped: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[Local SoR] set %s (32-byte base64) or %s=1 for local dev.\n", localSORMasterKeyEnv, localSORAllowPlaintextEnv)
+			}
+		} else {
+			printZTErrorCode(ztErrorCodeLocalSORInitFailed)
+			fmt.Fprintf(os.Stderr, "Failed to initialize local SoR: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	adapters := newToolAdapters(repoRoot)
 	cpEvents = newEventSpool(repoRoot)

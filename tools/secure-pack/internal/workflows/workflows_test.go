@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/algo-artis/secure-pack/internal/config"
+	"github.com/algo-artis/secure-pack/internal/pack"
 )
 
 func TestResolveSecurePackRootPubKeyFingerprintPins_FromEnvSupportsMultiple(t *testing.T) {
@@ -95,6 +96,13 @@ func withVerifyPacketWithSignerStub(t *testing.T, stub func(inputPath string) (s
 	prev := verifyPacketWithSignerFunc
 	verifyPacketWithSignerFunc = stub
 	t.Cleanup(func() { verifyPacketWithSignerFunc = prev })
+}
+
+func withUnpackPacketStub(t *testing.T, stub func(opts pack.UnpackOptions) (string, error)) {
+	t.Helper()
+	prev := unpackPacketFunc
+	unpackPacketFunc = stub
+	t.Cleanup(func() { unpackPacketFunc = prev })
 }
 
 func TestResolveSecurePackSignerFingerprintPins_FromEnvSupportsMultiple(t *testing.T) {
@@ -204,6 +212,91 @@ func TestVerifyWorkflow_SignerPinMatchPasses(t *testing.T) {
 
 	if err := VerifyWorkflow(inputPath); err != nil {
 		t.Fatalf("VerifyWorkflow() error = %v", err)
+	}
+}
+
+func TestReceiverWorkflow_SignerPinMissingReturnsCode(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, filepath.Join(t.TempDir(), "missing.txt"))
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		t.Fatalf("verifyPacketWithSignerFunc should not be called when signer pins are missing")
+		return "", nil
+	})
+	withUnpackPacketStub(t, func(opts pack.UnpackOptions) (string, error) {
+		t.Fatalf("unpackPacketFunc should not be called when signer pins are missing")
+		return "", nil
+	})
+
+	_, err := ReceiverWorkflow(config.NewConfig(t.TempDir()), inputPath, filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeSignerPinMissing {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMissing, err)
+	}
+}
+
+func TestReceiverWorkflow_SignerPinMismatchReturnsCode(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		return "0123456789ABCDEF0123456789ABCDEF01234567", nil
+	})
+	withUnpackPacketStub(t, func(opts pack.UnpackOptions) (string, error) {
+		t.Fatalf("unpackPacketFunc should not be called when signer pin mismatch")
+		return "", nil
+	})
+
+	_, err := ReceiverWorkflow(config.NewConfig(t.TempDir()), inputPath, filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeSignerPinMismatch {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMismatch, err)
+	}
+}
+
+func TestReceiverWorkflow_SignerPinMatchExtracts(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectedOut := filepath.Join(t.TempDir(), "out")
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		return "0123456789ABCDEF0123456789ABCDEF01234567", nil
+	})
+	withUnpackPacketStub(t, func(opts pack.UnpackOptions) (string, error) {
+		if opts.InputPath != inputPath {
+			t.Fatalf("opts.InputPath = %q, want %q", opts.InputPath, inputPath)
+		}
+		if opts.OutDir != expectedOut {
+			t.Fatalf("opts.OutDir = %q, want %q", opts.OutDir, expectedOut)
+		}
+		if len(opts.AllowedSignerFingerprints) != 1 || opts.AllowedSignerFingerprints[0] != "0123456789ABCDEF0123456789ABCDEF01234567" {
+			t.Fatalf("opts.AllowedSignerFingerprints = %v", opts.AllowedSignerFingerprints)
+		}
+		return expectedOut, nil
+	})
+
+	got, err := ReceiverWorkflow(config.NewConfig(t.TempDir()), inputPath, expectedOut)
+	if err != nil {
+		t.Fatalf("ReceiverWorkflow() error = %v", err)
+	}
+	if got != expectedOut {
+		t.Fatalf("got = %q, want %q", got, expectedOut)
 	}
 }
 

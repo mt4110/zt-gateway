@@ -49,8 +49,8 @@ func TestCollectDashboardSnapshot_Basic(t *testing.T) {
 	}
 
 	snapshot := collectDashboardSnapshot(repoRoot, time.Now().UTC())
-	if snapshot.SchemaVersion != 1 {
-		t.Fatalf("SchemaVersion = %d, want 1", snapshot.SchemaVersion)
+	if snapshot.SchemaVersion != 7 {
+		t.Fatalf("SchemaVersion = %d, want 7", snapshot.SchemaVersion)
 	}
 	if snapshot.Audit.TotalCount != 1 {
 		t.Fatalf("Audit.TotalCount = %d, want 1", snapshot.Audit.TotalCount)
@@ -60,6 +60,9 @@ func TestCollectDashboardSnapshot_Basic(t *testing.T) {
 	}
 	if snapshot.Receipts[0].ReceiptID == "" {
 		t.Fatalf("receipt id is empty")
+	}
+	if snapshot.KPI.VerifyReceiptsTotal == 0 {
+		t.Fatalf("KPI.VerifyReceiptsTotal = 0, want >0")
 	}
 }
 

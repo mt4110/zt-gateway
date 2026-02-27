@@ -42,6 +42,12 @@ func TestEmitDoctorJSON_IncludesErrorCodeField(t *testing.T) {
 
 func TestRunConfigDoctor_JSONContract_Success(t *testing.T) {
 	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "scan_policy.toml"), []byte("required_scanners=[\"ClamAV\",\"YARA\"]\nrequire_clamav_db=true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfgPath := filepath.Join(t.TempDir(), "zt_client.toml")
 	if err := os.WriteFile(cfgPath, []byte("auto_sync=true\ncontrol_plane_url=\"https://cp.example\"\napi_key=\"test-key\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -90,6 +96,10 @@ func TestRunConfigDoctor_JSONContract_Success(t *testing.T) {
 		"control_plane_api_key",
 		"spool_dir",
 		"event_signing_key_env",
+		"scan_policy",
+		scanPostureRequiredScannersCheckName,
+		scanPostureClamAVDBStrictCheckName,
+		scanPostureBoundaryDegradedOverrideCheckName,
 		"team_boundary_policy_loaded",
 		"team_boundary_recipient_contract",
 		"team_boundary_signer_contract",
@@ -188,6 +198,98 @@ func TestRunConfigDoctor_JSONContract_FailMinimum_InvalidURL(t *testing.T) {
 	}
 	if !doctorCheckExistsWithStatus(got.Checks, "control_plane_url", "fail") {
 		t.Fatalf("expected fail control_plane_url: %#v", got.Checks)
+	}
+}
+
+func TestRunConfigDoctor_JSONContract_ScanPostureRequiredScannersFail(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "scan_policy.toml"), []byte("required_scanners=[]\nrequire_clamav_db=true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		err := runConfigDoctor(repoRoot, []string{"--json"})
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+	var got doctorResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v\n%s", err, out)
+	}
+	if got.OK {
+		t.Fatalf("OK = true, want false")
+	}
+	var postureCheck *doctorCheck
+	for i := range got.Checks {
+		if got.Checks[i].Name == scanPostureRequiredScannersCheckName {
+			postureCheck = &got.Checks[i]
+			break
+		}
+	}
+	if postureCheck == nil {
+		t.Fatalf("missing check: %s", scanPostureRequiredScannersCheckName)
+	}
+	if postureCheck.Status != "fail" {
+		t.Fatalf("status = %q, want fail", postureCheck.Status)
+	}
+	if postureCheck.Code != scanPostureRequiredScannersEmptyCode {
+		t.Fatalf("code = %q, want %q", postureCheck.Code, scanPostureRequiredScannersEmptyCode)
+	}
+}
+
+func TestRunConfigDoctor_JSONContract_RebuildSanitizerCoverageFail(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "extension_policy.toml"), []byte(`
+max_size_mb=50
+scan_only_extensions=[".txt"]
+scan_rebuild_extensions=[".jpg",".pdf"]
+deny_extensions=[".exe"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "policy", "scan_policy.toml"), []byte(`
+required_scanners=["ClamAV","YARA"]
+require_clamav_db=true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(securePackSignerFingerprintZTEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
+
+	out := captureStdout(t, func() {
+		err := runConfigDoctor(repoRoot, []string{"--json"})
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+	var got doctorResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v\n%s", err, out)
+	}
+	if got.OK {
+		t.Fatalf("OK = true, want false")
+	}
+	var rebuildCheck *doctorCheck
+	for i := range got.Checks {
+		if got.Checks[i].Name == rebuildSanitizerCoverageCheckName {
+			rebuildCheck = &got.Checks[i]
+			break
+		}
+	}
+	if rebuildCheck == nil {
+		t.Fatalf("missing check: %s", rebuildSanitizerCoverageCheckName)
+	}
+	if rebuildCheck.Status != "fail" {
+		t.Fatalf("status = %q, want fail", rebuildCheck.Status)
+	}
+	if rebuildCheck.Code != rebuildSanitizerUnsupportedExtsCode {
+		t.Fatalf("code = %q, want %q", rebuildCheck.Code, rebuildSanitizerUnsupportedExtsCode)
 	}
 }
 

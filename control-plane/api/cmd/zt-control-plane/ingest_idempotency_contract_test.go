@@ -13,6 +13,7 @@ import (
 
 func TestEventIngestIdempotencyContract_DuplicateAcceptedAndIdentified(t *testing.T) {
 	srv := newIngestContractServer(t, nil, false, nil)
+	srv.allowUnsignedEvents = true
 	handler := srv.handleEventIngest("scan")
 	body := []byte(`{"event_id":"evt_dup_1","result":"allow","reason":"clean"}`)
 
@@ -56,6 +57,7 @@ func TestEventIngestIdempotencyContract_DuplicateAcceptedAndIdentified(t *testin
 
 func TestEventIngestIdempotencyContract_NonDuplicateOnPayloadChange(t *testing.T) {
 	srv := newIngestContractServer(t, nil, false, nil)
+	srv.allowUnsignedEvents = true
 	handler := srv.handleEventIngest("scan")
 	bodyA := []byte(`{"event_id":"evt_dup_2","result":"allow","reason":"clean"}`)
 	bodyB := []byte(`{"event_id":"evt_dup_2","result":"allow","reason":"updated"}`)
@@ -91,6 +93,7 @@ func TestEventIngestIdempotencyContract_NonDuplicateOnPayloadChange(t *testing.T
 
 func TestEventIngestIdempotencyContract_EventIDRequired(t *testing.T) {
 	srv := newIngestContractServer(t, nil, false, nil)
+	srv.allowUnsignedEvents = true
 	handler := srv.handleEventIngest("scan")
 
 	rr := httptest.NewRecorder()

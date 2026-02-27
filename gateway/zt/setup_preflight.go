@@ -42,7 +42,8 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 	if strings.TrimSpace(extPolicyPath) == "" {
 		extPolicyPath = filepath.Join(repoRoot, "policy", "extension_policy.toml")
 	}
-	extPol, err := loadExtensionPolicy(extPolicyPath)
+	var extPol *extensionPolicy
+	loadedExtPol, err := loadExtensionPolicy(extPolicyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			out.Checks = append(out.Checks, setupCheck{
@@ -60,18 +61,33 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 			out.QuickFixes = append(out.QuickFixes, "Fix `policy/extension_policy.toml` syntax; `zt send` blocks on extension policy parse errors (fail-closed).")
 		}
 	} else {
+		extPol = &loadedExtPol
 		out.Checks = append(out.Checks, setupCheck{
 			Name:    "extension_policy",
 			Status:  "ok",
 			Message: fmt.Sprintf("max_size_mb=%d source=%s", extPol.MaxSizeMB, extPol.Source),
 		})
 	}
+	if extPol == nil {
+		out.Checks = append(out.Checks, setupCheck{
+			Name:    rebuildSanitizerCoverageCheckName,
+			Status:  "fail",
+			Code:    rebuildSanitizerPolicyUnavailableCode,
+			Message: "extension policy unavailable",
+		})
+		out.QuickFixes = append(out.QuickFixes, "Restore parseable extension policy artifacts before evaluating rebuild sanitizer coverage.")
+	} else {
+		rebuildCheck, rebuildFixes := buildRebuildSanitizerCoverageCheck(*extPol)
+		out.Checks = append(out.Checks, rebuildCheck)
+		out.QuickFixes = append(out.QuickFixes, rebuildFixes...)
+	}
 
 	scanPolicyPath := selection.ScanPolicyPath
 	if strings.TrimSpace(scanPolicyPath) == "" {
 		scanPolicyPath = filepath.Join(repoRoot, "policy", "scan_policy.toml")
 	}
-	scanPol, err := loadScanPolicy(scanPolicyPath)
+	var scanPol *scanPolicy
+	parsedScanPol, err := loadScanPolicy(scanPolicyPath)
 	if err != nil {
 		out.Checks = append(out.Checks, setupCheck{
 			Name:    "scan_policy",
@@ -80,6 +96,7 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 		})
 		out.QuickFixes = append(out.QuickFixes, "Fix `policy/scan_policy.toml` syntax; `zt send` blocks on scan policy parse errors (fail-closed).")
 	} else {
+		scanPol = &parsedScanPol
 		out.Checks = append(out.Checks, setupCheck{
 			Name:    "scan_policy",
 			Status:  "ok",
@@ -93,6 +110,30 @@ func collectSetupPreflightChecksWithPolicy(repoRoot string, selection trustProfi
 			}
 		}
 	}
+	if scanPol == nil {
+		out.Checks = append(out.Checks,
+			setupCheck{
+				Name:    scanPostureRequiredScannersCheckName,
+				Status:  "fail",
+				Code:    scanPosturePolicyUnavailableCode,
+				Message: "scan policy unavailable",
+			},
+			setupCheck{
+				Name:    scanPostureClamAVDBStrictCheckName,
+				Status:  "fail",
+				Code:    scanPosturePolicyUnavailableCode,
+				Message: "scan policy unavailable",
+			},
+		)
+		out.QuickFixes = append(out.QuickFixes, "Restore parseable scan policy artifacts before running `zt send`.")
+	} else {
+		scanPostureChecks, scanPostureFixes := buildScanPosturePolicyChecks(selection.Name, *scanPol)
+		out.Checks = append(out.Checks, scanPostureChecks...)
+		out.QuickFixes = append(out.QuickFixes, scanPostureFixes...)
+	}
+	boundaryPostureCheck, boundaryPostureFixes := buildScanPostureBoundaryCheck(repoRoot)
+	out.Checks = append(out.Checks, boundaryPostureCheck)
+	out.QuickFixes = append(out.QuickFixes, boundaryPostureFixes...)
 
 	recipCheck, recipClientCheck, recipFixes := buildSecurePackRecipientsSetupChecks(repoRoot)
 	out.Checks = append(out.Checks, recipCheck, recipClientCheck)

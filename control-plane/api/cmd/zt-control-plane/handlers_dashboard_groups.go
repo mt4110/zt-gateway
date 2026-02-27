@@ -20,6 +20,13 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		})
 		return
 	}
+
+	scope, tenantID, err := s.resolveDashboardAccess(r, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		writeDashboardAuthzError(w, err)
+		return
+	}
+
 	groupBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("group_by")))
 	if groupBy != "tenant" && groupBy != "kind" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_group_by"})
@@ -54,7 +61,6 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_include_zero"})
 		return
 	}
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
 	kindFilters, err := parseDashboardKindsQuery(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_kind"})
@@ -75,8 +81,8 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	whereClauses := make([]string, 0, 4)
-	args := make([]any, 0, 4)
+	whereClauses := make([]string, 0, 6)
+	args := make([]any, 0, 8)
 	if tenantID != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("envelope_tenant_id = $%d", len(args)+1))
 		args = append(args, tenantID)
@@ -123,12 +129,17 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 	}
 	grouped := make([]groupItem, 0)
 	var total int64
+	var tenantLeakDropped int64
 	for rows.Next() {
 		var key string
 		var count int64
 		if err := rows.Scan(&key, &count); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_group_scan_failed"})
 			return
+		}
+		if groupBy == "tenant" && tenantID != "" && strings.TrimSpace(key) != "" && strings.TrimSpace(key) != tenantID {
+			tenantLeakDropped += count
+			continue
 		}
 		total += count
 		grouped = append(grouped, groupItem{Key: key, Count: count})
@@ -204,5 +215,12 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		"window":            window,
 		"source":            "event_ingest",
 		"generated_at":      time.Now().UTC().Format(time.RFC3339),
+		"authz":             scope,
+		"tenant_isolation": map[string]any{
+			"enforced":             scope.Enforced,
+			"cross_tenant_allowed": scope.Role == dashboardRoleAdmin,
+			"effective_tenant_id":  tenantID,
+			"dropped_leak_rows":    tenantLeakDropped,
+		},
 	})
 }

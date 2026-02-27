@@ -60,6 +60,9 @@ func (s *server) decodeIncomingEvent(expectedEndpoint string, body []byte) (map[
 		return payload, meta, body, nil
 	}
 
+	if !s.allowUnsignedEvents {
+		return nil, envelopeMeta{}, body, fmt.Errorf("envelope.required")
+	}
 	if s.isEventKeyRegistryEnabled() || len(s.eventVerifyPub) > 0 {
 		return nil, envelopeMeta{}, body, fmt.Errorf("envelope.required")
 	}

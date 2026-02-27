@@ -1,11 +1,15 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+)
+
+const (
+	dashboardActivityDefaultPageSize = 20
+	dashboardActivityMaxPageSize     = 200
 )
 
 func (s *server) handleDashboardActivity(w http.ResponseWriter, r *http.Request) {
@@ -20,14 +24,19 @@ func (s *server) handleDashboardActivity(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
-	limit := 20
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
-	kindFilter := strings.TrimSpace(r.URL.Query().Get("kind"))
-	if kindFilter != "" && !isDashboardKind(kindFilter) {
+
+	scope, tenantID, err := s.resolveDashboardAccess(r, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		writeDashboardAuthzError(w, err)
+		return
+	}
+
+	kindFilters, err := parseDashboardKindsQuery(r)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_kind"})
 		return
 	}
-	kindFilter = strings.ToLower(kindFilter)
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	fromTime, fromSet, err := parseDashboardTimeParam(r.URL.Query().Get("from"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_from"})
@@ -42,92 +51,150 @@ func (s *server) handleDashboardActivity(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_time_range"})
 		return
 	}
-	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 && n <= 200 {
-			limit = n
+
+	pageSize := dashboardActivityDefaultPageSize
+	if v, ok, err := parsePositiveIntQuery(r, "page_size", dashboardActivityMaxPageSize); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_page_size"})
+		return
+	} else if ok {
+		pageSize = v
+	}
+	if v, ok, err := parsePositiveIntQuery(r, "limit", dashboardActivityMaxPageSize); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_limit"})
+		return
+	} else if ok {
+		pageSize = v
+	}
+	pageSize = normalizeDashboardActivityPageSize(pageSize)
+	page := 1
+	if v, ok, err := parsePositiveIntQuery(r, "page", 50000); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_page"})
+		return
+	} else if ok {
+		page = v
+	}
+	offset := (page - 1) * pageSize
+
+	sortBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
+	switch sortBy {
+	case "", "received_at_desc":
+		sortBy = "received_at_desc"
+	case "received_at_asc":
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_sort"})
+		return
+	}
+
+	exportMode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("export")))
+	exportCSV := exportMode == "csv"
+	if exportMode != "" && !exportCSV {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_export"})
+		return
+	}
+
+	whereClauses := make([]string, 0, 8)
+	args := make([]any, 0, 10)
+	if len(kindFilters) > 0 {
+		holders := make([]string, 0, len(kindFilters))
+		for _, k := range kindFilters {
+			args = append(args, k)
+			holders = append(holders, fmt.Sprintf("$%d", len(args)))
 		}
+		whereClauses = append(whereClauses, "kind in ("+strings.Join(holders, ",")+")")
+	}
+	if tenantID != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("envelope_tenant_id = $%d", len(args)+1))
+		args = append(args, tenantID)
+	}
+	if fromSet {
+		whereClauses = append(whereClauses, fmt.Sprintf("received_at >= $%d", len(args)+1))
+		args = append(args, fromTime)
+	}
+	if toSet {
+		whereClauses = append(whereClauses, fmt.Sprintf("received_at <= $%d", len(args)+1))
+		args = append(args, toTime)
+	}
+	if q != "" {
+		args = append(args, "%"+q+"%")
+		needleArg := fmt.Sprintf("$%d", len(args))
+		whereClauses = append(whereClauses,
+			"(coalesce(event_id,'') ilike "+needleArg+" or coalesce(envelope_tenant_id,'') ilike "+needleArg+" or coalesce(envelope_key_id,'') ilike "+needleArg+")")
+	}
+
+	baseFrom := "from event_ingest\n"
+	if len(whereClauses) > 0 {
+		baseFrom += "where " + strings.Join(whereClauses, " and ") + "\n"
+	}
+
+	var total int64
+	if err := s.db.QueryRowContext(r.Context(), "select count(*)::bigint\n"+baseFrom, args...).Scan(&total); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_count_failed"})
+		return
 	}
 
 	type recentRow struct {
+		IngestID         string    `json:"ingest_id"`
 		Kind             string    `json:"kind"`
 		EventID          string    `json:"event_id,omitempty"`
-		EnvelopeTenant   string    `json:"envelope_tenant_id,omitempty"`
+		EnvelopeTenantID string    `json:"envelope_tenant_id,omitempty"`
 		EnvelopeKeyID    string    `json:"envelope_key_id,omitempty"`
+		EnvelopePresent  bool      `json:"envelope_present"`
 		EnvelopeVerified bool      `json:"envelope_verified"`
+		SignatureAnomaly bool      `json:"signature_anomaly"`
 		ReceivedAt       time.Time `json:"received_at"`
 	}
-	recent := make([]recentRow, 0, limit)
+
 	recentSQL := `
-select kind, coalesce(event_id,''), coalesce(envelope_tenant_id,''), coalesce(envelope_key_id,''), envelope_verified, received_at
-from event_ingest
-`
-	recentClauses := make([]string, 0, 4)
-	recentArgs := make([]any, 0, 5)
-	if kindFilter != "" {
-		recentClauses = append(recentClauses, fmt.Sprintf("kind = $%d", len(recentArgs)+1))
-		recentArgs = append(recentArgs, kindFilter)
+select ingest_id, kind, coalesce(event_id,''), coalesce(envelope_tenant_id,''), coalesce(envelope_key_id,''), envelope_present, envelope_verified, received_at
+` + baseFrom
+	if sortBy == "received_at_asc" {
+		recentSQL += "order by received_at asc, ingest_id asc\n"
+	} else {
+		recentSQL += "order by received_at desc, ingest_id desc\n"
 	}
-	if tenantID != "" {
-		recentClauses = append(recentClauses, fmt.Sprintf("envelope_tenant_id = $%d", len(recentArgs)+1))
-		recentArgs = append(recentArgs, tenantID)
+	recentArgs := append([]any{}, args...)
+	if !exportCSV {
+		recentSQL += fmt.Sprintf("limit $%d offset $%d\n", len(recentArgs)+1, len(recentArgs)+2)
+		recentArgs = append(recentArgs, pageSize, offset)
 	}
-	if fromSet {
-		recentClauses = append(recentClauses, fmt.Sprintf("received_at >= $%d", len(recentArgs)+1))
-		recentArgs = append(recentArgs, fromTime)
-	}
-	if toSet {
-		recentClauses = append(recentClauses, fmt.Sprintf("received_at <= $%d", len(recentArgs)+1))
-		recentArgs = append(recentArgs, toTime)
-	}
-	if len(recentClauses) > 0 {
-		recentSQL += "where " + strings.Join(recentClauses, " and ") + "\n"
-	}
-	recentSQL += fmt.Sprintf("order by received_at desc\nlimit $%d\n", len(recentArgs)+1)
-	recentArgs = append(recentArgs, limit)
-	var rows *sql.Rows
-	rows, err = s.db.QueryContext(r.Context(), recentSQL, recentArgs...)
+
+	rows, err := s.db.QueryContext(r.Context(), recentSQL, recentArgs...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_query_failed"})
 		return
 	}
 	defer rows.Close()
+
+	recent := make([]recentRow, 0)
+	tenantLeakDropped := 0
 	for rows.Next() {
 		var rr recentRow
-		if err := rows.Scan(&rr.Kind, &rr.EventID, &rr.EnvelopeTenant, &rr.EnvelopeKeyID, &rr.EnvelopeVerified, &rr.ReceivedAt); err != nil {
+		if err := rows.Scan(&rr.IngestID, &rr.Kind, &rr.EventID, &rr.EnvelopeTenantID, &rr.EnvelopeKeyID, &rr.EnvelopePresent, &rr.EnvelopeVerified, &rr.ReceivedAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_scan_failed"})
 			return
 		}
+		if tenantID != "" && strings.TrimSpace(rr.EnvelopeTenantID) != "" && strings.TrimSpace(rr.EnvelopeTenantID) != tenantID {
+			tenantLeakDropped++
+			continue
+		}
+		rr.SignatureAnomaly = rr.EnvelopePresent && !rr.EnvelopeVerified
 		recent = append(recent, rr)
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_scan_failed"})
+		return
 	}
 
 	kindCounts := map[string]int64{}
-	countSQL := `
-select kind, count(*)::bigint
-from event_ingest
-`
-	countClauses := make([]string, 0, 4)
-	countArgs := make([]any, 0, 4)
-	if kindFilter != "" {
-		countClauses = append(countClauses, fmt.Sprintf("kind = $%d", len(countArgs)+1))
-		countArgs = append(countArgs, kindFilter)
+	countWhere := make([]string, 0, len(whereClauses)+1)
+	countWhere = append(countWhere, whereClauses...)
+	countArgs := append([]any{}, args...)
+	if !fromSet {
+		countWhere = append(countWhere, "received_at >= now() - interval '24 hours'")
 	}
-	if tenantID != "" {
-		countClauses = append(countClauses, fmt.Sprintf("envelope_tenant_id = $%d", len(countArgs)+1))
-		countArgs = append(countArgs, tenantID)
-	}
-	if fromSet {
-		countClauses = append(countClauses, fmt.Sprintf("received_at >= $%d", len(countArgs)+1))
-		countArgs = append(countArgs, fromTime)
-	} else {
-		countClauses = append(countClauses, "received_at >= now() - interval '24 hours'")
-	}
-	if toSet {
-		countClauses = append(countClauses, fmt.Sprintf("received_at <= $%d", len(countArgs)+1))
-		countArgs = append(countArgs, toTime)
-	}
-	if len(countClauses) > 0 {
-		countSQL += "where " + strings.Join(countClauses, " and ") + "\n"
+	countSQL := "select kind, count(*)::bigint\nfrom event_ingest\n"
+	if len(countWhere) > 0 {
+		countSQL += "where " + strings.Join(countWhere, " and ") + "\n"
 	}
 	countSQL += "group by kind\n"
 	countRows, err := s.db.QueryContext(r.Context(), countSQL, countArgs...)
@@ -144,30 +211,35 @@ from event_ingest
 		}
 	}
 
-	var total int64
-	totalSQL := `select count(*)::bigint from event_ingest`
-	totalClauses := make([]string, 0, 4)
-	totalArgs := make([]any, 0, 4)
-	if kindFilter != "" {
-		totalClauses = append(totalClauses, fmt.Sprintf("kind = $%d", len(totalArgs)+1))
-		totalArgs = append(totalArgs, kindFilter)
+	if exportCSV {
+		csvRows := make([][]string, 0, len(recent))
+		for _, rr := range recent {
+			csvRows = append(csvRows, []string{
+				rr.IngestID,
+				rr.Kind,
+				rr.EventID,
+				rr.EnvelopeTenantID,
+				rr.EnvelopeKeyID,
+				fmt.Sprintf("%t", rr.EnvelopePresent),
+				fmt.Sprintf("%t", rr.EnvelopeVerified),
+				fmt.Sprintf("%t", rr.SignatureAnomaly),
+				rr.ReceivedAt.UTC().Format(time.RFC3339),
+			})
+		}
+		writeDashboardCSV(w, "dashboard-activity.csv", []string{
+			"ingest_id", "kind", "event_id", "tenant_id", "key_id", "envelope_present", "envelope_verified", "signature_anomaly", "received_at",
+		}, csvRows)
+		return
 	}
-	if tenantID != "" {
-		totalClauses = append(totalClauses, fmt.Sprintf("envelope_tenant_id = $%d", len(totalArgs)+1))
-		totalArgs = append(totalArgs, tenantID)
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
 	}
-	if fromSet {
-		totalClauses = append(totalClauses, fmt.Sprintf("received_at >= $%d", len(totalArgs)+1))
-		totalArgs = append(totalArgs, fromTime)
+	nextPage := 0
+	if totalPages > page {
+		nextPage = page + 1
 	}
-	if toSet {
-		totalClauses = append(totalClauses, fmt.Sprintf("received_at <= $%d", len(totalArgs)+1))
-		totalArgs = append(totalArgs, toTime)
-	}
-	if len(totalClauses) > 0 {
-		totalSQL += " where " + strings.Join(totalClauses, " and ")
-	}
-	_ = s.db.QueryRowContext(r.Context(), totalSQL, totalArgs...).Scan(&total)
 
 	window := map[string]any{"mode": "last_24h"}
 	if fromSet || toSet {
@@ -180,14 +252,40 @@ from event_ingest
 		window["to"] = toTime.UTC().Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total_events":    total,
-		"last_24h_counts": kindCounts,
-		"recent":          recent,
-		"limit":           limit,
-		"kind":            kindFilter,
-		"tenant_id":       tenantID,
-		"window":          window,
-		"source":          "event_ingest",
-		"generated_at":    time.Now().UTC().Format(time.RFC3339),
+		"total_events":      total,
+		"last_24h_counts":   kindCounts,
+		"recent":            recent,
+		"limit":             pageSize,
+		"page":              page,
+		"page_size":         pageSize,
+		"offset":            offset,
+		"total_pages":       totalPages,
+		"next_page":         nextPage,
+		"sort":              sortBy,
+		"q":                 q,
+		"kind":              firstOrEmpty(kindFilters),
+		"kinds":             kindFilters,
+		"kind_filter_state": kindFilterState(kindFilters),
+		"tenant_id":         tenantID,
+		"window":            window,
+		"source":            "event_ingest",
+		"generated_at":      time.Now().UTC().Format(time.RFC3339),
+		"authz":             scope,
+		"tenant_isolation": map[string]any{
+			"enforced":             scope.Enforced,
+			"cross_tenant_allowed": scope.Role == dashboardRoleAdmin,
+			"effective_tenant_id":  tenantID,
+			"dropped_leak_rows":    tenantLeakDropped,
+		},
 	})
+}
+
+func normalizeDashboardActivityPageSize(pageSize int) int {
+	if pageSize <= 0 {
+		return dashboardActivityDefaultPageSize
+	}
+	if pageSize > dashboardActivityMaxPageSize {
+		return dashboardActivityMaxPageSize
+	}
+	return pageSize
 }
