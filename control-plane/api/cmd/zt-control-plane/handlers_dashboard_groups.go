@@ -129,12 +129,17 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 	}
 	grouped := make([]groupItem, 0)
 	var total int64
+	tenantLeakDropped := 0
 	for rows.Next() {
 		var key string
 		var count int64
 		if err := rows.Scan(&key, &count); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_group_scan_failed"})
 			return
+		}
+		if groupBy == "tenant" && tenantID != "" && strings.TrimSpace(key) != "" && strings.TrimSpace(key) != tenantID {
+			tenantLeakDropped += int(count)
+			continue
 		}
 		total += count
 		grouped = append(grouped, groupItem{Key: key, Count: count})
@@ -215,6 +220,7 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 			"enforced":             scope.Enforced,
 			"cross_tenant_allowed": scope.Role == dashboardRoleAdmin,
 			"effective_tenant_id":  tenantID,
+			"dropped_leak_rows":    tenantLeakDropped,
 		},
 	})
 }

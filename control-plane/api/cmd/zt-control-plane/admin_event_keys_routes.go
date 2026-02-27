@@ -71,13 +71,13 @@ func (s *server) handleAdminEventKeys(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "post_does_not_accept_path_key_id"})
 			return
 		}
-		s.handleAdminEventKeysUpsert(w, r, "", false)
+		s.handleAdminEventKeysUpsert(w, r, "", false, authCtx)
 	case http.MethodPut:
-		s.handleAdminEventKeysUpsert(w, r, keyIDInPath, true)
+		s.handleAdminEventKeysUpsert(w, r, keyIDInPath, true, authCtx)
 	case http.MethodPatch:
-		s.handleAdminEventKeysPatch(w, r, keyIDInPath)
+		s.handleAdminEventKeysPatch(w, r, keyIDInPath, authCtx)
 	case http.MethodDelete:
-		s.handleAdminEventKeysDelete(w, r, keyIDInPath)
+		s.handleAdminEventKeysDelete(w, r, keyIDInPath, authCtx)
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 	}

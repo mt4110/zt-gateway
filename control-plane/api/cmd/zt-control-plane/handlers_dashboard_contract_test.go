@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -121,6 +122,73 @@ func TestDashboardActivityCSVExportContract(t *testing.T) {
 	}
 	if !strings.Contains(body, "\"ing-1\"") {
 		t.Fatalf("csv row missing ingest id: %s", body)
+	}
+	assertDashboardNoDBLeak(t, mock)
+}
+
+func TestDashboardActivityCSVExportContract_DropsCrossTenantRowsAtScale(t *testing.T) {
+	t.Parallel()
+
+	srv, mock, cleanup := newDashboardContractServer(t, "secret")
+	defer cleanup()
+
+	mock.ExpectQuery(regexp.QuoteMeta("select count(*)::bigint\nfrom event_ingest\nwhere envelope_tenant_id = $1\n")).
+		WithArgs("tenant-a").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1005))
+
+	rows := sqlmock.NewRows([]string{
+		"ingest_id", "kind", "event_id", "envelope_tenant_id", "envelope_key_id", "envelope_present", "envelope_verified", "received_at",
+	})
+	baseTime := time.Date(2026, time.February, 27, 2, 0, 0, 0, time.UTC)
+	for i := 0; i < 1000; i++ {
+		rows.AddRow(
+			fmt.Sprintf("ing-a-%04d", i),
+			"verify",
+			fmt.Sprintf("evt-a-%04d", i),
+			"tenant-a",
+			"key-a",
+			true,
+			true,
+			baseTime.Add(time.Duration(i)*time.Second),
+		)
+	}
+	for i := 0; i < 5; i++ {
+		rows.AddRow(
+			fmt.Sprintf("ing-b-%04d", i),
+			"verify",
+			fmt.Sprintf("evt-b-%04d", i),
+			"tenant-b",
+			"key-b",
+			true,
+			true,
+			baseTime.Add(time.Duration(2000+i)*time.Second),
+		)
+	}
+	mock.ExpectQuery(`(?s)select ingest_id, kind, coalesce\(event_id,''\), coalesce\(envelope_tenant_id,''\), coalesce\(envelope_key_id,''\), envelope_present, envelope_verified, received_at`).
+		WithArgs("tenant-a").
+		WillReturnRows(rows)
+
+	mock.ExpectQuery(`(?s)select kind, count\(\*\)::bigint\s+from event_ingest`).
+		WithArgs("tenant-a").
+		WillReturnRows(sqlmock.NewRows([]string{"kind", "count"}).AddRow("verify", 1005))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/dashboard/activity?export=csv", nil)
+	req.Header.Set("X-API-Key", "secret")
+	req.Header.Set("X-ZT-Tenant-ID", "tenant-a")
+	rr := httptest.NewRecorder()
+	srv.handleDashboardActivity(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	lines := strings.Split(strings.TrimSpace(rr.Body.String()), "\n")
+	if len(lines) != 1001 { // header + 1000 tenant-a rows
+		t.Fatalf("csv lines=%d, want 1001", len(lines))
+	}
+	for _, line := range lines {
+		if strings.Contains(line, `"tenant-b"`) {
+			t.Fatalf("cross-tenant leak detected in csv output")
+		}
 	}
 	assertDashboardNoDBLeak(t, mock)
 }

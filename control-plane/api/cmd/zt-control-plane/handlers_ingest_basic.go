@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,19 +12,106 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	controlPlaneHAEnabledEnv             = "ZT_CP_HA_ENABLED"
+	controlPlaneHARPOObjectiveSecondsEnv = "ZT_CP_HA_RPO_OBJECTIVE_SECONDS"
+	controlPlaneHARTOObjectiveSecondsEnv = "ZT_CP_HA_RTO_OBJECTIVE_SECONDS"
+)
+
+type controlPlaneHAStatus struct {
+	Enabled             bool   `json:"enabled"`
+	Mode                string `json:"mode"`
+	MeasurementReady    bool   `json:"measurement_ready"`
+	MeasurementSource   string `json:"measurement_source,omitempty"`
+	MeasuredAt          string `json:"measured_at,omitempty"`
+	RPOObjectiveSeconds int64  `json:"rpo_objective_seconds"`
+	RTOObjectiveSeconds int64  `json:"rto_objective_seconds"`
+	RPOMeasuredSeconds  int64  `json:"rpo_measured_seconds"`
+	RTOMeasuredSeconds  int64  `json:"rto_measured_seconds"`
+	RPOMet              bool   `json:"rpo_met"`
+	RTOMet              bool   `json:"rto_met"`
+	Notes               string `json:"notes,omitempty"`
+}
 
 func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 		return
 	}
+	now := time.Now().UTC()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
+		"time":   now.Format(time.RFC3339),
+		"ha":     s.collectControlPlaneHAStatus(r.Context(), now),
 	})
+}
+
+func (s *server) collectControlPlaneHAStatus(ctx context.Context, now time.Time) controlPlaneHAStatus {
+	out := controlPlaneHAStatus{
+		Enabled:             envBoolCP(controlPlaneHAEnabledEnv),
+		Mode:                "single",
+		MeasurementReady:    false,
+		RPOObjectiveSeconds: parsePositiveInt64Env(controlPlaneHARPOObjectiveSecondsEnv, 60),
+		RTOObjectiveSeconds: parsePositiveInt64Env(controlPlaneHARTOObjectiveSecondsEnv, 300),
+		RPOMeasuredSeconds:  -1,
+		RTOMeasuredSeconds:  -1,
+	}
+	if out.Enabled {
+		out.Mode = "ha"
+	}
+	if s == nil || s.db == nil {
+		out.Notes = "postgres_not_configured"
+		return out
+	}
+
+	var latest sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `select max(received_at) from event_ingest`).Scan(&latest); err != nil {
+		out.Notes = "ha_measurement_failed"
+		return out
+	}
+	if !latest.Valid {
+		out.Notes = "ha_measurement_no_data"
+		return out
+	}
+	out.MeasurementReady = true
+	out.MeasurementSource = "event_ingest"
+	out.MeasuredAt = now.Format(time.RFC3339)
+	out.RPOMeasuredSeconds = int64(now.Sub(latest.Time.UTC()).Seconds())
+
+	var maxGapSec sql.NullFloat64
+	if err := s.db.QueryRowContext(ctx, `
+select max(extract(epoch from gap))
+from (
+  select received_at - lag(received_at) over (order by received_at) as gap
+  from event_ingest
+  where received_at >= $1
+) g
+where gap is not null
+`, now.Add(-24*time.Hour)).Scan(&maxGapSec); err == nil && maxGapSec.Valid && maxGapSec.Float64 >= 0 {
+		out.RTOMeasuredSeconds = int64(maxGapSec.Float64)
+	} else {
+		out.RTOMeasuredSeconds = 0
+	}
+	out.RPOMet = out.RPOMeasuredSeconds <= out.RPOObjectiveSeconds
+	out.RTOMet = out.RTOMeasuredSeconds <= out.RTOObjectiveSeconds
+	return out
+}
+
+func parsePositiveInt64Env(name string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
 }
 
 func (s *server) handleEventIngest(kind string) http.HandlerFunc {

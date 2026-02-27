@@ -160,11 +160,16 @@ select ingest_id, kind, coalesce(event_id,''), coalesce(envelope_tenant_id,''), 
 	defer rows.Close()
 
 	recent := make([]recentRow, 0, pageSize)
+	tenantLeakDropped := 0
 	for rows.Next() {
 		var rr recentRow
 		if err := rows.Scan(&rr.IngestID, &rr.Kind, &rr.EventID, &rr.EnvelopeTenantID, &rr.EnvelopeKeyID, &rr.EnvelopePresent, &rr.EnvelopeVerified, &rr.ReceivedAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_scan_failed"})
 			return
+		}
+		if tenantID != "" && strings.TrimSpace(rr.EnvelopeTenantID) != "" && strings.TrimSpace(rr.EnvelopeTenantID) != tenantID {
+			tenantLeakDropped++
+			continue
 		}
 		rr.SignatureAnomaly = rr.EnvelopePresent && !rr.EnvelopeVerified
 		recent = append(recent, rr)
@@ -264,6 +269,7 @@ select ingest_id, kind, coalesce(event_id,''), coalesce(envelope_tenant_id,''), 
 			"enforced":             scope.Enforced,
 			"cross_tenant_allowed": scope.Role == dashboardRoleAdmin,
 			"effective_tenant_id":  tenantID,
+			"dropped_leak_rows":    tenantLeakDropped,
 		},
 	})
 }

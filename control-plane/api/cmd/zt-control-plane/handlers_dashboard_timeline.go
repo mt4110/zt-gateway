@@ -116,6 +116,7 @@ order by received_at asc
 	start := truncateTimeStep(fromTime, step)
 	end := truncateTimeStep(toTime, step)
 	bucketMap := map[int64]*dashboardTimeseriesBucket{}
+	tenantLeakDropped := 0
 
 	for rows.Next() {
 		var receivedAt time.Time
@@ -127,6 +128,10 @@ order by received_at asc
 		if err := rows.Scan(&receivedAt, &kind, &envelopePresent, &envelopeVerified, &envelopeTenantID, &result); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "dashboard_timeseries_scan_failed"})
 			return
+		}
+		if tenantID != "" && strings.TrimSpace(envelopeTenantID) != "" && strings.TrimSpace(envelopeTenantID) != tenantID {
+			tenantLeakDropped++
+			continue
 		}
 		bucketStart := truncateTimeStep(receivedAt.UTC(), step)
 		k := bucketStart.Unix()
@@ -223,6 +228,12 @@ order by received_at asc
 		"generated_at":   now.Format(time.RFC3339),
 		"source":         "event_ingest",
 		"authz":          scope,
+		"tenant_isolation": map[string]any{
+			"enforced":             scope.Enforced,
+			"cross_tenant_allowed": scope.Role == dashboardRoleAdmin,
+			"effective_tenant_id":  tenantID,
+			"dropped_leak_rows":    tenantLeakDropped,
+		},
 	})
 }
 
@@ -293,6 +304,10 @@ limit 1
 		&envelopeKeyID,
 	)
 	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "event_not_found"})
+		return
+	}
+	if tenantID != "" && strings.TrimSpace(envelopeTenantID) != "" && strings.TrimSpace(envelopeTenantID) != tenantID {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "event_not_found"})
 		return
 	}

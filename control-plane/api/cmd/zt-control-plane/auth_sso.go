@@ -19,6 +19,10 @@ import (
 const (
 	controlPlaneSSOEnabledEnv      = "ZT_CP_SSO_ENABLED"
 	controlPlaneSSOIssuerEnv       = "ZT_CP_SSO_ISSUER"
+	controlPlaneSSOTrustedIssuers  = "ZT_CP_SSO_TRUSTED_ISSUERS"
+	controlPlaneSSOEnterpriseEnv   = "ZT_CP_SSO_ENTERPRISE_ISSUERS"
+	controlPlaneSSOPolicyEnv       = "ZT_CP_SSO_ENTERPRISE_POLICY"
+	controlPlaneSSOAppleIssuerEnv  = "ZT_CP_SSO_APPLE_ISSUER"
 	controlPlaneSSOAudienceEnv     = "ZT_CP_SSO_AUDIENCE"
 	controlPlaneSSORoleClaimEnv    = "ZT_CP_SSO_ROLE_CLAIM"
 	controlPlaneSSOTenantClaimEnv  = "ZT_CP_SSO_TENANT_CLAIM"
@@ -30,18 +34,29 @@ const (
 	controlPlaneSSORS256PubkeyEnv  = "ZT_CP_SSO_JWT_RS256_PUBKEY_PEM"
 )
 
+const (
+	controlPlaneSSOPolicyAllowAll          = "allow_all"
+	controlPlaneSSOPolicyEnterpriseOnly    = "enterprise_only"
+	controlPlaneSSOPolicyEnterpriseOrApple = "enterprise_or_apple"
+	controlPlaneDefaultAppleIssuer         = "https://appleid.apple.com"
+)
+
 type controlPlaneSSOConfig struct {
-	Enabled       bool
-	Issuer        string
-	Audience      string
-	RoleClaim     string
-	TenantClaim   string
-	SubjectClaim  string
-	AMRClaim      string
-	AuthTimeClaim string
-	AdminRoles    map[string]struct{}
-	HS256Secret   []byte
-	RS256Public   *rsa.PublicKey
+	Enabled           bool
+	Issuer            string
+	TrustedIssuers    map[string]struct{}
+	EnterpriseIssuers map[string]struct{}
+	AppleIssuer       string
+	EnterprisePolicy  string
+	Audience          string
+	RoleClaim         string
+	TenantClaim       string
+	SubjectClaim      string
+	AMRClaim          string
+	AuthTimeClaim     string
+	AdminRoles        map[string]struct{}
+	HS256Secret       []byte
+	RS256Public       *rsa.PublicKey
 }
 
 type controlPlaneAuthContext struct {
@@ -67,15 +82,30 @@ func (e *controlPlaneAuthError) Error() string {
 
 func loadControlPlaneSSOConfig() (*controlPlaneSSOConfig, error) {
 	cfg := &controlPlaneSSOConfig{
-		Enabled:       envBoolCP(controlPlaneSSOEnabledEnv),
-		Issuer:        strings.TrimSpace(os.Getenv(controlPlaneSSOIssuerEnv)),
-		Audience:      strings.TrimSpace(os.Getenv(controlPlaneSSOAudienceEnv)),
-		RoleClaim:     strings.TrimSpace(os.Getenv(controlPlaneSSORoleClaimEnv)),
-		TenantClaim:   strings.TrimSpace(os.Getenv(controlPlaneSSOTenantClaimEnv)),
-		SubjectClaim:  strings.TrimSpace(os.Getenv(controlPlaneSSOSubjectClaimEnv)),
-		AMRClaim:      strings.TrimSpace(os.Getenv(controlPlaneSSOAMRClaimEnv)),
-		AuthTimeClaim: strings.TrimSpace(os.Getenv(controlPlaneSSOAuthTimeEnv)),
-		AdminRoles:    map[string]struct{}{},
+		Enabled:           envBoolCP(controlPlaneSSOEnabledEnv),
+		Issuer:            strings.TrimSpace(os.Getenv(controlPlaneSSOIssuerEnv)),
+		TrustedIssuers:    map[string]struct{}{},
+		EnterpriseIssuers: map[string]struct{}{},
+		AppleIssuer:       strings.TrimSpace(os.Getenv(controlPlaneSSOAppleIssuerEnv)),
+		EnterprisePolicy:  strings.TrimSpace(strings.ToLower(os.Getenv(controlPlaneSSOPolicyEnv))),
+		Audience:          strings.TrimSpace(os.Getenv(controlPlaneSSOAudienceEnv)),
+		RoleClaim:         strings.TrimSpace(os.Getenv(controlPlaneSSORoleClaimEnv)),
+		TenantClaim:       strings.TrimSpace(os.Getenv(controlPlaneSSOTenantClaimEnv)),
+		SubjectClaim:      strings.TrimSpace(os.Getenv(controlPlaneSSOSubjectClaimEnv)),
+		AMRClaim:          strings.TrimSpace(os.Getenv(controlPlaneSSOAMRClaimEnv)),
+		AuthTimeClaim:     strings.TrimSpace(os.Getenv(controlPlaneSSOAuthTimeEnv)),
+		AdminRoles:        map[string]struct{}{},
+	}
+	if cfg.AppleIssuer == "" {
+		cfg.AppleIssuer = controlPlaneDefaultAppleIssuer
+	}
+	if cfg.EnterprisePolicy == "" {
+		cfg.EnterprisePolicy = controlPlaneSSOPolicyAllowAll
+	}
+	switch cfg.EnterprisePolicy {
+	case controlPlaneSSOPolicyAllowAll, controlPlaneSSOPolicyEnterpriseOnly, controlPlaneSSOPolicyEnterpriseOrApple:
+	default:
+		return nil, fmt.Errorf("invalid %s: %q", controlPlaneSSOPolicyEnv, cfg.EnterprisePolicy)
 	}
 	if cfg.RoleClaim == "" {
 		cfg.RoleClaim = "role"
@@ -102,6 +132,24 @@ func loadControlPlaneSSOConfig() (*controlPlaneSSOConfig, error) {
 	if len(cfg.AdminRoles) == 0 {
 		cfg.AdminRoles[dashboardRoleAdmin] = struct{}{}
 	}
+	for _, issuer := range splitCSV(os.Getenv(controlPlaneSSOTrustedIssuers)) {
+		cfg.TrustedIssuers[strings.TrimSpace(issuer)] = struct{}{}
+	}
+	if strings.TrimSpace(cfg.Issuer) != "" {
+		cfg.TrustedIssuers[strings.TrimSpace(cfg.Issuer)] = struct{}{}
+	}
+	for _, issuer := range splitCSV(os.Getenv(controlPlaneSSOEnterpriseEnv)) {
+		cfg.EnterpriseIssuers[strings.TrimSpace(issuer)] = struct{}{}
+	}
+	if len(cfg.EnterpriseIssuers) == 0 && strings.TrimSpace(cfg.Issuer) != "" {
+		cfg.EnterpriseIssuers[strings.TrimSpace(cfg.Issuer)] = struct{}{}
+	}
+	if cfg.EnterprisePolicy == controlPlaneSSOPolicyEnterpriseOrApple && strings.TrimSpace(cfg.AppleIssuer) != "" {
+		cfg.TrustedIssuers[strings.TrimSpace(cfg.AppleIssuer)] = struct{}{}
+	}
+	if len(cfg.TrustedIssuers) == 0 && strings.TrimSpace(cfg.Issuer) != "" {
+		cfg.TrustedIssuers[strings.TrimSpace(cfg.Issuer)] = struct{}{}
+	}
 
 	hsSecret := strings.TrimSpace(os.Getenv(controlPlaneSSOHS256SecretEnv))
 	if hsSecret != "" {
@@ -121,6 +169,9 @@ func loadControlPlaneSSOConfig() (*controlPlaneSSOConfig, error) {
 	}
 	if cfg.Issuer == "" {
 		return nil, fmt.Errorf("%s=1 requires %s", controlPlaneSSOEnabledEnv, controlPlaneSSOIssuerEnv)
+	}
+	if len(cfg.TrustedIssuers) == 0 {
+		return nil, fmt.Errorf("%s=1 requires trusted issuer configuration", controlPlaneSSOEnabledEnv)
 	}
 	if cfg.Audience == "" {
 		return nil, fmt.Errorf("%s=1 requires %s", controlPlaneSSOEnabledEnv, controlPlaneSSOAudienceEnv)
@@ -233,12 +284,18 @@ func (cfg *controlPlaneSSOConfig) authenticateBearerToken(r *http.Request, requi
 		}
 	},
 		jwt.WithValidMethods([]string{"HS256", "RS256"}),
-		jwt.WithIssuer(cfg.Issuer),
 		jwt.WithAudience(cfg.Audience),
 		jwt.WithLeeway(30*time.Second),
 	)
 	if err != nil || tok == nil || !tok.Valid {
 		return ctx, &controlPlaneAuthError{Status: http.StatusUnauthorized, Code: "invalid_bearer_token"}
+	}
+	issuer := strings.TrimSpace(claimString(claims, "iss"))
+	if !cfg.isTrustedIssuer(issuer) {
+		return ctx, &controlPlaneAuthError{Status: http.StatusUnauthorized, Code: "invalid_bearer_token"}
+	}
+	if !cfg.isEnterprisePolicyAllowed(issuer) {
+		return ctx, &controlPlaneAuthError{Status: http.StatusForbidden, Code: "sso_policy_violation"}
 	}
 
 	ctx.Subject = claimString(claims, cfg.SubjectClaim)
@@ -251,6 +308,42 @@ func (cfg *controlPlaneSSOConfig) authenticateBearerToken(r *http.Request, requi
 		return ctx, &controlPlaneAuthError{Status: http.StatusForbidden, Code: "role_not_allowed"}
 	}
 	return ctx, nil
+}
+
+func (cfg *controlPlaneSSOConfig) isTrustedIssuer(issuer string) bool {
+	issuer = strings.TrimSpace(issuer)
+	if issuer == "" {
+		return false
+	}
+	if len(cfg.TrustedIssuers) == 0 {
+		return issuer == strings.TrimSpace(cfg.Issuer)
+	}
+	_, ok := cfg.TrustedIssuers[issuer]
+	return ok
+}
+
+func (cfg *controlPlaneSSOConfig) isEnterprisePolicyAllowed(issuer string) bool {
+	issuer = strings.TrimSpace(issuer)
+	if issuer == "" {
+		return false
+	}
+	policy := strings.TrimSpace(cfg.EnterprisePolicy)
+	if policy == "" {
+		policy = controlPlaneSSOPolicyAllowAll
+	}
+	switch policy {
+	case controlPlaneSSOPolicyEnterpriseOnly:
+		_, ok := cfg.EnterpriseIssuers[issuer]
+		return ok
+	case controlPlaneSSOPolicyEnterpriseOrApple:
+		if issuer == strings.TrimSpace(cfg.AppleIssuer) {
+			return true
+		}
+		_, ok := cfg.EnterpriseIssuers[issuer]
+		return ok
+	default:
+		return true
+	}
 }
 
 func (cfg *controlPlaneSSOConfig) mapDashboardRole(claims jwt.MapClaims) string {

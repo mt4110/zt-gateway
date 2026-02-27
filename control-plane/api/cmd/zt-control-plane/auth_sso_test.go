@@ -17,6 +17,9 @@ func TestLoadControlPlaneSSOConfigValidation(t *testing.T) {
 	t.Setenv(controlPlaneSSOAudienceEnv, "")
 	t.Setenv(controlPlaneSSOHS256SecretEnv, "")
 	t.Setenv(controlPlaneSSORS256PubkeyEnv, "")
+	t.Setenv(controlPlaneSSOPolicyEnv, "")
+	t.Setenv(controlPlaneSSOTrustedIssuers, "")
+	t.Setenv(controlPlaneSSOEnterpriseEnv, "")
 
 	_, err := loadControlPlaneSSOConfig()
 	if err == nil || !strings.Contains(err.Error(), controlPlaneSSOIssuerEnv) {
@@ -43,16 +46,34 @@ func TestLoadControlPlaneSSOConfigValidation(t *testing.T) {
 	if !cfg.Enabled {
 		t.Fatalf("cfg.Enabled = false, want true")
 	}
+	if !cfg.isTrustedIssuer("https://issuer.example") {
+		t.Fatalf("issuer should be in trusted issuer set")
+	}
+}
+
+func TestLoadControlPlaneSSOConfig_EnterprisePolicyValidation(t *testing.T) {
+	t.Setenv(controlPlaneSSOEnabledEnv, "1")
+	t.Setenv(controlPlaneSSOIssuerEnv, "https://issuer.example")
+	t.Setenv(controlPlaneSSOAudienceEnv, "zt-cp")
+	t.Setenv(controlPlaneSSOHS256SecretEnv, "test-secret")
+	t.Setenv(controlPlaneSSOPolicyEnv, "invalid")
+
+	_, err := loadControlPlaneSSOConfig()
+	if err == nil || !strings.Contains(err.Error(), controlPlaneSSOPolicyEnv) {
+		t.Fatalf("expected policy validation error, got %v", err)
+	}
 }
 
 func TestControlPlaneSSOAuthenticateBearerToken(t *testing.T) {
 	cfg := &controlPlaneSSOConfig{
-		Enabled:      true,
-		Issuer:       "https://issuer.example",
-		Audience:     "zt-cp",
-		RoleClaim:    "roles",
-		TenantClaim:  "tenant_id",
-		SubjectClaim: "sub",
+		Enabled:          true,
+		Issuer:           "https://issuer.example",
+		TrustedIssuers:   map[string]struct{}{"https://issuer.example": {}},
+		EnterprisePolicy: controlPlaneSSOPolicyAllowAll,
+		Audience:         "zt-cp",
+		RoleClaim:        "roles",
+		TenantClaim:      "tenant_id",
+		SubjectClaim:     "sub",
 		AdminRoles: map[string]struct{}{
 			dashboardRoleAdmin: {},
 			"security-admin":   {},
@@ -126,16 +147,75 @@ func TestControlPlaneSSOAuthenticateBearerToken(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("enterprise_policy_allows_apple", func(t *testing.T) {
+		cfgApple := *cfg
+		cfgApple.TrustedIssuers = map[string]struct{}{
+			"https://issuer.example":       {},
+			controlPlaneDefaultAppleIssuer: {},
+		}
+		cfgApple.EnterpriseIssuers = map[string]struct{}{
+			"https://issuer.example": {},
+		}
+		cfgApple.EnterprisePolicy = controlPlaneSSOPolicyEnterpriseOrApple
+		cfgApple.AppleIssuer = controlPlaneDefaultAppleIssuer
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/dashboard/activity", nil)
+		token := mustTestJWT(t, cfg.HS256Secret, map[string]any{
+			"iss":       controlPlaneDefaultAppleIssuer,
+			"aud":       cfg.Audience,
+			"sub":       "apple-user",
+			"tenant_id": "tenant-a",
+			"roles":     []string{dashboardRoleViewer},
+			"exp":       time.Now().Add(1 * time.Hour).Unix(),
+		})
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		if _, err := cfgApple.authenticateBearerToken(req, false); err != nil {
+			t.Fatalf("apple token should be accepted: %v", err)
+		}
+	})
+
+	t.Run("enterprise_policy_rejects_apple_when_enterprise_only", func(t *testing.T) {
+		cfgEnterpriseOnly := *cfg
+		cfgEnterpriseOnly.TrustedIssuers = map[string]struct{}{
+			"https://issuer.example":       {},
+			controlPlaneDefaultAppleIssuer: {},
+		}
+		cfgEnterpriseOnly.EnterpriseIssuers = map[string]struct{}{
+			"https://issuer.example": {},
+		}
+		cfgEnterpriseOnly.EnterprisePolicy = controlPlaneSSOPolicyEnterpriseOnly
+		cfgEnterpriseOnly.AppleIssuer = controlPlaneDefaultAppleIssuer
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/dashboard/activity", nil)
+		token := mustTestJWT(t, cfg.HS256Secret, map[string]any{
+			"iss":       controlPlaneDefaultAppleIssuer,
+			"aud":       cfg.Audience,
+			"sub":       "apple-user",
+			"tenant_id": "tenant-a",
+			"roles":     []string{dashboardRoleViewer},
+			"exp":       time.Now().Add(1 * time.Hour).Unix(),
+		})
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		_, err := cfgEnterpriseOnly.authenticateBearerToken(req, false)
+		if err == nil || !strings.Contains(err.Error(), "sso_policy_violation") {
+			t.Fatalf("expected sso_policy_violation, got %v", err)
+		}
+	})
 }
 
 func TestAuthenticateControlPlaneRequest_APIKeyAndSSO(t *testing.T) {
 	sso := &controlPlaneSSOConfig{
-		Enabled:      true,
-		Issuer:       "https://issuer.example",
-		Audience:     "zt-cp",
-		RoleClaim:    "role",
-		TenantClaim:  "tenant_id",
-		SubjectClaim: "sub",
+		Enabled:          true,
+		Issuer:           "https://issuer.example",
+		TrustedIssuers:   map[string]struct{}{"https://issuer.example": {}},
+		EnterprisePolicy: controlPlaneSSOPolicyAllowAll,
+		Audience:         "zt-cp",
+		RoleClaim:        "role",
+		TenantClaim:      "tenant_id",
+		SubjectClaim:     "sub",
 		AdminRoles: map[string]struct{}{
 			dashboardRoleAdmin: {},
 		},

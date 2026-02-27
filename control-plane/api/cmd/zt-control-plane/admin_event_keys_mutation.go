@@ -12,7 +12,7 @@ import (
 	"zt-control-plane-api/internal/eventkeyspec"
 )
 
-func (s *server) handleAdminEventKeysUpsert(w http.ResponseWriter, r *http.Request, keyIDInPath string, allowPathKey bool) {
+func (s *server) handleAdminEventKeysUpsert(w http.ResponseWriter, r *http.Request, keyIDInPath string, allowPathKey bool, authCtx controlPlaneAuthContext) {
 	var req adminEventKeyUpsertRequest
 	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
 	if err != nil {
@@ -82,9 +82,7 @@ on conflict (key_id) do update set
 		Source:       "admin.api",
 		UpdatedBy:    req.UpdatedBy,
 		UpdateReason: req.Reason,
-		Meta: map[string]any{
-			"method": r.Method,
-		},
+		Meta:         buildAdminMutationAuditMeta(r, authCtx, nil),
 	}); err != nil {
 		log.Printf("WARN event_signing_key_audit append failed (key_id=%s action=%s): %v", entry.KeyID, adminEventKeyUpsertAuditAction(r.Method), err)
 	}
@@ -102,7 +100,7 @@ func adminEventKeyUpsertAuditAction(method string) string {
 	}
 }
 
-func (s *server) handleAdminEventKeysDelete(w http.ResponseWriter, r *http.Request, keyIDInPath string) {
+func (s *server) handleAdminEventKeysDelete(w http.ResponseWriter, r *http.Request, keyIDInPath string, authCtx controlPlaneAuthContext) {
 	keyIDInPath = strings.TrimSpace(keyIDInPath)
 	if keyIDInPath == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "key_id_required"})
@@ -199,7 +197,7 @@ where key_id = $1
 				Source:       "admin.api.delete",
 				UpdatedBy:    updatedBy,
 				UpdateReason: reason,
-				Meta:         map[string]any{"mode": mode},
+				Meta:         buildAdminMutationAuditMeta(r, authCtx, map[string]any{"mode": mode}),
 			}); err != nil {
 				log.Printf("WARN event_signing_key_audit append failed (key_id=%s action=%s): %v", keyIDInPath, eventkeyspec.AuditActionAdminDisable, err)
 			}
@@ -215,7 +213,7 @@ where key_id = $1
 			Source:       "admin.api.delete",
 			UpdatedBy:    updatedBy,
 			UpdateReason: reason,
-			Meta:         map[string]any{"mode": mode},
+			Meta:         buildAdminMutationAuditMeta(r, authCtx, map[string]any{"mode": mode}),
 		}); err != nil {
 			log.Printf("WARN event_signing_key_audit append failed (key_id=%s action=%s): %v", keyIDInPath, eventkeyspec.AuditActionAdminDelete, err)
 		}
@@ -229,7 +227,7 @@ where key_id = $1
 	})
 }
 
-func (s *server) handleAdminEventKeysPatch(w http.ResponseWriter, r *http.Request, keyIDInPath string) {
+func (s *server) handleAdminEventKeysPatch(w http.ResponseWriter, r *http.Request, keyIDInPath string, authCtx controlPlaneAuthContext) {
 	keyIDInPath = strings.TrimSpace(keyIDInPath)
 	if keyIDInPath == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "key_id_required"})
@@ -281,6 +279,7 @@ where key_id = $1
 		Source:       "admin.api.patch",
 		UpdatedBy:    req.UpdatedBy,
 		UpdateReason: req.Reason,
+		Meta:         buildAdminMutationAuditMeta(r, authCtx, nil),
 	}); err != nil {
 		log.Printf("WARN event_signing_key_audit append failed (key_id=%s action=%s): %v", entry.KeyID, eventkeyspec.AuditActionAdminPatch, err)
 	}
