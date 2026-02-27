@@ -42,6 +42,7 @@ CIでの zero-trust 寄り運用（推奨）:
 
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を保護変数として配布
 - `scripts/ci/check-zt-setup-json-actual-gate.sh` が `ROOT_PUBKEY.asc` の fingerprint 一致を検証後、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
+- signer pin も同様に `ZT_SECURE_PACK_SIGNER_FINGERPRINTS_EXPECTED` で配布し、actual gate で bootstrap
 
 1コマンド登録（GitHub Variables）:
 
@@ -51,6 +52,11 @@ bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40
 
 # One-trust: ローカル ROOT_PUBKEY.asc をそのまま登録
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+
+# root + signer を標準化して一括登録（推奨）
+bash ./scripts/dev/bootstrap-ci-trust-pins.sh \
+  --root-expected-pins "OLD_ROOT_FPR_40HEX,NEW_ROOT_FPR_40HEX" \
+  --signer-expected-pins "OLD_SIGNER_FPR_40HEX,NEW_SIGNER_FPR_40HEX"
 ```
 
 複数 fingerprint を許容する例（鍵ローテーション時）:
@@ -142,7 +148,7 @@ go run ./gateway/zt setup --json
 `zt dashboard` は、危険信号（danger）とローカルロック状態を表示します。
 
 - `danger.level=high|medium|low` で運用リスクを集約表示
-- `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`）
+- `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`, `dashboard_alert_dispatch_unsafe_config`）
 - `Local Lock` は dashboard から lock/unlock 操作でき、`send` と `relay` を停止できます（fail-closed）
 - v0.9.5/0.9.6 で `control_plane` / `kpi` / `incidents` / `alerts` を同一JSONに統合（ローカル+CP統合モデル）
 - incident 操作（`lock` / `unlock` / `break_glass_start` / `break_glass_end`）は `.zt-spool/dashboard_incidents.jsonl` に監査記録
@@ -165,6 +171,37 @@ go run ./gateway/zt dashboard
 # または
 go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock, .kpi, .alerts, .control_plane'
 ```
+
+Svelte SPA dashboard（Glass UI + OAuth SSO）:
+
+- `zt dashboard` は Svelte SPA を配信し、`Scan` と `Findings` を 1-click で切り替え
+- Primary CTA は 1つ固定（`Start Scan` / `Export Evidence`）、Export系は `More` の secondary menu に集約
+- OAuth SSO popup は `GET /api/auth/login?provider=<google|apple|icloud>` を使用し、callback でブラウザセッションへ token を返す
+
+OAuth SSO provider 設定（ローカル dashboard 用）:
+
+```bash
+# 共通（optional: callback URL を固定したいとき）
+export ZT_DASHBOARD_SSO_REDIRECT_BASE_URL="http://127.0.0.1:8787"
+
+# Google
+export ZT_DASHBOARD_SSO_GOOGLE_CLIENT_ID="<google-client-id>"
+export ZT_DASHBOARD_SSO_GOOGLE_CLIENT_SECRET="<google-client-secret>" # optional
+
+# Apple
+export ZT_DASHBOARD_SSO_APPLE_CLIENT_ID="<apple-services-id>"
+export ZT_DASHBOARD_SSO_APPLE_CLIENT_SECRET="<apple-client-secret-jwt>"
+
+# iCloud（未設定時は Apple 設定をフォールバック利用）
+export ZT_DASHBOARD_SSO_ICLOUD_CLIENT_ID="<icloud-client-id>"
+export ZT_DASHBOARD_SSO_ICLOUD_CLIENT_SECRET="<icloud-client-secret-jwt>"
+```
+
+SSO API:
+
+- `GET /api/auth/providers` : provider の有効/無効状態
+- `GET /api/auth/login?provider=...` : OAuth authorize へリダイレクト
+- `GET|POST /api/auth/callback?provider=...` : code exchange 後に popup へ結果を postMessage
 
 Local dashboard API（LFC-1005: クライアント別資産ビュー）:
 
@@ -218,6 +255,23 @@ Local dashboard API（LFC-1009: 署名保有者数 MVP）:
   - `event_count` / `client_event_count`（算出根拠イベント件数）
 - receipt 取込時に `local_sor_signature_holders` を自動更新
 
+Local dashboard API（LFC-1011: ファイル -> 保有者マップ）:
+
+- `GET /api/files/holders` : content hash 単位の保有者マップ（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/files/holders/timeseries` : ファイル単位（`content_sha256`）の日次推移（`window_days`）
+- 表示項目:
+  - `content_sha256`
+  - `filename_sample`
+  - `holder_client_count` / `holder_clients[]`
+  - `signature_count` / `exchange_count`
+  - `last_seen_at`
+- timeseries 表示項目:
+  - `bucket_start`
+  - `holder_count`
+  - `delta` / `added` / `removed`
+  - `exchange_count`
+- `sort`: `last_seen_desc|last_seen_asc|holder_desc|holder_asc|exchange_desc|exchange_asc`
+
 Local dashboard API（LFC-1010: 外部通知安全ゲート）:
 
 - `POST /api/alerts/dispatch` : 外部通知送信（body: `channel`, `webhook_url`, `dry_run`）
@@ -229,6 +283,42 @@ Local dashboard API（LFC-1010: 外部通知安全ゲート）:
 - 送信 payload は最小化（`level/count` と alert code のみ。詳細メッセージは外部送信しない）
 - 送信結果（`rejected|dry_run|failed|sent`）は監査ログ `.zt-spool/events.jsonl` に
   `event_type=dashboard_alert_dispatch` として記録
+
+SaaS モード / 契約画面（LFC-1012: economics model）:
+
+- `ZT_DASHBOARD_SAAS_MODE=1` で dashboard を SaaS economics 表示モードに切り替え
+- `GET /api/saas/config` : 契約画面の定数（mode, contract title, margin, fee）
+- `GET /api/saas/economics` : 単価/閾値試算（query: `files_per_month`, `active_users`, `trial_users`, `avg_file_mb`, `retention_days`）
+- `GET /api/saas/stripe-price` : `recommended_unit_price_usd` を Stripe 決済前提の gross 単価に変換
+- `GET /api/saas/economics/quote.pdf` : Starter/Growth/Enterprise 見積PDF
+- 主な調整用 env:
+  - `ZT_DASHBOARD_FIXED_SERVER_COST_USD`
+  - `ZT_DASHBOARD_FIXED_SUPPORT_COST_USD`
+  - `ZT_DASHBOARD_EGRESS_COST_PER_GB_USD`
+  - `ZT_DASHBOARD_STORAGE_COST_PER_GB_MONTH_USD`
+  - `ZT_DASHBOARD_REQUEST_COST_PER_1K_USD`
+  - `ZT_DASHBOARD_TARGET_GROSS_MARGIN`
+  - `ZT_DASHBOARD_PLATFORM_FEE_RATE`
+  - `ZT_DASHBOARD_PRICE_PER_FILE_FLOOR_USD`
+  - `ZT_DASHBOARD_TRIAL_ENABLED`
+  - `ZT_DASHBOARD_TRIAL_FILES_PER_USER_PER_MONTH`（default `500`）
+  - `ZT_DASHBOARD_TRIAL_DATA_GB_PER_USER_PER_MONTH`（default `5`）
+  - `ZT_DASHBOARD_TRIAL_AD_REVENUE_PER_USER_USD`（広告収益/人）
+  - `ZT_DASHBOARD_PAID_USER_SHARE`
+  - `ZT_DASHBOARD_STRIPE_FEE_RATE`
+  - `ZT_DASHBOARD_STRIPE_FIXED_FEE_USD`
+  - `ZT_DASHBOARD_STRIPE_ROUND_UNIT_USD`
+
+無料閾値運用（固定値）:
+
+- 企業単位の無料枠は設けず、**個人 trial 枠**のみを対象にモデル化
+- Personal Free（広告あり）: `500 files/月`, `16MB/file`, `5GB/月`（1人）
+- Org Trial（広告なし）: `10-100 files/月`, `8MB/file`, `30日`
+- Paid: Growth `256MB/file`, Enterprise `1GB/file`
+- trial は「月次リセット（翌月復活）」前提（`monthly_reset=true`）
+- trial 適用時は `billable_files` が減り、`trial_subsidy_usd` と `trial_ad_revenue_usd` を明示表示
+- 経済破綻を避けるため `required_paid_users_per_trial_user` を同時表示し、paid user 比率で検証
+- 広告は送信 UI のみで表示し、署名対象データ/送信payloadには混入させない
 
 Control Plane dashboard API（tenant/role authz）:
 
@@ -625,7 +715,7 @@ JSON 例（日本語）:
 
 - このツールは「ネットワークを信用しない」前提で、**ローカル検査 + 再構成 + 封緘 + 検証** を積み上げて安全性を上げる設計です
 - 一方で、**pre-release かつ統合途中**のため、README の [現状の安全境界](#現状の安全境界-重要) と [THREAT_MODEL.md](./THREAT_MODEL.md) / [SECURITY.md](./SECURITY.md) を前提に使ってください
-- 特に強い保証が必要な運用では、`zt send --client <name>` による `*.spkg.tgz` + `zt verify` を推奨します（legacy PoC 経路は暫定）
+- 特に強い保証が必要な運用では、`zt send --client <name>` による `*.spkg.tgz` + `zt verify` を標準手順として固定してください（legacy `artifact.zp` は廃止済み）
 
 ### 安全の考え方（図）
 
@@ -658,22 +748,20 @@ flowchart LR
 - イベント署名（任意）: Ed25519 で envelope 署名可能（`gateway/zt/events_emit.go`）
 - `zt setup` / `zt config doctor` による事前診断（鍵ENV、spool書込、CP URL、ツール有無、ClamAV DB など）
 
-### 現在の穴・未完了の点（重要）
+### 直近で解消した運用ギャップ（v1.3）
 
-以下は「既知ギャップ」です。運用で回避しつつ、今後潰す前提です。
-
-- legacy `artifact.zp` send/verify 経路は削除済み。運用/ドキュメント/自動化が `*.spkg.tgz` 前提に揃っているかの確認は引き続き必要（`gateway/zt/commands_flow.go`, `gateway/zt/commands_verify.go`）
-- `secure-scan` 自体は strict 未指定かつ scanner 不在時に `allow`（degraded）になり得るため、`zt send` では strict を安全デフォルトにしている（`tools/secure-scan/cmd/secure-scan/json_scan.go`, `gateway/zt/commands_flow.go`）
-- `zt` 側は厳格な `scan_policy` を前提にしているが、運用で `required_scanners` / `require_clamav_db` を弱めると degraded 許容が起こり得る（`gateway/zt/scan_policy.go`, `tools/secure-scan/cmd/secure-scan/json_scan.go`）
-- MIME/magic bytes 整合チェックは基本実装済みだが、対応形式はまだ限定的（主に text/PDF/JPEG/PNG/GIF/WebP/OOXML/一部アーカイブ署名）。Windows 日本語環境向けに Shift-JIS 系の text 判定も保守的に許容。深い形式検証や MIME 判定網羅は今後の強化項目（`gateway/zt/file_type_guard.go`, [THREAT_MODEL.md](./THREAT_MODEL.md)）
-- `ROOT_PUBKEY.asc` の fingerprint pin は env / 配布ビルドの固定値前提。pin 配布（端末/CI）を標準手順にしないと、fail-closed で `zt setup` / `zt send` / `secure-pack send` が止まる（意図どおり）
+- `*.spkg.tgz` 以外の legacy `artifact.zp` 実行導線は廃止し、運用ドキュメントも packet 前提に統一
+- `zt send --allow-degraded-scan` は `--break-glass-reason` を必須化（例外は `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` のみ）
+- MIME/magic bytes 判定の text系対応を拡張（`yaml/yml/toml/jsonl/ndjson/tsv/xml/ini/cfg/conf/properties/log/sql`）
+- root/signer pin 配布は expected pin + bootstrap スクリプト（`bootstrap-ci-root-pin-expected.sh` / `bootstrap-ci-signer-pin-expected.sh` / `bootstrap-ci-trust-pins.sh`）へ標準化
+- これらは `scripts/ci/check-v130-operations-gap-closure-gate.sh` で継続検知
 
 ### 現時点での安全な運用ガイド（推奨）
 
 - 送受信は `*.spkg.tgz` を標準手順に固定する（legacy `artifact.zp` は廃止）
 - `zt send --client <name>` を標準手順にする（legacy フォールバックを踏まない）
 - trust posture は `--profile public|internal|confidential|regulated` で固定し、業務区分ごとに使い分ける
-- `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` はローカル検証用途に限定
+- `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` は `--break-glass-reason` 付きの限定運用にする（例外許可は `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` のみ）
 - `policy/scan_policy.toml` で `required_scanners` / `require_clamav_db=true` を維持（弱める変更はレビュー対象にする）
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
 - `zt verify` は署名者 fingerprint allowlist を fail-closed で要求するため、`ZT_SECURE_PACK_SIGNER_FINGERPRINTS`（推奨）または `tools/secure-pack/SIGNERS_ALLOWLIST.txt` を運用手順に含める
@@ -701,6 +789,12 @@ flowchart LR
 - v0.9.1 True Zero Trust hardening 設計は `docs/architecture/V0.9.1_DESIGN.md`
 - v0.9.2 Team/Enterprise Boundary（社内・チーム限定運用）設計ドラフトは `docs/architecture/V0.9.2_DESIGN.md`
 - v0.9.3 残タスク収束（receive trust parity / degraded guardrail / scan posture hardening）設計ドラフトは `docs/architecture/V0.9.3_DESIGN.md`
+- v0.9.7 dashboard通知安全化（外部通知unsafe設定の可視化 + 専用ゲート）は `docs/architecture/V0.9.7_DESIGN.md`
+- v0.9.8 dashboard mutation fail-closed hardening（remote bind時のread-only降格 + token認可 + 専用ゲート）は `docs/architecture/V0.9.8_DESIGN.md`
+- v0.9.9 dashboard mutation auth coverage closure（keys status / key-repair create まで認可対象を拡張）は `docs/architecture/V0.9.9_DESIGN.md`
+- v0.9.9 では `ZT_DASHBOARD_MUTATION_TOKEN` 未設定かつ非loopback bind時に mutation API（lock/incident/alert dispatch/keys status/key-repair create/key-repair transition）を 403 fail-closed で拒否する
+- v0.9.8 の dashboard mutation 認可契約は `scripts/ci/check-v098-dashboard-auth-gate.sh` で独立検知する
+- v0.9.9 の dashboard mutation coverage 契約は `scripts/ci/check-v099-dashboard-mutation-coverage-gate.sh` で独立検知する
 - v0.9.2 Team Boundary 運用は `policy/team_boundary.toml`（`enabled=true` で有効）を使用し、緊急時 override は `--break-glass-reason` を明示する（`ZT_BREAK_GLASS_REASON` 常駐は fail-fast）
 - v0.9.2 では `zt config doctor --json` の `team_boundary_signer_pin_consistency` で signer pin 配布ずれ（`policy_team_boundary_signer_split_brain_detected`）を検知できる
 - v0.9.2 では `team_boundary_break_glass_guardrail` で break-glass 戻し忘れ/ガード弱化（`policy_team_boundary_break_glass_*`）を検知できる
@@ -711,6 +805,7 @@ flowchart LR
 - v1.0 セールス向け運用パック（導入チェックリスト / security note / runbook / 5分デモ）は `docs/V1_SALES_OPERATIONS_PACK.md`
 - v1.1 運用拡張の契約固定は `scripts/ci/check-v110-operations-gate.sh` を実行
 - v1.2 大規模/モバイル統合の契約固定は `scripts/ci/check-v120-scale-mobile-gate.sh` を実行
+- v1.3 運用ギャップの継続検知は `scripts/ci/check-v130-operations-gap-closure-gate.sh` を実行
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 

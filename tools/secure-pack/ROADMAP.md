@@ -6,9 +6,9 @@
 - [x] TUI support for both Sender and Receiver.
 
 ## Phase 2: CLI Usability 🚧
-- [ ] Implement CLI flags (e.g., `secure-pack send --client clientA`, `secure-pack receive --in file.spkg.tgz`).
-- [ ] Support custom output directories via flags.
-- [ ] Add `verify` command (check signature only, no extract).
+- [x] Implement CLI flags (e.g., `secure-pack send --client clientA`, `secure-pack receive --in file.spkg.tgz`).
+- [x] Support custom output/config paths via send flags (`--base-dir`, `--out-dir`, `--recipients-dir`, `--tools-lock`, `--root-pubkey`).
+- [x] Add `verify` command (check signature only, no extract).
 
 ## Phase 3: Robustness & Features 📅
 - [ ] **Windows Support**: Verify and fix path handling for Windows native (non-WSL).

@@ -27,12 +27,26 @@
 - expected-pin bootstrap for `check-zt-setup-json-actual-gate.sh` (`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED`)
 - v1 blueprint freeze decisions for receipt ID / audit retention / trust profile thresholds / OS fix priority
 - one-command CI variable bootstrap script (`scripts/dev/bootstrap-ci-root-pin-expected.sh`)
+- v0.9.7 dashboard safety gate (`scripts/ci/check-v097-dashboard-safety-gate.sh`)
+- v0.9.8 design baseline for dashboard mutation fail-closed hardening (`docs/architecture/V0.9.8_DESIGN.md`)
+- v0.9.8 dashboard auth gate (`scripts/ci/check-v098-dashboard-auth-gate.sh`)
+- v0.9.9 design baseline for dashboard mutation auth coverage closure (`docs/architecture/V0.9.9_DESIGN.md`)
+- v0.9.9 dashboard mutation coverage gate (`scripts/ci/check-v099-dashboard-mutation-coverage-gate.sh`)
+- v1.3 operations gap-closure gate (`scripts/ci/check-v130-operations-gap-closure-gate.sh`)
+- one-command trust pin bootstrap script (`scripts/dev/bootstrap-ci-trust-pins.sh`)
 
 ### Changed
 
 - `zt send` now uses new `secure-scan` JSON mode for scan gating
 - `zt verify` output format aligned across legacy artifact and packet modes
 - `secure-scan` JSON now includes `rule_hash`
+- `zt dashboard` now emits `danger.signals[].code=dashboard_alert_dispatch_unsafe_config` when external alert dispatch is enabled without webhook allowlist
+- `zt dashboard` mutating APIs now fail-closed on non-loopback bind when `ZT_DASHBOARD_MUTATION_TOKEN` is unset, and require `X-ZT-Dashboard-Token` match when token is configured
+- `zt dashboard` mutating APIs `/api/keys/{key_id}/status` and `POST /api/key-repair/jobs` now also enforce the same mutation auth contract (`dashboard_mutation_token_required` / `dashboard_mutation_auth_failed`)
+- `/api/alerts/dispatch` auth拒否時の監査イベントに `reason_code`（`dashboard_mutation_token_required` / `dashboard_mutation_auth_failed`）を固定出力
+- `zt send --allow-degraded-scan` now requires `--break-glass-reason` (unless `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` is explicitly set)
+- `secure-pack send` now supports config path overrides (`--base-dir`, `--recipients-dir`, `--out-dir`, `--tools-lock`, `--root-pubkey`)
+- file-type guard now enforces additional text-like extensions (`yaml/yml/toml/jsonl/ndjson/tsv/xml/ini/cfg/conf/properties/log/sql`)
 
 ### Security
 
@@ -49,12 +63,12 @@
 
 ### Changed
 
-- TBD
+- Initial release baseline documented as `*.spkg.tgz`-first operation flow.
 
 ### Fixed
 
-- TBD
+- N/A (initial release baseline).
 
 ### Security
 
-- TBD
+- Fail-closed defaults for root key pinning, signer allowlist, and detached signature verification.

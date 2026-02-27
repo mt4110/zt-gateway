@@ -92,6 +92,24 @@ func TestParseSendArgs_WithClientDoesNotRequireLegacyFlag(t *testing.T) {
 }
 
 func TestParseSendArgs_AllowDegradedScan(t *testing.T) {
+	opts, err := parseSendArgs([]string{"--client", "alice", "--allow-degraded-scan", "--break-glass-reason", "incident-1", "sample.txt"})
+	if err != nil {
+		t.Fatalf("parseSendArgs returned error: %v", err)
+	}
+	if !opts.AllowDegradedScan {
+		t.Fatalf("AllowDegradedScan = false, want true")
+	}
+}
+
+func TestParseSendArgs_AllowDegradedScanRequiresBreakGlassReason(t *testing.T) {
+	_, err := parseSendArgs([]string{"--client", "alice", "--allow-degraded-scan", "sample.txt"})
+	if err == nil {
+		t.Fatalf("expected error when --allow-degraded-scan is used without --break-glass-reason")
+	}
+}
+
+func TestParseSendArgs_AllowDegradedScan_EnvOverride(t *testing.T) {
+	t.Setenv(allowDegradedScanWithoutReasonEnv, "1")
 	opts, err := parseSendArgs([]string{"--client", "alice", "--allow-degraded-scan", "sample.txt"})
 	if err != nil {
 		t.Fatalf("parseSendArgs returned error: %v", err)

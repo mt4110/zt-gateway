@@ -195,9 +195,12 @@ func handleDashboardKeyDetailAPI(repoRoot, keyID string, w http.ResponseWriter, 
 	})
 }
 
-func handleDashboardKeyStatusAPI(repoRoot, keyID string, w http.ResponseWriter, r *http.Request) {
+func handleDashboardKeyStatusAPI(repoRoot, listenAddr, keyID string, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeDashboardClientJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
+		return
+	}
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
 		return
 	}
 	if localSOR == nil || localSOR.db == nil {

@@ -272,7 +272,19 @@ bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "<ROOT_FPR_
 
 # signer pin expected
 bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --expected-pins "<SIGNER_FPR_40HEX[,NEXT_FPR_40HEX]>"
+
+# root + signer を一括 bootstrap（標準運用）
+bash ./scripts/dev/bootstrap-ci-trust-pins.sh \
+  --root-expected-pins "<ROOT_FPR_40HEX[,OLD_FPR_40HEX]>" \
+  --signer-expected-pins "<SIGNER_FPR_40HEX[,NEXT_FPR_40HEX]>"
 ```
+
+## degraded scan override 運用
+
+`zt send --allow-degraded-scan` は **必ず** `--break-glass-reason` とセットで実行します。
+
+- 例: `zt send --client clientA --allow-degraded-scan --break-glass-reason "incident=INC-42;approved_by=sec-lead;expires_at=2026-03-01T12:00:00Z" ./safe.txt`
+- 例外（検証専用）: `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1`
 
 ## break-glass unlock 運用（trusted signer 必須）
 
@@ -360,6 +372,33 @@ curl -sS -X POST http://127.0.0.1:8787/api/lock \
 curl -sS -X POST http://127.0.0.1:8787/api/lock \
   -H 'content-type: application/json' \
   -d '{"action":"unlock","reason":"incident closed"}'
+```
+
+## dashboard mutation API 認可（v0.9.8）
+
+対象 mutation API:
+
+- `/api/lock`
+- `/api/incident`
+- `/api/alerts/dispatch`
+- `/api/key-repair/jobs/<job_id>/transition`
+
+fail-closed 契約:
+
+- 非 loopback bind（例: `--addr 0.0.0.0:8787`）かつ `ZT_DASHBOARD_MUTATION_TOKEN` 未設定時、対象 API は `403` + `dashboard_mutation_token_required`
+- `ZT_DASHBOARD_MUTATION_TOKEN` 設定時、`X-ZT-Dashboard-Token` が一致しない要求は `403` + `dashboard_mutation_auth_failed`
+- `/api/alerts/dispatch` の監査イベントには auth 拒否理由が `reason_code` として記録される
+
+remote bind 運用例:
+
+```bash
+export ZT_DASHBOARD_MUTATION_TOKEN='replace-with-long-random-token'
+go run ./gateway/zt dashboard --addr 0.0.0.0:8787
+
+curl -sS -X POST http://127.0.0.1:8787/api/lock \
+  -H 'content-type: application/json' \
+  -H "X-ZT-Dashboard-Token: ${ZT_DASHBOARD_MUTATION_TOKEN}" \
+  -d '{"action":"lock","reason":"incident triage"}'
 ```
 
 送信系の停止確認:
@@ -555,6 +594,7 @@ fixtureゲート（ロジック回帰検知）:
 - `scripts/ci/check-zt-setup-json-gate.sh`
 - 固定署名fixtureで `zt setup --json` を実行し、supply-chain 3項目の `ok` を検証
 - policy 契約は `scripts/ci/check-policy-contract-gate.sh` で独立実行（bundle署名 / keyset / activation / decision / policy e2e）
+- dashboard mutation 認可契約は `scripts/ci/check-v098-dashboard-auth-gate.sh` で独立実行
 
 actual repo ゲート（実artifact直検査）:
 
@@ -639,9 +679,16 @@ fingerprint は秘密値ではない前提のため、GitHub Actions `Variables`
 ```bash
 # 推奨: 承認済み pins を明示
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX"
+bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --expected-pins "OLD_SIGNER_FPR_40HEX,NEW_SIGNER_FPR_40HEX"
 
 # One-trust（ローカル ROOT_PUBKEY 依存）
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --trust-local-allowlist
+
+# 標準化: root + signer を一括登録
+bash ./scripts/dev/bootstrap-ci-trust-pins.sh \
+  --root-expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX" \
+  --signer-expected-pins "OLD_SIGNER_FPR_40HEX,NEW_SIGNER_FPR_40HEX"
 
 # ローカル shell へ export だけしたい場合（gh 不要）
 eval "$(bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key --print-env)"

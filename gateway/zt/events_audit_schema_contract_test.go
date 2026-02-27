@@ -15,6 +15,7 @@ type auditEventRecordContract struct {
 	EventType        string `json:"event_type"`
 	Timestamp        string `json:"timestamp"`
 	Result           string `json:"result"`
+	ReasonCode       string `json:"reason_code,omitempty"`
 	Endpoint         string `json:"endpoint"`
 	PayloadSHA256    string `json:"payload_sha256"`
 	ChainVersion     string `json:"chain_version"`

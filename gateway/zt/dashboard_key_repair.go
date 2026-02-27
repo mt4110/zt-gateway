@@ -103,12 +103,12 @@ where tenant_id = ?1
 	return out
 }
 
-func handleDashboardKeyRepairJobsAPI(repoRoot string, w http.ResponseWriter, r *http.Request) {
+func handleDashboardKeyRepairJobsAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		handleDashboardKeyRepairJobsList(repoRoot, w, r)
 	case http.MethodPost:
-		handleDashboardKeyRepairJobsCreate(repoRoot, w, r)
+		handleDashboardKeyRepairJobsCreate(repoRoot, listenAddr, w, r)
 	default:
 		writeDashboardClientJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 	}
@@ -172,7 +172,10 @@ func handleDashboardKeyRepairJobsList(repoRoot string, w http.ResponseWriter, r 
 	})
 }
 
-func handleDashboardKeyRepairJobsCreate(repoRoot string, w http.ResponseWriter, r *http.Request) {
+func handleDashboardKeyRepairJobsCreate(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		return
+	}
 	if localSOR == nil || localSOR.db == nil {
 		writeDashboardClientJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "local_sor_unavailable"})
 		return
@@ -254,9 +257,12 @@ func handleDashboardKeyRepairJobDetailAPI(repoRoot, jobID string, w http.Respons
 	})
 }
 
-func handleDashboardKeyRepairJobTransitionAPI(repoRoot, jobID string, w http.ResponseWriter, r *http.Request) {
+func handleDashboardKeyRepairJobTransitionAPI(repoRoot, listenAddr, jobID string, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeDashboardClientJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
+		return
+	}
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
 		return
 	}
 	if localSOR == nil || localSOR.db == nil {

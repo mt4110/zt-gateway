@@ -127,6 +127,43 @@ func TestEnforceFileTypeConsistency_AllowsTextJSON(t *testing.T) {
 	}
 }
 
+func TestEnforceFileTypeConsistency_AllowsExtendedTextExtensions(t *testing.T) {
+	cases := []struct {
+		name    string
+		content []byte
+	}{
+		{name: "ok.yaml", content: []byte("key: value\n")},
+		{name: "ok.toml", content: []byte("name = \"zt\"\n")},
+		{name: "ok.jsonl", content: []byte("{\"k\":1}\n{\"k\":2}\n")},
+		{name: "ok.ndjson", content: []byte("{\"k\":1}\n{\"k\":2}\n")},
+		{name: "ok.log", content: []byte("2026-02-27T12:00:00Z info started\n")},
+		{name: "ok.sql", content: []byte("select 1;\n")},
+	}
+	for _, tc := range cases {
+		p := filepath.Join(t.TempDir(), tc.name)
+		if err := os.WriteFile(p, tc.content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := enforceFileTypeConsistency(p); err != nil {
+			t.Fatalf("enforceFileTypeConsistency(%s) returned error: %v", tc.name, err)
+		}
+	}
+}
+
+func TestEnforceFileTypeConsistency_BlocksExeRenamedYAML(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(p, []byte{'M', 'Z', 0x90, 0x00}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := enforceFileTypeConsistency(p)
+	if err == nil {
+		t.Fatalf("expected mismatch error")
+	}
+	if got := extractMagicMismatchReason(err); got != "expected_text_like" {
+		t.Fatalf("reason = %q, want expected_text_like", got)
+	}
+}
+
 func TestEnforceFileTypeConsistency_AllowsShiftJISText(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "ok.txt")
 	// "こんにちは\r\n" in Shift-JIS

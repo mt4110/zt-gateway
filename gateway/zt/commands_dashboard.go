@@ -136,8 +136,9 @@ func runDashboardCommand(repoRoot string, args []string) error {
 	if err != nil {
 		return err
 	}
+	listenAddr := normalizeDashboardListenAddr(opts.Addr)
 	if opts.JSON {
-		s := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+		s := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr)
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(s)
@@ -145,19 +146,14 @@ func runDashboardCommand(repoRoot string, args []string) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.URL.Path)), "/api/") {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(dashboardHTML))
+		serveDashboardUI(w, r)
 	})
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		s := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+		s := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		enc := json.NewEncoder(w)
@@ -165,132 +161,13 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		_ = enc.Encode(s)
 	})
 	mux.HandleFunc("/api/lock", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req struct {
-			Action string `json:"action"`
-			Reason string `json:"reason"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		action := strings.ToLower(strings.TrimSpace(req.Action))
-		var locked bool
-		switch action {
-		case "lock", "on", "enable":
-			locked = true
-		case "unlock", "off", "disable":
-			locked = false
-		default:
-			http.Error(w, "action must be lock|unlock", http.StatusBadRequest)
-			return
-		}
-		state, err := writeLocalOperationLock(repoRoot, locked, req.Reason, "dashboard", time.Now().UTC())
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to update local lock: %v", err), http.StatusInternalServerError)
-			return
-		}
-		recordAction := "unlock"
-		if state.Locked {
-			recordAction = "lock"
-		}
-		_ = appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
-			Action:    recordAction,
-			Reason:    req.Reason,
-			Actor:     "dashboard",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
-		out := dashboardLockStatus{
-			Path:       state.Path,
-			Locked:     state.Locked,
-			Reason:     state.Reason,
-			LockedAt:   state.LockedAt,
-			UnlockedAt: state.UnlockedAt,
-			UpdatedAt:  state.UpdatedAt,
-			UpdatedBy:  state.UpdatedBy,
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		handleDashboardLockAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/incident", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req struct {
-			Action     string `json:"action"`
-			Reason     string `json:"reason"`
-			IncidentID string `json:"incident_id"`
-			ApprovedBy string `json:"approved_by"`
-			ExpiresAt  string `json:"expires_at"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		action := strings.ToLower(strings.TrimSpace(req.Action))
-		switch action {
-		case "lock", "unlock", "break_glass_start", "break_glass_end", "break-glass-start", "break-glass-end":
-		default:
-			http.Error(w, "action must be lock|unlock|break_glass_start|break_glass_end", http.StatusBadRequest)
-			return
-		}
-		if strings.HasPrefix(action, "break") && strings.TrimSpace(req.Reason) == "" {
-			http.Error(w, "reason is required for break-glass incident operations", http.StatusBadRequest)
-			return
-		}
-		if err := appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
-			Action:     action,
-			Reason:     req.Reason,
-			IncidentID: req.IncidentID,
-			ApprovedBy: req.ApprovedBy,
-			ExpiresAt:  req.ExpiresAt,
-			Actor:      "dashboard",
-			Timestamp:  time.Now().UTC().Format(time.RFC3339),
-		}); err != nil {
-			http.Error(w, fmt.Sprintf("failed to append incident record: %v", err), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{
-			"ok":           true,
-			"action":       action,
-			"incident_id":  strings.TrimSpace(req.IncidentID),
-			"recorded_at":  time.Now().UTC().Format(time.RFC3339),
-			"audit_path":   dashboardIncidentAuditPath(repoRoot),
-			"next_runbook": "docs/OPERATIONS.md",
-		})
+		handleDashboardIncidentAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/alerts/dispatch", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req dashboardAlertDispatchRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		alert := collectDashboardSnapshot(repoRoot, time.Now().UTC()).Alerts
-		out, err := dispatchDashboardAlerts(repoRoot, alert, req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("{\"error\":%q}", strings.TrimSpace(err.Error())), http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		handleDashboardAlertDispatchAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/clients", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardClientsAPI(repoRoot, w, r)
@@ -323,25 +200,25 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		parts := strings.Split(rest, "/")
 		keyID := strings.TrimSpace(parts[0])
 		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "status") {
-			handleDashboardKeyStatusAPI(repoRoot, keyID, w, r)
+			handleDashboardKeyStatusAPI(repoRoot, listenAddr, keyID, w, r)
 			return
 		}
 		handleDashboardKeyDetailAPI(repoRoot, keyID, w, r)
 	})
 	mux.HandleFunc("/api/key-repair/jobs", func(w http.ResponseWriter, r *http.Request) {
-		handleDashboardKeyRepairJobsAPI(repoRoot, w, r)
+		handleDashboardKeyRepairJobsAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/key-repair/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/key-repair/jobs/")
 		rest = strings.TrimSpace(strings.Trim(rest, "/"))
 		if rest == "" {
-			handleDashboardKeyRepairJobsAPI(repoRoot, w, r)
+			handleDashboardKeyRepairJobsAPI(repoRoot, listenAddr, w, r)
 			return
 		}
 		parts := strings.Split(rest, "/")
 		jobID := strings.TrimSpace(parts[0])
 		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "transition") {
-			handleDashboardKeyRepairJobTransitionAPI(repoRoot, jobID, w, r)
+			handleDashboardKeyRepairJobTransitionAPI(repoRoot, listenAddr, jobID, w, r)
 			return
 		}
 		handleDashboardKeyRepairJobDetailAPI(repoRoot, jobID, w, r)
@@ -352,19 +229,42 @@ func runDashboardCommand(repoRoot string, args []string) error {
 	mux.HandleFunc("/api/signature-holders", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardSignatureHoldersAPI(repoRoot, w, r)
 	})
+	mux.HandleFunc("/api/files/holders", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardFileHoldersAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/files/holders/timeseries", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardFileHoldersTimelineAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/saas/config", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSaaSConfigAPI(w, r)
+	})
+	mux.HandleFunc("/api/saas/economics", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSaaSEconomicsAPI(w, r)
+	})
+	mux.HandleFunc("/api/saas/stripe-price", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSaaSStripePriceAPI(w, r)
+	})
+	mux.HandleFunc("/api/saas/economics/quote.pdf", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSaaSQuotePDFAPI(w, r)
+	})
+	mux.HandleFunc("/api/auth/providers", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSSOProvidersAPI(w, r)
+	})
+	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSSOLoginAPI(w, r)
+	})
+	mux.HandleFunc("/api/auth/callback", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSSOCallbackAPI(w, r)
+	})
 
-	addr := strings.TrimSpace(opts.Addr)
-	if addr == "" {
-		addr = "127.0.0.1:8787"
-	}
-	fmt.Printf("[DASHBOARD] listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	fmt.Printf("[DASHBOARD] listening on http://%s\n", listenAddr)
+	return http.ListenAndServe(listenAddr, mux)
 }
 
 func parseDashboardArgs(args []string) (dashboardOptions, error) {
 	fs := flagSet("dashboard")
 	var opts dashboardOptions
-	fs.StringVar(&opts.Addr, "addr", "127.0.0.1:8787", "Listen address")
+	fs.StringVar(&opts.Addr, "addr", dashboardDefaultListenAddr, "Listen address")
 	fs.BoolVar(&opts.JSON, "json", false, "Emit JSON snapshot instead of serving UI")
 	if err := fs.Parse(args); err != nil {
 		return dashboardOptions{}, err
@@ -375,7 +275,169 @@ func parseDashboardArgs(args []string) (dashboardOptions, error) {
 	return opts, nil
 }
 
+func handleDashboardLockAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		return
+	}
+	defer r.Body.Close()
+	var req struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	var locked bool
+	switch action {
+	case "lock", "on", "enable":
+		locked = true
+	case "unlock", "off", "disable":
+		locked = false
+	default:
+		http.Error(w, "action must be lock|unlock", http.StatusBadRequest)
+		return
+	}
+	state, err := writeLocalOperationLock(repoRoot, locked, req.Reason, "dashboard", time.Now().UTC())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to update local lock: %v", err), http.StatusInternalServerError)
+		return
+	}
+	recordAction := "unlock"
+	if state.Locked {
+		recordAction = "lock"
+	}
+	_ = appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
+		Action:    recordAction,
+		Reason:    req.Reason,
+		Actor:     "dashboard",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	out := dashboardLockStatus{
+		Path:       state.Path,
+		Locked:     state.Locked,
+		Reason:     state.Reason,
+		LockedAt:   state.LockedAt,
+		UnlockedAt: state.UnlockedAt,
+		UpdatedAt:  state.UpdatedAt,
+		UpdatedBy:  state.UpdatedBy,
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+}
+
+func handleDashboardIncidentAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		return
+	}
+	defer r.Body.Close()
+	var req struct {
+		Action     string `json:"action"`
+		Reason     string `json:"reason"`
+		IncidentID string `json:"incident_id"`
+		ApprovedBy string `json:"approved_by"`
+		ExpiresAt  string `json:"expires_at"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	switch action {
+	case "lock", "unlock", "break_glass_start", "break_glass_end", "break-glass-start", "break-glass-end":
+	default:
+		http.Error(w, "action must be lock|unlock|break_glass_start|break_glass_end", http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(action, "break") && strings.TrimSpace(req.Reason) == "" {
+		http.Error(w, "reason is required for break-glass incident operations", http.StatusBadRequest)
+		return
+	}
+	if err := appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
+		Action:     action,
+		Reason:     req.Reason,
+		IncidentID: req.IncidentID,
+		ApprovedBy: req.ApprovedBy,
+		ExpiresAt:  req.ExpiresAt,
+		Actor:      "dashboard",
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to append incident record: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(map[string]any{
+		"ok":           true,
+		"action":       action,
+		"incident_id":  strings.TrimSpace(req.IncidentID),
+		"recorded_at":  time.Now().UTC().Format(time.RFC3339),
+		"audit_path":   dashboardIncidentAuditPath(repoRoot),
+		"next_runbook": "docs/OPERATIONS.md",
+	})
+}
+
+func handleDashboardAlertDispatchAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if ok, reason := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		channel, dryRun := parseDashboardAlertDispatchAuditFields(r)
+		alert := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr).Alerts
+		_ = appendDashboardAlertDispatchAudit(repoRoot, "rejected", reason, channel, "", dryRun, alert)
+		return
+	}
+	defer r.Body.Close()
+	var req dashboardAlertDispatchRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	alert := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr).Alerts
+	out, err := dispatchDashboardAlerts(repoRoot, alert, req)
+	if err != nil {
+		writeDashboardClientJSON(w, http.StatusForbidden, map[string]any{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+}
+
+func parseDashboardAlertDispatchAuditFields(r *http.Request) (string, bool) {
+	if r == nil || r.Body == nil {
+		return "", false
+	}
+	var req struct {
+		Channel string `json:"channel"`
+		DryRun  bool   `json:"dry_run"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1024))
+	if err := dec.Decode(&req); err != nil && err != io.EOF {
+		return "", false
+	}
+	return strings.TrimSpace(req.Channel), req.DryRun
+}
+
 func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot {
+	return collectDashboardSnapshotWithListenAddr(repoRoot, now, "")
+}
+
+func collectDashboardSnapshotWithListenAddr(repoRoot string, now time.Time, listenAddr string) dashboardSnapshot {
 	root, unlock := collectDashboardRootKeyStatus(repoRoot, now)
 	lock := collectDashboardLockStatus(repoRoot)
 	policy := collectDashboardPolicyStatus(repoRoot, now)
@@ -403,6 +465,8 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 		danger.Level = "high"
 		danger.Count = len(danger.Signals)
 	}
+	applyDashboardExternalDispatchGuardrail(&danger)
+	applyDashboardMutationGuardrail(&danger, listenAddr)
 	kpi := collectDashboardKPIStatus(repoRoot, danger, eventSync, audit, receipts, controlPlane, now)
 	alerts := collectDashboardAlertStatus(danger, eventSync, incidents, kpi, controlPlane)
 	return dashboardSnapshot{
@@ -425,6 +489,51 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 		KPI:              kpi,
 		Alerts:           alerts,
 	}
+}
+
+func applyDashboardExternalDispatchGuardrail(danger *dashboardDangerStatus) {
+	if danger == nil {
+		return
+	}
+	if !envBool("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED") {
+		return
+	}
+	if len(parseDashboardAlertAllowHosts(os.Getenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS"))) > 0 {
+		return
+	}
+	for _, sig := range danger.Signals {
+		if strings.EqualFold(strings.TrimSpace(sig.Code), "dashboard_alert_dispatch_unsafe_config") {
+			return
+		}
+	}
+	danger.Signals = append(danger.Signals, dashboardDangerItem{
+		Level:   "high",
+		Code:    "dashboard_alert_dispatch_unsafe_config",
+		Message: "external alert dispatch is enabled but ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS is empty",
+	})
+	danger.Level = "high"
+	danger.Count = len(danger.Signals)
+}
+
+func applyDashboardMutationGuardrail(danger *dashboardDangerStatus, listenAddr string) {
+	if danger == nil {
+		return
+	}
+	if !dashboardRemoteMutationLockActive(listenAddr) {
+		return
+	}
+	for _, sig := range danger.Signals {
+		if strings.EqualFold(strings.TrimSpace(sig.Code), "dashboard_remote_bind_mutation_locked") {
+			return
+		}
+	}
+	danger.Signals = append(danger.Signals, dashboardDangerItem{
+		Level:   "high",
+		Code:    "dashboard_remote_bind_mutation_locked",
+		Message: "dashboard is bound to non-loopback address without ZT_DASHBOARD_MUTATION_TOKEN; mutating APIs are locked",
+	})
+	danger.Level = "high"
+	danger.Count = len(danger.Signals)
 }
 
 func collectDashboardRootKeyStatus(repoRoot string, now time.Time) (dashboardRootKeyStatus, unlockTokenVerification) {
@@ -847,191 +956,3 @@ func flagSet(name string) *flag.FlagSet {
 	fs.SetOutput(os.Stderr)
 	return fs
 }
-
-const dashboardHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>zt-gateway local dashboard</title>
-  <style>
-    body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #0b1220; color: #e5e7eb; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
-    h1 { margin: 0 0 4px 0; font-size: 24px; }
-    .muted { color: #93a0b5; font-size: 13px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-top: 14px; }
-    .card { background: #121a2b; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
-    .card h2 { margin: 0 0 8px 0; font-size: 15px; }
-    .badge { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; margin-left: 6px; vertical-align: middle; }
-    .badge-active { background: #064e3b; color: #6ee7b7; }
-    .badge-pending { background: #713f12; color: #fcd34d; }
-    .badge-expired { background: #7f1d1d; color: #fca5a5; }
-    .badge-inactive { background: #1f2937; color: #cbd5e1; }
-    .badge-none { background: #111827; color: #94a3b8; }
-    .badge-danger-low { background: #064e3b; color: #86efac; }
-    .badge-danger-medium { background: #78350f; color: #fde68a; }
-    .badge-danger-high { background: #7f1d1d; color: #fecaca; }
-    .badge-lock-locked { background: #7f1d1d; color: #fecaca; }
-    .badge-lock-unlocked { background: #065f46; color: #6ee7b7; }
-    .controls { display: flex; gap: 8px; margin-bottom: 8px; }
-    .controls input { flex: 1; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 8px; font-size: 12px; }
-    .controls button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
-    .controls button:hover { background: #334155; }
-    pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; color: #d1d5db; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { border-bottom: 1px solid #1f2937; text-align: left; padding: 6px 4px; vertical-align: top; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>zt-gateway local dashboard</h1>
-    <div class="muted" id="meta">Loading...</div>
-    <div class="grid">
-      <div class="card"><h2>Danger Signals <span id="dangerBadge" class="badge badge-danger-low">LOW</span></h2><pre id="danger"></pre></div>
-      <div class="card">
-        <h2>Local Lock <span id="lockBadge" class="badge badge-lock-unlocked">UNLOCKED</span></h2>
-        <div class="controls">
-          <input id="lockReason" placeholder="reason (incident, investigation, etc.)" />
-          <button type="button" onclick="setLocalLock('lock')">Lock</button>
-          <button type="button" onclick="setLocalLock('unlock')">Unlock</button>
-        </div>
-        <pre id="lock"></pre>
-      </div>
-      <div class="card"><h2>Root Key</h2><pre id="root"></pre></div>
-      <div class="card"><h2>Unlock Token <span id="unlockBadge" class="badge badge-none">未設定</span></h2><pre id="unlock"></pre></div>
-      <div class="card"><h2>Policy</h2><pre id="policy"></pre></div>
-      <div class="card"><h2>Event Sync</h2><pre id="sync"></pre></div>
-      <div class="card"><h2>KPI / SLO</h2><pre id="kpi"></pre></div>
-      <div class="card"><h2>Control Plane</h2><pre id="cp"></pre></div>
-      <div class="card"><h2>Clients (Local SoR)</h2><pre id="clients"></pre></div>
-      <div class="card"><h2>Keys (Lifecycle)</h2><pre id="keys"></pre></div>
-      <div class="card"><h2>Signature Holders</h2><pre id="signatureHolders"></pre></div>
-      <div class="card"><h2>Key Repair Jobs</h2><pre id="keyRepair"></pre></div>
-      <div class="card"><h2>Incidents</h2><pre id="incidents"></pre></div>
-      <div class="card">
-        <h2>Alerts <span id="alertBadge" class="badge badge-danger-low">LOW</span></h2>
-        <div class="controls">
-          <input id="alertChannel" placeholder="channel: slack|discord|line|webhook" />
-          <button type="button" onclick="dispatchAlerts(true)">Dry-run</button>
-          <button type="button" onclick="dispatchAlerts(false)">Dispatch</button>
-        </div>
-        <pre id="alerts"></pre>
-      </div>
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>Recent Audit Events</h2>
-        <table><thead><tr><th>time</th><th>type</th><th>result</th><th>signer</th></tr></thead><tbody id="audit"></tbody></table>
-      </div>
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>Recent Receipts</h2>
-        <table><thead><tr><th>verified_at</th><th>client</th><th>policy</th><th>tamper</th><th>path</th></tr></thead><tbody id="receipts"></tbody></table>
-      </div>
-    </div>
-  </div>
-  <script>
-    function setBadge(node, level) {
-      const state = String(level || 'low').toLowerCase();
-      node.className = 'badge badge-danger-' + (['low', 'medium', 'high'].includes(state) ? state : 'low');
-      node.textContent = state.toUpperCase();
-    }
-
-    function appendCells(tr, values) {
-      values.forEach(v => {
-        const td = document.createElement('td');
-        td.textContent = String(v == null ? '' : v);
-        tr.appendChild(td);
-      });
-    }
-
-    async function setLocalLock(action) {
-      const reason = document.getElementById('lockReason').value || '';
-      const res = await fetch('/api/lock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action, reason: reason })
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        alert('lock update failed: ' + body);
-        return;
-      }
-      await load();
-    }
-
-    async function dispatchAlerts(dryRun) {
-      const channel = (document.getElementById('alertChannel').value || '').trim();
-      const res = await fetch('/api/alerts/dispatch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel: channel, dry_run: !!dryRun })
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        alert('alert dispatch failed: ' + text);
-        return;
-      }
-      await load();
-      alert('alert dispatch succeeded: ' + text);
-    }
-
-    async function load() {
-      const r = await fetch('/api/status', { cache: 'no-store' });
-      if (!r.ok) {
-        document.getElementById('meta').textContent = 'status fetch failed: HTTP ' + r.status;
-        return;
-      }
-      const d = await r.json();
-      document.getElementById('meta').textContent = 'generated_at=' + (d.generated_at || '');
-      document.getElementById('danger').textContent = JSON.stringify(d.danger, null, 2);
-      document.getElementById('lock').textContent = JSON.stringify(d.lock, null, 2);
-      document.getElementById('root').textContent = JSON.stringify(d.root_key, null, 2);
-      document.getElementById('unlock').textContent = JSON.stringify(d.unlock, null, 2);
-      document.getElementById('policy').textContent = JSON.stringify(d.policy, null, 2);
-      document.getElementById('sync').textContent = JSON.stringify(d.event_sync, null, 2);
-      document.getElementById('kpi').textContent = JSON.stringify(d.kpi, null, 2);
-      document.getElementById('cp').textContent = JSON.stringify(d.control_plane, null, 2);
-      document.getElementById('clients').textContent = JSON.stringify(d.clients, null, 2);
-      document.getElementById('keys').textContent = JSON.stringify(d.keys, null, 2);
-      document.getElementById('signatureHolders').textContent = JSON.stringify(d.signature_holders, null, 2);
-      document.getElementById('keyRepair').textContent = JSON.stringify(d.key_repair, null, 2);
-      document.getElementById('incidents').textContent = JSON.stringify(d.incidents, null, 2);
-      document.getElementById('alerts').textContent = JSON.stringify(d.alerts, null, 2);
-
-      const dangerBadge = document.getElementById('dangerBadge');
-      const dangerState = ((d.danger && d.danger.level) || 'low').toLowerCase();
-      const dangerLabels = { low: 'LOW', medium: 'MEDIUM', high: 'HIGH' };
-      dangerBadge.textContent = dangerLabels[dangerState] || 'LOW';
-      dangerBadge.className = 'badge badge-danger-' + (['low', 'medium', 'high'].includes(dangerState) ? dangerState : 'low');
-      setBadge(document.getElementById('alertBadge'), d.alerts && d.alerts.level);
-
-      const lockBadge = document.getElementById('lockBadge');
-      const locked = !!(d.lock && d.lock.locked);
-      lockBadge.textContent = locked ? 'LOCKED' : 'UNLOCKED';
-      lockBadge.className = 'badge ' + (locked ? 'badge-lock-locked' : 'badge-lock-unlocked');
-
-      const badge = document.getElementById('unlockBadge');
-      const state = (d.unlock && d.unlock.badge) || 'none';
-      const labels = { active: '有効', pending: '解除申請中', expired: '期限切れ', inactive: '無効', none: '未設定' };
-      badge.textContent = labels[state] || '無効';
-      badge.className = 'badge badge-' + (['active', 'pending', 'expired', 'inactive', 'none'].includes(state) ? state : 'inactive');
-
-      const audit = document.getElementById('audit');
-      audit.innerHTML = '';
-      (d.audit.recent || []).forEach(x => {
-        const tr = document.createElement('tr');
-        appendCells(tr, [x.timestamp || '', x.event_type || '', x.result || '', x.signature_key_id || '']);
-        audit.appendChild(tr);
-      });
-
-      const receipts = document.getElementById('receipts');
-      receipts.innerHTML = '';
-      (d.receipts || []).forEach(x => {
-        const tr = document.createElement('tr');
-        appendCells(tr, [x.verified_at || '', x.client || '', x.policy_result || '', !!x.tamper_detected, x.path || '']);
-        receipts.appendChild(tr);
-      });
-    }
-    load();
-    setInterval(load, 5000);
-  </script>
-</body>
-</html>`

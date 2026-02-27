@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const allowDegradedScanWithoutReasonEnv = "ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS"
+
 func parseSendArgs(args []string) (sendOptions, error) {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -58,6 +60,10 @@ func parseSendArgs(args []string) (sendOptions, error) {
 	if isStrictTrustProfile(profile) && allowDegradedScan {
 		return sendOptions{}, fmt.Errorf("--allow-degraded-scan is not allowed with --profile %s", profile)
 	}
+	breakGlassReason = strings.TrimSpace(breakGlassReason)
+	if allowDegradedScan && breakGlassReason == "" && !envBool(allowDegradedScanWithoutReasonEnv) {
+		return sendOptions{}, fmt.Errorf("--allow-degraded-scan requires --break-glass-reason (override only with %s=1)", allowDegradedScanWithoutReasonEnv)
+	}
 	shareFormat = strings.ToLower(strings.TrimSpace(shareFormat))
 	if shareFormat == "" {
 		shareFormat = "auto"
@@ -84,7 +90,7 @@ func parseSendArgs(args []string) (sendOptions, error) {
 		ShareJSON:         shareJSON,
 		ShareFormat:       shareFormat,
 		ShareRoutes:       append([]string(nil), shareRoutes.Values...),
-		BreakGlassReason:  strings.TrimSpace(breakGlassReason),
+		BreakGlassReason:  breakGlassReason,
 	}, nil
 }
 
