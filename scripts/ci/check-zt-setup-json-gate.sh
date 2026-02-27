@@ -4,6 +4,20 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture_dir="${repo_root}/testdata/secure-pack-supplychain"
 tmp_repo="$(mktemp -d)"
+
+bootstrap_local_sor_key_b64() {
+  local scope="${1:-fixture}"
+  python3 - "${scope}" <<'PY'
+import base64
+import hashlib
+import sys
+
+scope = (sys.argv[1] if len(sys.argv) > 1 else "fixture").strip() or "fixture"
+seed = ("zt-local-sor-gate-key:" + scope).encode("utf-8")
+print(base64.b64encode(hashlib.sha256(seed).digest()).decode("ascii"))
+PY
+}
+
 cleanup() {
   rm -rf "${tmp_repo}"
 }
@@ -49,12 +63,21 @@ else
   )
 fi
 
+local_sor_key="${ZT_LOCAL_SOR_MASTER_KEY_B64:-}"
+if [[ -z "${local_sor_key}" && -z "${ZT_LOCAL_SOR_ALLOW_PLAINTEXT_DEV:-}" ]]; then
+  local_sor_key="$(bootstrap_local_sor_key_b64 "fixture")"
+fi
+local_sor_db_path="${tmp_repo}/.zt-spool/local-sor-gate.db"
+
 (
   cd "${tmp_repo}"
   # Fixture gate is policy/supply-chain focused; provide signer pins explicitly so
   # setup's fail-closed verify-pin readiness check remains green in CI.
+  # Local SoR is scoped to gate-only temporary DB to avoid environment coupling.
   ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS="${fpr}" \
   ZT_SECURE_PACK_SIGNER_FINGERPRINTS="${fpr}" \
+  ZT_LOCAL_SOR_MASTER_KEY_B64="${local_sor_key}" \
+  ZT_LOCAL_SOR_DB_PATH="${local_sor_db_path}" \
   "${zt_bin}" setup --json > "${json_out}"
 )
 

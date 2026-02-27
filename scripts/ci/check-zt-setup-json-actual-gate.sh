@@ -4,6 +4,19 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tools_dir="${repo_root}/tools/secure-pack"
 
+bootstrap_local_sor_key_b64() {
+  local scope="${1:-actual}"
+  python3 - "${scope}" <<'PY'
+import base64
+import hashlib
+import sys
+
+scope = (sys.argv[1] if len(sys.argv) > 1 else "actual").strip() or "actual"
+seed = ("zt-local-sor-gate-key:" + scope).encode("utf-8")
+print(base64.b64encode(hashlib.sha256(seed).digest()).decode("ascii"))
+PY
+}
+
 required_files=(
   "${tools_dir}/tools.lock"
   "${tools_dir}/tools.lock.sig"
@@ -188,6 +201,15 @@ fi
 
 (
   cd "${repo_root}"
+  # Local SoR is scoped to gate-only temporary DB so setup gate does not depend on
+  # existing workspace DB state or external shell env key provisioning.
+  local_sor_key="${ZT_LOCAL_SOR_MASTER_KEY_B64:-}"
+  if [[ -z "${local_sor_key}" && -z "${ZT_LOCAL_SOR_ALLOW_PLAINTEXT_DEV:-}" ]]; then
+    local_sor_key="$(bootstrap_local_sor_key_b64 "actual")"
+  fi
+  local_sor_db_path="${tmp_dir}/local-sor-gate.db"
+  export ZT_LOCAL_SOR_MASTER_KEY_B64="${local_sor_key}"
+  export ZT_LOCAL_SOR_DB_PATH="${local_sor_db_path}"
   "${zt_bin}" setup --json > "${json_out}" || true
 )
 
