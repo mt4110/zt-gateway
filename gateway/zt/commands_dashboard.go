@@ -403,6 +403,7 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 		danger.Level = "high"
 		danger.Count = len(danger.Signals)
 	}
+	applyDashboardExternalDispatchGuardrail(&danger)
 	kpi := collectDashboardKPIStatus(repoRoot, danger, eventSync, audit, receipts, controlPlane, now)
 	alerts := collectDashboardAlertStatus(danger, eventSync, incidents, kpi, controlPlane)
 	return dashboardSnapshot{
@@ -425,6 +426,30 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 		KPI:              kpi,
 		Alerts:           alerts,
 	}
+}
+
+func applyDashboardExternalDispatchGuardrail(danger *dashboardDangerStatus) {
+	if danger == nil {
+		return
+	}
+	if !envBool("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED") {
+		return
+	}
+	if len(parseDashboardAlertAllowHosts(os.Getenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS"))) > 0 {
+		return
+	}
+	for _, sig := range danger.Signals {
+		if strings.EqualFold(strings.TrimSpace(sig.Code), "dashboard_alert_dispatch_unsafe_config") {
+			return
+		}
+	}
+	danger.Signals = append(danger.Signals, dashboardDangerItem{
+		Level:   "high",
+		Code:    "dashboard_alert_dispatch_unsafe_config",
+		Message: "external alert dispatch is enabled but ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS is empty",
+	})
+	danger.Level = "high"
+	danger.Count = len(danger.Signals)
 }
 
 func collectDashboardRootKeyStatus(repoRoot string, now time.Time) (dashboardRootKeyStatus, unlockTokenVerification) {

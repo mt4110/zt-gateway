@@ -142,7 +142,7 @@ go run ./gateway/zt setup --json
 `zt dashboard` は、危険信号（danger）とローカルロック状態を表示します。
 
 - `danger.level=high|medium|low` で運用リスクを集約表示
-- `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`）
+- `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`, `dashboard_alert_dispatch_unsafe_config`）
 - `Local Lock` は dashboard から lock/unlock 操作でき、`send` と `relay` を停止できます（fail-closed）
 - v0.9.5/0.9.6 で `control_plane` / `kpi` / `incidents` / `alerts` を同一JSONに統合（ローカル+CP統合モデル）
 - incident 操作（`lock` / `unlock` / `break_glass_start` / `break_glass_end`）は `.zt-spool/dashboard_incidents.jsonl` に監査記録
@@ -701,6 +701,7 @@ flowchart LR
 - v0.9.1 True Zero Trust hardening 設計は `docs/architecture/V0.9.1_DESIGN.md`
 - v0.9.2 Team/Enterprise Boundary（社内・チーム限定運用）設計ドラフトは `docs/architecture/V0.9.2_DESIGN.md`
 - v0.9.3 残タスク収束（receive trust parity / degraded guardrail / scan posture hardening）設計ドラフトは `docs/architecture/V0.9.3_DESIGN.md`
+- v0.9.7 dashboard通知安全化（外部通知unsafe設定の可視化 + 専用ゲート）は `docs/architecture/V0.9.7_DESIGN.md`
 - v0.9.2 Team Boundary 運用は `policy/team_boundary.toml`（`enabled=true` で有効）を使用し、緊急時 override は `--break-glass-reason` を明示する（`ZT_BREAK_GLASS_REASON` 常駐は fail-fast）
 - v0.9.2 では `zt config doctor --json` の `team_boundary_signer_pin_consistency` で signer pin 配布ずれ（`policy_team_boundary_signer_split_brain_detected`）を検知できる
 - v0.9.2 では `team_boundary_break_glass_guardrail` で break-glass 戻し忘れ/ガード弱化（`policy_team_boundary_break_glass_*`）を検知できる

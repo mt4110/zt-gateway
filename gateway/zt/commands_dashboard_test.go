@@ -90,3 +90,37 @@ func TestCollectDashboardSnapshot_IncludesLockAndDanger(t *testing.T) {
 		t.Fatalf("danger signals missing local_lock_active: %#v", snapshot.Danger.Signals)
 	}
 }
+
+func TestCollectDashboardSnapshot_AlertDispatchUnsafeConfigSignal(t *testing.T) {
+	t.Setenv("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED", "1")
+	t.Setenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS", "")
+	repoRoot := t.TempDir()
+
+	snapshot := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+	if snapshot.Danger.Level != "high" {
+		t.Fatalf("snapshot.Danger.Level = %q, want high", snapshot.Danger.Level)
+	}
+	found := false
+	for _, s := range snapshot.Danger.Signals {
+		if strings.TrimSpace(s.Code) == "dashboard_alert_dispatch_unsafe_config" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("danger signals missing dashboard_alert_dispatch_unsafe_config: %#v", snapshot.Danger.Signals)
+	}
+}
+
+func TestCollectDashboardSnapshot_AlertDispatchAllowHostsConfigured_NoUnsafeSignal(t *testing.T) {
+	t.Setenv("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED", "1")
+	t.Setenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS", "hooks.slack.com")
+	repoRoot := t.TempDir()
+
+	snapshot := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+	for _, s := range snapshot.Danger.Signals {
+		if strings.TrimSpace(s.Code) == "dashboard_alert_dispatch_unsafe_config" {
+			t.Fatalf("unexpected dashboard_alert_dispatch_unsafe_config signal: %#v", snapshot.Danger.Signals)
+		}
+	}
+}
