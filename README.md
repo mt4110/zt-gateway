@@ -42,6 +42,7 @@ CIでの zero-trust 寄り運用（推奨）:
 
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を保護変数として配布
 - `scripts/ci/check-zt-setup-json-actual-gate.sh` が `ROOT_PUBKEY.asc` の fingerprint 一致を検証後、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を自動bootstrap
+- signer pin も同様に `ZT_SECURE_PACK_SIGNER_FINGERPRINTS_EXPECTED` で配布し、actual gate で bootstrap
 
 1コマンド登録（GitHub Variables）:
 
@@ -51,6 +52,11 @@ bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40
 
 # One-trust: ローカル ROOT_PUBKEY.asc をそのまま登録
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+
+# root + signer を標準化して一括登録（推奨）
+bash ./scripts/dev/bootstrap-ci-trust-pins.sh \
+  --root-expected-pins "OLD_ROOT_FPR_40HEX,NEW_ROOT_FPR_40HEX" \
+  --signer-expected-pins "OLD_SIGNER_FPR_40HEX,NEW_SIGNER_FPR_40HEX"
 ```
 
 複数 fingerprint を許容する例（鍵ローテーション時）:
@@ -625,7 +631,7 @@ JSON 例（日本語）:
 
 - このツールは「ネットワークを信用しない」前提で、**ローカル検査 + 再構成 + 封緘 + 検証** を積み上げて安全性を上げる設計です
 - 一方で、**pre-release かつ統合途中**のため、README の [現状の安全境界](#現状の安全境界-重要) と [THREAT_MODEL.md](./THREAT_MODEL.md) / [SECURITY.md](./SECURITY.md) を前提に使ってください
-- 特に強い保証が必要な運用では、`zt send --client <name>` による `*.spkg.tgz` + `zt verify` を推奨します（legacy PoC 経路は暫定）
+- 特に強い保証が必要な運用では、`zt send --client <name>` による `*.spkg.tgz` + `zt verify` を標準手順として固定してください（legacy `artifact.zp` は廃止済み）
 
 ### 安全の考え方（図）
 
@@ -658,22 +664,20 @@ flowchart LR
 - イベント署名（任意）: Ed25519 で envelope 署名可能（`gateway/zt/events_emit.go`）
 - `zt setup` / `zt config doctor` による事前診断（鍵ENV、spool書込、CP URL、ツール有無、ClamAV DB など）
 
-### 現在の穴・未完了の点（重要）
+### 直近で解消した運用ギャップ（v1.3）
 
-以下は「既知ギャップ」です。運用で回避しつつ、今後潰す前提です。
-
-- legacy `artifact.zp` send/verify 経路は削除済み。運用/ドキュメント/自動化が `*.spkg.tgz` 前提に揃っているかの確認は引き続き必要（`gateway/zt/commands_flow.go`, `gateway/zt/commands_verify.go`）
-- `secure-scan` 自体は strict 未指定かつ scanner 不在時に `allow`（degraded）になり得るため、`zt send` では strict を安全デフォルトにしている（`tools/secure-scan/cmd/secure-scan/json_scan.go`, `gateway/zt/commands_flow.go`）
-- `zt` 側は厳格な `scan_policy` を前提にしているが、運用で `required_scanners` / `require_clamav_db` を弱めると degraded 許容が起こり得る（`gateway/zt/scan_policy.go`, `tools/secure-scan/cmd/secure-scan/json_scan.go`）
-- MIME/magic bytes 整合チェックは基本実装済みだが、対応形式はまだ限定的（主に text/PDF/JPEG/PNG/GIF/WebP/OOXML/一部アーカイブ署名）。Windows 日本語環境向けに Shift-JIS 系の text 判定も保守的に許容。深い形式検証や MIME 判定網羅は今後の強化項目（`gateway/zt/file_type_guard.go`, [THREAT_MODEL.md](./THREAT_MODEL.md)）
-- `ROOT_PUBKEY.asc` の fingerprint pin は env / 配布ビルドの固定値前提。pin 配布（端末/CI）を標準手順にしないと、fail-closed で `zt setup` / `zt send` / `secure-pack send` が止まる（意図どおり）
+- `*.spkg.tgz` 以外の legacy `artifact.zp` 実行導線は廃止し、運用ドキュメントも packet 前提に統一
+- `zt send --allow-degraded-scan` は `--break-glass-reason` を必須化（例外は `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` のみ）
+- MIME/magic bytes 判定の text系対応を拡張（`yaml/yml/toml/jsonl/ndjson/tsv/xml/ini/cfg/conf/properties/log/sql`）
+- root/signer pin 配布は expected pin + bootstrap スクリプト（`bootstrap-ci-root-pin-expected.sh` / `bootstrap-ci-signer-pin-expected.sh` / `bootstrap-ci-trust-pins.sh`）へ標準化
+- これらは `scripts/ci/check-v130-operations-gap-closure-gate.sh` で継続検知
 
 ### 現時点での安全な運用ガイド（推奨）
 
 - 送受信は `*.spkg.tgz` を標準手順に固定する（legacy `artifact.zp` は廃止）
 - `zt send --client <name>` を標準手順にする（legacy フォールバックを踏まない）
 - trust posture は `--profile public|internal|confidential|regulated` で固定し、業務区分ごとに使い分ける
-- `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` はローカル検証用途に限定
+- `zt send` の strict デフォルトを維持し、`--allow-degraded-scan` は `--break-glass-reason` 付きの限定運用にする（例外許可は `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` のみ）
 - `policy/scan_policy.toml` で `required_scanners` / `require_clamav_db=true` を維持（弱める変更はレビュー対象にする）
 - `ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS` を端末プロファイル/CI に固定し、鍵ローテーション時は旧+新の複数 fingerprint を一時的に併記する
 - `zt verify` は署名者 fingerprint allowlist を fail-closed で要求するため、`ZT_SECURE_PACK_SIGNER_FINGERPRINTS`（推奨）または `tools/secure-pack/SIGNERS_ALLOWLIST.txt` を運用手順に含める
@@ -717,6 +721,7 @@ flowchart LR
 - v1.0 セールス向け運用パック（導入チェックリスト / security note / runbook / 5分デモ）は `docs/V1_SALES_OPERATIONS_PACK.md`
 - v1.1 運用拡張の契約固定は `scripts/ci/check-v110-operations-gate.sh` を実行
 - v1.2 大規模/モバイル統合の契約固定は `scripts/ci/check-v120-scale-mobile-gate.sh` を実行
+- v1.3 運用ギャップの継続検知は `scripts/ci/check-v130-operations-gap-closure-gate.sh` を実行
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 

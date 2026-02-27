@@ -55,6 +55,15 @@ go run ./cmd/secure-pack
 go run ./cmd/secure-pack send --client <client_name>
 
 # Output: dist/bundle_<client>_<timestamp>.spkg.tgz
+
+# Override base/config paths when needed
+go run ./cmd/secure-pack send \
+  --client <client_name> \
+  --base-dir . \
+  --recipients-dir ./recipients \
+  --out-dir ./dist \
+  --tools-lock ./tools.lock \
+  --root-pubkey ./ROOT_PUBKEY.asc
 ```
 
 ### 2. Receiver (Verify & Decrypt)

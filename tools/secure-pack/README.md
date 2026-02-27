@@ -82,6 +82,15 @@ go run ./cmd/secure-pack send --client <クライアント名>
 # 例: docsフォルダを clientA 向けに暗号化
 go run ./cmd/secure-pack send --client clientA
 # 出力: dist/bundle_clientA_YYYYMMDD...spkg.tgz
+
+# 設定ファイル/出力先を明示上書きしたい場合
+go run ./cmd/secure-pack send \
+  --client clientA \
+  --base-dir . \
+  --recipients-dir ./recipients \
+  --out-dir ./dist \
+  --tools-lock ./tools.lock \
+  --root-pubkey ./ROOT_PUBKEY.asc
 ```
 
 ### 2. 受信者 (Receiver)

@@ -272,7 +272,19 @@ bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "<ROOT_FPR_
 
 # signer pin expected
 bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --expected-pins "<SIGNER_FPR_40HEX[,NEXT_FPR_40HEX]>"
+
+# root + signer を一括 bootstrap（標準運用）
+bash ./scripts/dev/bootstrap-ci-trust-pins.sh \
+  --root-expected-pins "<ROOT_FPR_40HEX[,OLD_FPR_40HEX]>" \
+  --signer-expected-pins "<SIGNER_FPR_40HEX[,NEXT_FPR_40HEX]>"
 ```
+
+## degraded scan override 運用
+
+`zt send --allow-degraded-scan` は **必ず** `--break-glass-reason` とセットで実行します。
+
+- 例: `zt send --client clientA --allow-degraded-scan --break-glass-reason "incident=INC-42;approved_by=sec-lead;expires_at=2026-03-01T12:00:00Z" ./safe.txt`
+- 例外（検証専用）: `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1`
 
 ## break-glass unlock 運用（trusted signer 必須）
 
@@ -667,9 +679,16 @@ fingerprint は秘密値ではない前提のため、GitHub Actions `Variables`
 ```bash
 # 推奨: 承認済み pins を明示
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX"
+bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --expected-pins "OLD_SIGNER_FPR_40HEX,NEW_SIGNER_FPR_40HEX"
 
 # One-trust（ローカル ROOT_PUBKEY 依存）
 bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key
+bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --trust-local-allowlist
+
+# 標準化: root + signer を一括登録
+bash ./scripts/dev/bootstrap-ci-trust-pins.sh \
+  --root-expected-pins "OLD_FPR_40HEX,NEW_FPR_40HEX" \
+  --signer-expected-pins "OLD_SIGNER_FPR_40HEX,NEW_SIGNER_FPR_40HEX"
 
 # ローカル shell へ export だけしたい場合（gh 不要）
 eval "$(bash ./scripts/dev/bootstrap-ci-root-pin-expected.sh --trust-local-root-key --print-env)"

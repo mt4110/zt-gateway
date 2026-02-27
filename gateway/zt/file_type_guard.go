@@ -331,7 +331,10 @@ func extensionMatchesMagic(ext string, kind fileMagicKind) (bool, string) {
 			return false, "expected_pptx_ooxml"
 		}
 		return true, ""
-	case ".txt", ".md", ".csv", ".json":
+	case ".txt", ".md", ".csv", ".tsv", ".json", ".jsonl", ".ndjson",
+		".yaml", ".yml", ".toml", ".xml",
+		".ini", ".cfg", ".conf", ".properties",
+		".log", ".sql":
 		switch kind {
 		case fileMagicText:
 			return true, ""

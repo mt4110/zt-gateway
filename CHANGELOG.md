@@ -32,6 +32,8 @@
 - v0.9.8 dashboard auth gate (`scripts/ci/check-v098-dashboard-auth-gate.sh`)
 - v0.9.9 design baseline for dashboard mutation auth coverage closure (`docs/architecture/V0.9.9_DESIGN.md`)
 - v0.9.9 dashboard mutation coverage gate (`scripts/ci/check-v099-dashboard-mutation-coverage-gate.sh`)
+- v1.3 operations gap-closure gate (`scripts/ci/check-v130-operations-gap-closure-gate.sh`)
+- one-command trust pin bootstrap script (`scripts/dev/bootstrap-ci-trust-pins.sh`)
 
 ### Changed
 
@@ -42,6 +44,9 @@
 - `zt dashboard` mutating APIs now fail-closed on non-loopback bind when `ZT_DASHBOARD_MUTATION_TOKEN` is unset, and require `X-ZT-Dashboard-Token` match when token is configured
 - `zt dashboard` mutating APIs `/api/keys/{key_id}/status` and `POST /api/key-repair/jobs` now also enforce the same mutation auth contract (`dashboard_mutation_token_required` / `dashboard_mutation_auth_failed`)
 - `/api/alerts/dispatch` auth拒否時の監査イベントに `reason_code`（`dashboard_mutation_token_required` / `dashboard_mutation_auth_failed`）を固定出力
+- `zt send --allow-degraded-scan` now requires `--break-glass-reason` (unless `ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` is explicitly set)
+- `secure-pack send` now supports config path overrides (`--base-dir`, `--recipients-dir`, `--out-dir`, `--tools-lock`, `--root-pubkey`)
+- file-type guard now enforces additional text-like extensions (`yaml/yml/toml/jsonl/ndjson/tsv/xml/ini/cfg/conf/properties/log/sql`)
 
 ### Security
 
@@ -58,12 +63,12 @@
 
 ### Changed
 
-- TBD
+- Initial release baseline documented as `*.spkg.tgz`-first operation flow.
 
 ### Fixed
 
-- TBD
+- N/A (initial release baseline).
 
 ### Security
 
-- TBD
+- Fail-closed defaults for root key pinning, signer allowlist, and detached signature verification.
