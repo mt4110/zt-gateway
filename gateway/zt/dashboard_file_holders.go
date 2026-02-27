@@ -22,6 +22,14 @@ type dashboardFileHoldersListResponse struct {
 	GeneratedAt string                     `json:"generated_at"`
 }
 
+type dashboardFileHolderTimelineResponse struct {
+	TenantID      string                            `json:"tenant_id"`
+	ContentSHA256 string                            `json:"content_sha256"`
+	WindowDays    int                               `json:"window_days"`
+	Points        []localSORFileHolderTimelinePoint `json:"points"`
+	GeneratedAt   string                            `json:"generated_at"`
+}
+
 func handleDashboardFileHoldersAPI(repoRoot string, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeDashboardClientJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
@@ -72,6 +80,40 @@ func handleDashboardFileHoldersAPI(repoRoot string, w http.ResponseWriter, r *ht
 		Items:       items,
 		Source:      "local_sor_assets+exchanges",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func handleDashboardFileHoldersTimelineAPI(repoRoot string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeDashboardClientJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
+		return
+	}
+	if localSOR == nil || localSOR.db == nil {
+		writeDashboardClientJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "local_sor_unavailable"})
+		return
+	}
+	tenantID, code := resolveDashboardClientTenantScope(repoRoot, r.URL.Query().Get("tenant_id"))
+	if code != "" {
+		writeDashboardClientJSON(w, httpStatusForDashboardClientError(code), map[string]any{"error": code})
+		return
+	}
+	contentSHA := strings.TrimSpace(r.URL.Query().Get("content_sha256"))
+	if contentSHA == "" {
+		writeDashboardClientJSON(w, http.StatusBadRequest, map[string]any{"error": "content_sha256_required"})
+		return
+	}
+	windowDays := parseDashboardPositiveInt(r.URL.Query().Get("window_days"), 30, 400)
+	points, err := localSOR.fileHolderTimeline(tenantID, contentSHA, windowDays, time.Now().UTC())
+	if err != nil {
+		writeDashboardClientJSON(w, http.StatusInternalServerError, map[string]any{"error": "file_holders_timeline_query_failed"})
+		return
+	}
+	writeDashboardClientJSON(w, http.StatusOK, dashboardFileHolderTimelineResponse{
+		TenantID:      tenantID,
+		ContentSHA256: contentSHA,
+		WindowDays:    windowDays,
+		Points:        points,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

@@ -451,6 +451,15 @@ th {
   font-size: 0.85rem;
 }
 
+.timeline {
+  border: 1px solid rgba(198, 214, 230, 0.9);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
 .baseline {
   margin: 0;
   font-size: 0.84rem;

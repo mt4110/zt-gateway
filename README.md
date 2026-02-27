@@ -258,12 +258,18 @@ Local dashboard API（LFC-1009: 署名保有者数 MVP）:
 Local dashboard API（LFC-1011: ファイル -> 保有者マップ）:
 
 - `GET /api/files/holders` : content hash 単位の保有者マップ（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/files/holders/timeseries` : ファイル単位（`content_sha256`）の日次推移（`window_days`）
 - 表示項目:
   - `content_sha256`
   - `filename_sample`
   - `holder_client_count` / `holder_clients[]`
   - `signature_count` / `exchange_count`
   - `last_seen_at`
+- timeseries 表示項目:
+  - `bucket_start`
+  - `holder_count`
+  - `delta` / `added` / `removed`
+  - `exchange_count`
 - `sort`: `last_seen_desc|last_seen_asc|holder_desc|holder_asc|exchange_desc|exchange_asc`
 
 Local dashboard API（LFC-1010: 外部通知安全ゲート）:
@@ -283,6 +289,8 @@ SaaS モード / 契約画面（LFC-1012: economics model）:
 - `ZT_DASHBOARD_SAAS_MODE=1` で dashboard を SaaS economics 表示モードに切り替え
 - `GET /api/saas/config` : 契約画面の定数（mode, contract title, margin, fee）
 - `GET /api/saas/economics` : 単価/閾値試算（query: `files_per_month`, `avg_file_mb`, `retention_days`）
+- `GET /api/saas/stripe-price` : `recommended_unit_price_usd` を Stripe 決済前提の gross 単価に変換
+- `GET /api/saas/economics/quote.pdf` : Starter/Growth/Enterprise 見積PDF
 - 主な調整用 env:
   - `ZT_DASHBOARD_FIXED_SERVER_COST_USD`
   - `ZT_DASHBOARD_FIXED_SUPPORT_COST_USD`
@@ -292,6 +300,19 @@ SaaS モード / 契約画面（LFC-1012: economics model）:
   - `ZT_DASHBOARD_TARGET_GROSS_MARGIN`
   - `ZT_DASHBOARD_PLATFORM_FEE_RATE`
   - `ZT_DASHBOARD_PRICE_PER_FILE_FLOOR_USD`
+  - `ZT_DASHBOARD_FREE_TIER_ENABLED`
+  - `ZT_DASHBOARD_FREE_TIER_FILES_PER_MONTH`
+  - `ZT_DASHBOARD_FREE_TIER_DATA_GB_PER_MONTH`
+  - `ZT_DASHBOARD_PAID_TENANT_SHARE`
+  - `ZT_DASHBOARD_STRIPE_FEE_RATE`
+  - `ZT_DASHBOARD_STRIPE_FIXED_FEE_USD`
+  - `ZT_DASHBOARD_STRIPE_ROUND_UNIT_USD`
+
+無料閾値運用:
+
+- free tier は「月次リセット（翌月復活）」前提でモデル化（`monthly_reset=true`）
+- 閾値内ユーザーは `billable_files=0` になり、`free_tier_subsidy_usd` を明示表示
+- 経済破綻を避けるため `required_paid_tenants_per_free_tenant` を同時表示し、paid比率で検証
 
 Control Plane dashboard API（tenant/role authz）:
 

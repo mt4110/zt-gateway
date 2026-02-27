@@ -232,11 +232,20 @@ func runDashboardCommand(repoRoot string, args []string) error {
 	mux.HandleFunc("/api/files/holders", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardFileHoldersAPI(repoRoot, w, r)
 	})
+	mux.HandleFunc("/api/files/holders/timeseries", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardFileHoldersTimelineAPI(repoRoot, w, r)
+	})
 	mux.HandleFunc("/api/saas/config", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardSaaSConfigAPI(w, r)
 	})
 	mux.HandleFunc("/api/saas/economics", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardSaaSEconomicsAPI(w, r)
+	})
+	mux.HandleFunc("/api/saas/stripe-price", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSaaSStripePriceAPI(w, r)
+	})
+	mux.HandleFunc("/api/saas/economics/quote.pdf", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSaaSQuotePDFAPI(w, r)
 	})
 	mux.HandleFunc("/api/auth/providers", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardSSOProvidersAPI(w, r)

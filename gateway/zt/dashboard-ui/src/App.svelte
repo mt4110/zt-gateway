@@ -30,6 +30,15 @@
     last_seen_at: string;
   };
 
+  type FileTimelinePoint = {
+    bucket_start: string;
+    holder_count: number;
+    delta: number;
+    added: number;
+    removed: number;
+    exchange_count: number;
+  };
+
   type SaaSConfig = {
     mode: string;
     enabled: boolean;
@@ -55,6 +64,22 @@
     safe_file_size_threshold_mb: number;
     safe_files_per_month: number;
     tier: string;
+    free_tier_applied: boolean;
+    free_tier_subsidy_usd: number;
+    billable_files: number;
+    required_paid_tenants_per_free_tenant: number;
+    monthly_reset: boolean;
+  };
+
+  type StripePrice = {
+    currency: string;
+    net_recommended_revenue_usd: number;
+    gross_charge_usd: number;
+    gross_unit_price_usd: number;
+    stripe_fee_usd: number;
+    stripe_fee_rate: number;
+    stripe_fixed_fee_usd: number;
+    billable_files: number;
   };
 
   const SSO_SESSION_KEY = 'zt_dashboard_sso_session_v1';
@@ -91,9 +116,13 @@
 
   let fileFilter = '';
   let fileRows: FileHolderRow[] = [];
+  let selectedContentSHA = '';
+  let timelineWindowDays = 30;
+  let fileTimeline: FileTimelinePoint[] = [];
 
   let saasConfig: SaaSConfig | null = null;
   let saasEconomics: SaaSEconomics | null = null;
+  let stripePrice: StripePrice | null = null;
   let ecoFilesPerMonth = 10000;
   let ecoAvgFileMB = 8;
   let ecoRetentionDays = 30;
@@ -118,6 +147,10 @@
       'authenticated'
     );
   })();
+  $: freeTierMessage =
+    saasEconomics?.free_tier_applied
+      ? `Free tier active (monthly reset=${saasEconomics.monthly_reset ? 'on' : 'off'})`
+      : 'Paid tier billing applies';
 
   function showToast(message: string): void {
     toast = message;
@@ -371,6 +404,26 @@
     }
     const body = (await res.json()) as { items?: FileHolderRow[] };
     fileRows = body.items ?? [];
+    if (selectedContentSHA && !fileRows.some((row) => row.content_sha256 === selectedContentSHA)) {
+      selectedContentSHA = '';
+      fileTimeline = [];
+    }
+  }
+
+  async function fetchFileHolderTimeline(contentSHA: string): Promise<void> {
+    if (!tenantID.trim() || !contentSHA.trim()) {
+      return;
+    }
+    const res = await fetch(
+      `/api/files/holders/timeseries?tenant_id=${encodeURIComponent(tenantID)}&content_sha256=${encodeURIComponent(contentSHA)}&window_days=${timelineWindowDays}`,
+      { cache: 'no-store' }
+    );
+    if (!res.ok) {
+      return;
+    }
+    const body = (await res.json()) as { points?: FileTimelinePoint[] };
+    selectedContentSHA = contentSHA;
+    fileTimeline = body.points ?? [];
   }
 
   async function fetchSaaSEconomics(): Promise<void> {
@@ -384,6 +437,32 @@
       return;
     }
     saasEconomics = (await res.json()) as SaaSEconomics;
+    await fetchStripePrice();
+  }
+
+  async function fetchStripePrice(): Promise<void> {
+    const query = new URLSearchParams({
+      files_per_month: String(ecoFilesPerMonth),
+      avg_file_mb: String(ecoAvgFileMB),
+      retention_days: String(ecoRetentionDays)
+    });
+    const res = await fetch(`/api/saas/stripe-price?${query.toString()}`, { cache: 'no-store' });
+    if (!res.ok) {
+      return;
+    }
+    stripePrice = (await res.json()) as StripePrice;
+  }
+
+  function downloadQuotePDF(): void {
+    const query = new URLSearchParams({
+      files_per_month: String(ecoFilesPerMonth),
+      avg_file_mb: String(ecoAvgFileMB),
+      retention_days: String(ecoRetentionDays)
+    });
+    const anchor = document.createElement('a');
+    anchor.href = `/api/saas/economics/quote.pdf?${query.toString()}`;
+    anchor.download = `zt-saas-quote-${new Date().toISOString().slice(0, 10)}.pdf`;
+    anchor.click();
   }
 
   function onSSOResult(event: MessageEvent): void {
@@ -628,6 +707,10 @@
         Filter
         <input bind:value={fileFilter} placeholder="filename or sha256" />
       </label>
+      <label>
+        Timeline Days
+        <input type="number" bind:value={timelineWindowDays} min="7" max="180" step="1" />
+      </label>
       <button class="menu-btn" on:click={fetchFileHolderMap}>Refresh Map</button>
     </div>
     <div class="table-wrap">
@@ -640,6 +723,7 @@
             <th>signers</th>
             <th>exchanges</th>
             <th>last_seen</th>
+            <th>timeline</th>
           </tr>
         </thead>
         <tbody>
@@ -651,11 +735,47 @@
               <td>{row.signature_count}</td>
               <td>{row.exchange_count}</td>
               <td>{row.last_seen_at}</td>
+              <td>
+                <button on:click={() => fetchFileHolderTimeline(row.content_sha256)}>
+                  View
+                </button>
+              </td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
+    {#if selectedContentSHA}
+      <div class="timeline">
+        <h3>Holder Timeline: {selectedContentSHA}</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>bucket</th>
+                <th>holders</th>
+                <th>delta</th>
+                <th>added</th>
+                <th>removed</th>
+                <th>exchanges</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each fileTimeline as point}
+                <tr>
+                  <td>{point.bucket_start}</td>
+                  <td>{point.holder_count}</td>
+                  <td>{point.delta}</td>
+                  <td>{point.added}</td>
+                  <td>{point.removed}</td>
+                  <td>{point.exchange_count}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {/if}
   </section>
 
   <section class="pricing glass" in:fly={{ y: 10, duration: 200 }}>
@@ -678,6 +798,7 @@
         <input type="number" bind:value={ecoRetentionDays} min="1" step="1" />
       </label>
       <button class="menu-btn" on:click={fetchSaaSEconomics}>Recalculate</button>
+      <button class="menu-btn" on:click={downloadQuotePDF}>Estimate PDF</button>
     </div>
 
     <div class="contract-card">
@@ -685,12 +806,23 @@
       <h3>{saasConfig?.contract_title ?? 'ZT Gateway SaaS Agreement'}</h3>
       <p class="muted">Mode: {saasConfig?.mode ?? 'local'} | Currency: {saasConfig?.currency ?? 'USD'}</p>
       <p class="muted">Included files: {saasConfig?.included_files ?? 0} / month</p>
+      <p class="muted">{freeTierMessage}</p>
       {#if saasEconomics}
         <div class="contract-metrics">
           <p>Recommended monthly minimum: ${saasEconomics.recommended_monthly_minimum_usd}</p>
           <p>Recommended unit price: ${saasEconomics.recommended_unit_price_usd} / file</p>
+          <p>Billable files: {saasEconomics.billable_files}</p>
           <p>Break-even files at floor: {saasEconomics.break_even_files_at_floor}</p>
+          <p>Free tier subsidy: ${saasEconomics.free_tier_subsidy_usd}</p>
+          <p>Required paid tenants per free tenant: {saasEconomics.required_paid_tenants_per_free_tenant}</p>
           <p>Safe threshold: {saasEconomics.safe_file_size_threshold_mb}MB x {saasEconomics.safe_files_per_month}/month ({saasEconomics.tier})</p>
+        </div>
+      {/if}
+      {#if stripePrice}
+        <div class="contract-metrics">
+          <p>Stripe gross charge: ${stripePrice.gross_charge_usd}</p>
+          <p>Stripe gross unit price: ${stripePrice.gross_unit_price_usd} / file</p>
+          <p>Stripe fee: ${stripePrice.stripe_fee_usd} ({Math.round(stripePrice.stripe_fee_rate * 1000) / 10}%)</p>
         </div>
       {/if}
       <p class="muted">※ 無料運用は前提にせず、固定費 + 変動費 + 目標粗利 + プラットフォーム手数料で価格を算定。</p>
