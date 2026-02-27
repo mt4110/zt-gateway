@@ -395,8 +395,9 @@ func handleDashboardAlertDispatchAPI(repoRoot, listenAddr string, w http.Respons
 		return
 	}
 	if ok, reason := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		channel, dryRun := parseDashboardAlertDispatchAuditFields(r)
 		alert := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr).Alerts
-		_ = appendDashboardAlertDispatchAudit(repoRoot, "rejected", reason, "webhook", "", false, alert)
+		_ = appendDashboardAlertDispatchAudit(repoRoot, "rejected", reason, channel, "", dryRun, alert)
 		return
 	}
 	defer r.Body.Close()
@@ -415,6 +416,21 @@ func handleDashboardAlertDispatchAPI(repoRoot, listenAddr string, w http.Respons
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(out)
+}
+
+func parseDashboardAlertDispatchAuditFields(r *http.Request) (string, bool) {
+	if r == nil || r.Body == nil {
+		return "", false
+	}
+	var req struct {
+		Channel string `json:"channel"`
+		DryRun  bool   `json:"dry_run"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1024))
+	if err := dec.Decode(&req); err != nil && err != io.EOF {
+		return "", false
+	}
+	return strings.TrimSpace(req.Channel), req.DryRun
 }
 
 func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot {

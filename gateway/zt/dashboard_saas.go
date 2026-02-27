@@ -231,8 +231,9 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 
 	egressGB := billableDataGB * 2.0
 	storageGBMonth := billableDataGB * (retentionDays / 30.0)
+	requestK := float64(billableFiles) / 1000.0
 
-	variableCost := egressGB*egressPerGB + storageGBMonth*storagePerGB + (float64(filesPerMonth)/1000.0)*reqPer1K
+	variableCost := egressGB*egressPerGB + storageGBMonth*storagePerGB + requestK*reqPer1K
 	fixedCost := fixedServer + fixedSupport
 	totalCost := fixedCost + variableCost
 	margin := clampFloat(cfg.TargetMargin, 0.05, 0.95)
@@ -249,8 +250,8 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 	}
 
 	variablePerFile := 0.0
-	if filesPerMonth > 0 {
-		variablePerFile = variableCost / float64(filesPerMonth)
+	if billableFiles > 0 {
+		variablePerFile = variableCost / float64(billableFiles)
 	}
 	breakEven := 0
 	if cfg.PriceFloorUSD > variablePerFile {

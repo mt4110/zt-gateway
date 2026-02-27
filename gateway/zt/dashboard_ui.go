@@ -36,36 +36,20 @@ func serveDashboardUI(w http.ResponseWriter, r *http.Request) {
 	if cleaned == "" || cleaned == "." {
 		cleaned = "index.html"
 	}
-	if dashboardUIAssetExists(cleaned) {
-		serveDashboardUIAsset(w, r, cleaned)
+	if serveDashboardUIAsset(w, r, cleaned) {
 		return
 	}
 	// SPA fallback: paths without extension return index.html.
-	if !strings.Contains(path.Base(cleaned), ".") {
-		serveDashboardUIAsset(w, r, "index.html")
+	if !strings.Contains(path.Base(cleaned), ".") && serveDashboardUIAsset(w, r, "index.html") {
 		return
 	}
 	http.NotFound(w, r)
 }
 
-func dashboardUIAssetExists(name string) bool {
-	if dashboardUIFS == nil {
-		return false
-	}
-	f, err := dashboardUIFS.Open(name)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	return err == nil && !info.IsDir()
-}
-
-func serveDashboardUIAsset(w http.ResponseWriter, r *http.Request, name string) {
+func serveDashboardUIAsset(w http.ResponseWriter, r *http.Request, name string) bool {
 	raw, err := fs.ReadFile(dashboardUIFS, name)
 	if err != nil {
-		http.NotFound(w, r)
-		return
+		return false
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -79,7 +63,8 @@ func serveDashboardUIAsset(w http.ResponseWriter, r *http.Request, name string) 
 		w.Header().Set("Content-Type", ctype)
 	}
 	if r != nil && r.Method == http.MethodHead {
-		return
+		return true
 	}
 	_, _ = w.Write(raw)
+	return true
 }

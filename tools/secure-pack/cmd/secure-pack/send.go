@@ -35,7 +35,10 @@ var sendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Encrypt and sign files",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cwd, _ := os.Getwd()
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
 		cfg, err := buildSendConfig(cwd)
 		if err != nil {
 			return err
