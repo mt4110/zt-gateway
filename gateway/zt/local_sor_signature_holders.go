@@ -1,7 +1,10 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,7 +18,17 @@ type localSORSignatureHolderRecord struct {
 	ConfirmationStatus     string  `json:"confirmation_status"`
 	EventCount             int     `json:"event_count"`
 	LastSeenAt             string  `json:"last_seen_at"`
+	EstimateLagSeconds     int64   `json:"realtime_estimate_lag_seconds"`
+	EstimateSLOSeconds     int64   `json:"realtime_estimate_slo_seconds"`
+	EstimateSLOMet         bool    `json:"realtime_estimate_slo_met"`
 	ClientEventCount       int     `json:"client_event_count,omitempty"`
+}
+
+type localSORSignatureHolderRealtimeMetrics struct {
+	SLOSeconds    int64
+	MaxLagSeconds int64
+	DelayedCount  int
+	SLOMet        bool
 }
 
 func (s *localSORStore) observeSignatureHolderFromReceipt(tenantID string, receipt verificationReceipt, now time.Time) error {
@@ -137,6 +150,8 @@ order by ` + orderBy + `
 	defer rows.Close()
 
 	items := make([]localSORSignatureHolderRecord, 0, limit)
+	now := time.Now().UTC()
+	slo := resolveSignatureHolderRealtimeSLOSeconds()
 	for rows.Next() {
 		var item localSORSignatureHolderRecord
 		if err := rows.Scan(
@@ -150,7 +165,7 @@ order by ` + orderBy + `
 		); err != nil {
 			return nil, 0, err
 		}
-		item = finalizeLocalSORSignatureHolderRecord(item)
+		item = finalizeLocalSORSignatureHolderRecord(item, now, slo)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -254,6 +269,8 @@ order by ` + orderBy + `
 	defer rows.Close()
 
 	items := make([]localSORSignatureHolderRecord, 0, limit)
+	now := time.Now().UTC()
+	slo := resolveSignatureHolderRealtimeSLOSeconds()
 	for rows.Next() {
 		var item localSORSignatureHolderRecord
 		if err := rows.Scan(
@@ -267,7 +284,7 @@ order by ` + orderBy + `
 		); err != nil {
 			return nil, 0, err
 		}
-		item = finalizeLocalSORSignatureHolderRecord(item)
+		item = finalizeLocalSORSignatureHolderRecord(item, now, slo)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -276,9 +293,12 @@ order by ` + orderBy + `
 	return items, total, nil
 }
 
-func finalizeLocalSORSignatureHolderRecord(item localSORSignatureHolderRecord) localSORSignatureHolderRecord {
+func finalizeLocalSORSignatureHolderRecord(item localSORSignatureHolderRecord, now time.Time, sloSeconds int64) localSORSignatureHolderRecord {
 	item.ConfirmedCoverageRatio = localSORConfirmedCoverageRatio(item.HolderCountConfirmed, item.HolderCountEstimated)
 	item.ConfirmationStatus = localSORConfirmationStatus(item.HolderCountConfirmed, item.HolderCountEstimated)
+	item.EstimateSLOSeconds = sloSeconds
+	item.EstimateLagSeconds = localSORTimestampLagSeconds(item.LastSeenAt, now)
+	item.EstimateSLOMet = item.EstimateLagSeconds <= sloSeconds
 	return item
 }
 
@@ -300,4 +320,82 @@ func localSORConfirmationStatus(confirmed, estimated int) string {
 		return "partial"
 	}
 	return "confirmed"
+}
+
+func resolveSignatureHolderRealtimeSLOSeconds() int64 {
+	raw := strings.TrimSpace(os.Getenv("ZT_DASHBOARD_SIGNATURE_HOLDER_SLO_SECONDS"))
+	if raw == "" {
+		return 120
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v <= 0 {
+		return 120
+	}
+	return v
+}
+
+func localSORTimestampLagSeconds(raw string, now time.Time) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	ts, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		ts, err = time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return 0
+		}
+	}
+	lag := now.UTC().Sub(ts.UTC())
+	if lag < 0 {
+		return 0
+	}
+	return int64(lag.Seconds())
+}
+
+func (s *localSORStore) collectSignatureHolderRealtimeMetrics(tenantID string, now time.Time) (localSORSignatureHolderRealtimeMetrics, error) {
+	if s == nil || s.db == nil {
+		return localSORSignatureHolderRealtimeMetrics{}, fmt.Errorf("local sor is not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if err := validateLocalSORTenantID(tenantID); err != nil {
+		return localSORSignatureHolderRealtimeMetrics{}, err
+	}
+	metrics := localSORSignatureHolderRealtimeMetrics{
+		SLOSeconds: resolveSignatureHolderRealtimeSLOSeconds(),
+		SLOMet:     true,
+	}
+	rows, err := s.db.Query(`
+select updated_at
+from local_sor_signature_holders
+where tenant_id = ?1
+`, tenantID)
+	if err != nil {
+		return metrics, err
+	}
+	defer rows.Close()
+
+	hasRows := false
+	for rows.Next() {
+		hasRows = true
+		var updatedAt sql.NullString
+		if err := rows.Scan(&updatedAt); err != nil {
+			return metrics, err
+		}
+		lag := localSORTimestampLagSeconds(updatedAt.String, now)
+		if lag > metrics.MaxLagSeconds {
+			metrics.MaxLagSeconds = lag
+		}
+		if lag > metrics.SLOSeconds {
+			metrics.DelayedCount++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return metrics, err
+	}
+	if !hasRows {
+		return metrics, nil
+	}
+	metrics.SLOMet = metrics.DelayedCount == 0
+	return metrics, nil
 }

@@ -131,6 +131,7 @@ func TestCollectDashboardKPIStatus_ComputesSignatureAnomalyFalsePositiveRatio(t 
 			{PolicyResult: "pass", SignatureValid: true, TamperDetected: false},
 		},
 		dashboardControlPlaneStatus{},
+		time.Now().UTC(),
 	)
 	if kpi.SignatureAnomalyCount != 2 {
 		t.Fatalf("signature_anomaly_count=%d, want 2", kpi.SignatureAnomalyCount)
@@ -140,5 +141,33 @@ func TestCollectDashboardKPIStatus_ComputesSignatureAnomalyFalsePositiveRatio(t 
 	}
 	if math.Abs(kpi.SignatureAnomalyFalsePositiveRatio-0.5) > 0.0001 {
 		t.Fatalf("signature_anomaly_false_positive_ratio=%f, want 0.5", kpi.SignatureAnomalyFalsePositiveRatio)
+	}
+}
+
+func TestCollectDashboardSnapshot_KPIIncludesSignatureHolderRealtimeMetrics(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_TENANT_ID", "tenant-a")
+	t.Setenv("ZT_DASHBOARD_SIGNATURE_HOLDER_SLO_SECONDS", "60")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_signature_holders (tenant_id, signature_id, holder_count_estimated, holder_count_confirmed, updated_at)
+values
+  ('tenant-a', 'FP-1', 3, 3, '2026-02-27T00:00:10Z'),
+  ('tenant-a', 'FP-2', 4, 2, '2026-02-27T00:02:30Z')
+`)
+	snapshot := collectDashboardSnapshot(
+		repoRoot,
+		time.Date(2026, time.February, 27, 0, 3, 0, 0, time.UTC),
+	)
+	kpi := snapshot.KPI
+	if kpi.SignatureHoldersRealtimeSLOSeconds != 60 {
+		t.Fatalf("signature_holders_realtime_slo_seconds=%d, want 60", kpi.SignatureHoldersRealtimeSLOSeconds)
+	}
+	if kpi.SignatureHoldersRealtimeDelayed != 1 {
+		t.Fatalf("signature_holders_realtime_delayed_signatures=%d, want 1", kpi.SignatureHoldersRealtimeDelayed)
+	}
+	if kpi.SignatureHoldersRealtimeSLOMet {
+		t.Fatalf("signature_holders_realtime_slo_met=true, want false")
 	}
 }

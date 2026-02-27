@@ -196,6 +196,31 @@ func TestCollectDashboardAlertStatus_IncludesAnomalyFalsePositiveSignal(t *testi
 	}
 }
 
+func TestCollectDashboardAlertStatus_IncludesSignatureHolderRealtimeSLOBreach(t *testing.T) {
+	alerts := collectDashboardAlertStatus(
+		dashboardDangerStatus{Level: "low", Signals: []dashboardDangerItem{{Level: "low", Code: "healthy", Message: "ok"}}},
+		dashboardEventSyncStatus{},
+		dashboardIncidentStatus{},
+		dashboardKPIStatus{
+			SignatureHoldersRealtimeSLOSeconds: 60,
+			SignatureHoldersRealtimeMaxLagSec:  180,
+			SignatureHoldersRealtimeDelayed:    2,
+			SignatureHoldersRealtimeSLOMet:     false,
+		},
+		dashboardControlPlaneStatus{},
+	)
+	found := false
+	for _, item := range alerts.Items {
+		if item.Code == "signature_holders_realtime_slo_breached" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("alerts missing signature_holders_realtime_slo_breached: %#v", alerts.Items)
+	}
+}
+
 func setupDashboardAlertDispatchTestEnv(t *testing.T) string {
 	t.Helper()
 	repoRoot := t.TempDir()

@@ -22,10 +22,12 @@ type auditVerifyCLIOptions struct {
 }
 
 type auditReportCLIOptions struct {
-	FilePath string
-	Month    string
-	JSONOut  string
-	PDFOut   string
+	FilePath   string
+	Month      string
+	JSONOut    string
+	PDFOut     string
+	Template   string
+	ContractID string
 }
 
 type auditRotateCLIOptions struct {
@@ -35,18 +37,29 @@ type auditRotateCLIOptions struct {
 }
 
 type auditMonthlyReport struct {
-	SchemaVersion      int            `json:"schema_version"`
-	GeneratedAt        string         `json:"generated_at"`
-	Month              string         `json:"month"`
-	WindowStart        string         `json:"window_start"`
-	WindowEnd          string         `json:"window_end"`
-	SourceFile         string         `json:"source_file"`
-	TotalRecords       int            `json:"total_records"`
-	SelectedRecords    int            `json:"selected_records"`
-	InvalidRecords     int            `json:"invalid_records"`
-	EventTypeCounts    map[string]int `json:"event_type_counts"`
-	ResultCounts       map[string]int `json:"result_counts"`
-	SignatureKeyCounts map[string]int `json:"signature_key_counts"`
+	SchemaVersion      int                        `json:"schema_version"`
+	GeneratedAt        string                     `json:"generated_at"`
+	Month              string                     `json:"month"`
+	WindowStart        string                     `json:"window_start"`
+	WindowEnd          string                     `json:"window_end"`
+	SourceFile         string                     `json:"source_file"`
+	TotalRecords       int                        `json:"total_records"`
+	SelectedRecords    int                        `json:"selected_records"`
+	InvalidRecords     int                        `json:"invalid_records"`
+	EventTypeCounts    map[string]int             `json:"event_type_counts"`
+	ResultCounts       map[string]int             `json:"result_counts"`
+	SignatureKeyCounts map[string]int             `json:"signature_key_counts"`
+	LegalTemplate      *auditLegalTemplateSummary `json:"legal_template,omitempty"`
+}
+
+type auditLegalTemplateSummary struct {
+	Template      string          `json:"template"`
+	ContractID    string          `json:"contract_id,omitempty"`
+	Coverage      map[string]bool `json:"coverage"`
+	CoverageRatio float64         `json:"coverage_ratio"`
+	ChecksPassed  int             `json:"checks_passed"`
+	ChecksTotal   int             `json:"checks_total"`
+	Notes         []string        `json:"notes,omitempty"`
 }
 
 type auditRotateResult struct {
@@ -161,11 +174,14 @@ func parseAuditReportArgs(repoRoot string, args []string) (auditReportCLIOptions
 		Month:    defaultMonth,
 		JSONOut:  defaultJSONOut,
 		PDFOut:   defaultPDFOut,
+		Template: "standard",
 	}
 	fs.StringVar(&opts.FilePath, "file", opts.FilePath, "Path to audit events JSONL")
 	fs.StringVar(&opts.Month, "month", opts.Month, "Target month in YYYY-MM (UTC)")
 	fs.StringVar(&opts.JSONOut, "json-out", opts.JSONOut, "Output path for monthly JSON report")
 	fs.StringVar(&opts.PDFOut, "pdf-out", opts.PDFOut, "Output path for monthly PDF report")
+	fs.StringVar(&opts.Template, "template", opts.Template, "Report template (standard|legal-v1)")
+	fs.StringVar(&opts.ContractID, "contract-id", "", "Contract/compliance ID for legal template output")
 	if err := fs.Parse(args); err != nil {
 		return auditReportCLIOptions{}, err
 	}
@@ -176,8 +192,17 @@ func parseAuditReportArgs(repoRoot string, args []string) (auditReportCLIOptions
 	opts.Month = strings.TrimSpace(opts.Month)
 	opts.JSONOut = strings.TrimSpace(opts.JSONOut)
 	opts.PDFOut = strings.TrimSpace(opts.PDFOut)
+	opts.Template = strings.ToLower(strings.TrimSpace(opts.Template))
+	opts.ContractID = strings.TrimSpace(opts.ContractID)
 	if opts.FilePath == "" || opts.Month == "" || opts.JSONOut == "" || opts.PDFOut == "" {
 		return auditReportCLIOptions{}, fmt.Errorf(cliAuditUsage)
+	}
+	switch opts.Template {
+	case "", "standard":
+		opts.Template = "standard"
+	case "legal-v1":
+	default:
+		return auditReportCLIOptions{}, fmt.Errorf("invalid --template: expected standard|legal-v1")
 	}
 	if _, err := time.Parse("2006-01", opts.Month); err != nil {
 		return auditReportCLIOptions{}, fmt.Errorf("invalid --month: expected YYYY-MM")
@@ -223,8 +248,8 @@ func runAuditReportCommand(repoRoot string, args []string) int {
 		fmt.Printf("[AUDIT] FAIL write pdf: %v\n", err)
 		return 1
 	}
-	fmt.Printf("[AUDIT] report month=%s json=%s pdf=%s selected=%d total=%d invalid=%d\n",
-		report.Month, opts.JSONOut, opts.PDFOut, report.SelectedRecords, report.TotalRecords, report.InvalidRecords)
+	fmt.Printf("[AUDIT] report month=%s template=%s json=%s pdf=%s selected=%d total=%d invalid=%d\n",
+		report.Month, opts.Template, opts.JSONOut, opts.PDFOut, report.SelectedRecords, report.TotalRecords, report.InvalidRecords)
 	return 0
 }
 
@@ -282,7 +307,56 @@ func generateAuditMonthlyReport(opts auditReportCLIOptions) (auditMonthlyReport,
 	if err := scanner.Err(); err != nil {
 		return auditMonthlyReport{}, err
 	}
+	if opts.Template == "legal-v1" {
+		out.LegalTemplate = buildAuditLegalTemplateSummary(opts, out)
+	}
 	return out, nil
+}
+
+func buildAuditLegalTemplateSummary(opts auditReportCLIOptions, report auditMonthlyReport) *auditLegalTemplateSummary {
+	coverage := map[string]bool{
+		"chain_integrity":             report.InvalidRecords == 0,
+		"signature_verification":      len(report.SignatureKeyCounts) > 0,
+		"incident_traceability":       hasAuditEventTypeContaining(report.EventTypeCounts, "incident"),
+		"key_governance_evidence":     hasAuditEventTypeContaining(report.EventTypeCounts, "key"),
+		"retention_rotation_evidence": hasAuditEventTypeContaining(report.EventTypeCounts, "audit_rotate"),
+	}
+	passed := 0
+	total := len(coverage)
+	notes := make([]string, 0, total)
+	for key, ok := range coverage {
+		if ok {
+			passed++
+			continue
+		}
+		notes = append(notes, "missing coverage: "+key)
+	}
+	sort.Strings(notes)
+	return &auditLegalTemplateSummary{
+		Template:      "legal-v1",
+		ContractID:    strings.TrimSpace(opts.ContractID),
+		Coverage:      coverage,
+		CoverageRatio: dashboardRatio(float64(passed), float64(total)),
+		ChecksPassed:  passed,
+		ChecksTotal:   total,
+		Notes:         notes,
+	}
+}
+
+func hasAuditEventTypeContaining(counts map[string]int, needle string) bool {
+	needle = strings.TrimSpace(strings.ToLower(needle))
+	if needle == "" {
+		return false
+	}
+	for eventType, n := range counts {
+		if n <= 0 {
+			continue
+		}
+		if strings.Contains(strings.ToLower(strings.TrimSpace(eventType)), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeAuditMonthlyReportJSON(path string, report auditMonthlyReport) error {
@@ -316,6 +390,22 @@ func writeAuditMonthlyReportPDF(path string, report auditMonthlyReport) error {
 	lines = append(lines, "")
 	lines = append(lines, "signature_key_counts:")
 	lines = append(lines, formatAuditReportCountLines(report.SignatureKeyCounts)...)
+	if report.LegalTemplate != nil {
+		lines = append(lines, "")
+		lines = append(lines, "legal_template:")
+		lines = append(lines, "template: "+report.LegalTemplate.Template)
+		if strings.TrimSpace(report.LegalTemplate.ContractID) != "" {
+			lines = append(lines, "contract_id: "+strings.TrimSpace(report.LegalTemplate.ContractID))
+		}
+		lines = append(lines, fmt.Sprintf("coverage_ratio: %.4f", report.LegalTemplate.CoverageRatio))
+		lines = append(lines, fmt.Sprintf("checks_passed: %d/%d", report.LegalTemplate.ChecksPassed, report.LegalTemplate.ChecksTotal))
+		lines = append(lines, "coverage:")
+		lines = append(lines, formatAuditReportBoolLines(report.LegalTemplate.Coverage)...)
+		if len(report.LegalTemplate.Notes) > 0 {
+			lines = append(lines, "notes:")
+			lines = append(lines, report.LegalTemplate.Notes...)
+		}
+	}
 	raw, err := renderSimpleTextPDF(lines)
 	if err != nil {
 		return err
@@ -342,6 +432,22 @@ func formatAuditReportCountLines(m map[string]int) []string {
 			key = "(empty)"
 		}
 		out = append(out, fmt.Sprintf("- %s: %d", key, m[k]))
+	}
+	return out
+}
+
+func formatAuditReportBoolLines(m map[string]bool) []string {
+	if len(m) == 0 {
+		return []string{"- (none)"}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("- %s: %t", strings.TrimSpace(k), m[k]))
 	}
 	return out
 }

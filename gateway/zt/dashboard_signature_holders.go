@@ -15,6 +15,10 @@ type dashboardSignatureHolderSnapshot struct {
 	TotalConfirmedHolders    int                             `json:"total_confirmed_holders"`
 	ConfirmedCoverageRatio   float64                         `json:"confirmed_coverage_ratio"`
 	EstimatedVsConfirmedMode string                          `json:"estimated_vs_confirmed_mode"`
+	RealtimeSLOSeconds       int64                           `json:"realtime_slo_seconds"`
+	RealtimeMaxLagSeconds    int64                           `json:"realtime_max_lag_seconds"`
+	RealtimeDelayedCount     int                             `json:"realtime_delayed_signatures"`
+	RealtimeSLOMet           bool                            `json:"realtime_slo_met"`
 	Recent                   []localSORSignatureHolderRecord `json:"recent,omitempty"`
 	Error                    string                          `json:"error,omitempty"`
 }
@@ -35,7 +39,6 @@ type dashboardSignatureHoldersListResponse struct {
 }
 
 func collectDashboardSignatureHolderSnapshot(repoRoot string, now time.Time) dashboardSignatureHolderSnapshot {
-	_ = now
 	if localSOR == nil || localSOR.db == nil {
 		return dashboardSignatureHolderSnapshot{Error: "local_sor_unavailable"}
 	}
@@ -51,6 +54,7 @@ func collectDashboardSignatureHolderSnapshot(repoRoot string, now time.Time) das
 		TenantID:        tenantID,
 		TotalSignatures: total,
 		Recent:          items,
+		RealtimeSLOMet:  true,
 	}
 	for _, item := range items {
 		out.TotalEstimatedHolders += item.HolderCountEstimated
@@ -58,6 +62,12 @@ func collectDashboardSignatureHolderSnapshot(repoRoot string, now time.Time) das
 	}
 	out.ConfirmedCoverageRatio = localSORConfirmedCoverageRatio(out.TotalConfirmedHolders, out.TotalEstimatedHolders)
 	out.EstimatedVsConfirmedMode = "estimated_vs_confirmed"
+	if metrics, err := localSOR.collectSignatureHolderRealtimeMetrics(tenantID, now); err == nil {
+		out.RealtimeSLOSeconds = metrics.SLOSeconds
+		out.RealtimeMaxLagSeconds = metrics.MaxLagSeconds
+		out.RealtimeDelayedCount = metrics.DelayedCount
+		out.RealtimeSLOMet = metrics.SLOMet
+	}
 	return out
 }
 

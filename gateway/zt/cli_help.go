@@ -12,7 +12,7 @@ func printUsage() {
 	fmt.Println("  send --client <name> <file> - Scan -> sanitize -> pack")
 	fmt.Println("  verify <packet.spkg.tgz>    - Verify received packet")
 	fmt.Println("  audit verify                - Verify local audit log contract")
-	fmt.Println("  audit report                - Generate monthly audit report (JSON/PDF)")
+	fmt.Println("  audit report                - Generate monthly audit report (JSON/PDF, legal template optional)")
 	fmt.Println("  audit rotate                - Rotate audit logs by month and enforce retention")
 	fmt.Println("  policy status --json        - Show local policy sync/activation status")
 	fmt.Println("  dashboard                   - Local read-only dashboard for keys/policy/audit/receipts")

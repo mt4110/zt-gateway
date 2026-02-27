@@ -132,6 +132,83 @@ func TestRunAuditCommand_Rotate_ArchivesOldMonthsAndRetainsCurrent(t *testing.T)
 	}
 }
 
+func TestRunAuditCommand_Report_LegalTemplate(t *testing.T) {
+	repoRoot := t.TempDir()
+	spool := newEventSpool(repoRoot)
+	spool.SetAutoSync(false)
+	auditPath := spool.auditPath()
+
+	if err := writeAuditContractRecordWithTimestamp(auditPath, auditEventRecord{
+		EventID:        "evt-legal-1",
+		EventType:      "event_key_patch",
+		Timestamp:      "2026-02-10T00:00:00Z",
+		Result:         "ok",
+		Endpoint:       "/v1/admin/event-keys",
+		PayloadSHA256:  "a",
+		ChainVersion:   "v1",
+		SignatureKeyID: "audit-key-1",
+	}); err != nil {
+		t.Fatalf("write record 1: %v", err)
+	}
+	if err := writeAuditContractRecordWithTimestamp(auditPath, auditEventRecord{
+		EventID:       "evt-legal-2",
+		EventType:     "audit_rotate",
+		Timestamp:     "2026-02-11T00:00:00Z",
+		Result:        "ok",
+		Endpoint:      "/v1/events/audit",
+		PayloadSHA256: "b",
+		ChainVersion:  "v1",
+	}); err != nil {
+		t.Fatalf("write record 2: %v", err)
+	}
+	if err := writeAuditContractRecordWithTimestamp(auditPath, auditEventRecord{
+		EventID:       "evt-legal-3",
+		EventType:     "incident_lock",
+		Timestamp:     "2026-02-11T01:00:00Z",
+		Result:        "ok",
+		Endpoint:      "/v1/events/incident",
+		PayloadSHA256: "c",
+		ChainVersion:  "v1",
+	}); err != nil {
+		t.Fatalf("write record 3: %v", err)
+	}
+
+	jsonOut := filepath.Join(repoRoot, "report-2026-02-legal.json")
+	pdfOut := filepath.Join(repoRoot, "report-2026-02-legal.pdf")
+	code := runAuditCommand(repoRoot, []string{
+		"report",
+		"--file", auditPath,
+		"--month", "2026-02",
+		"--template", "legal-v1",
+		"--contract-id", "C-2026-02",
+		"--json-out", jsonOut,
+		"--pdf-out", pdfOut,
+	})
+	if code != 0 {
+		t.Fatalf("runAuditCommand(report legal-v1) code=%d, want 0", code)
+	}
+	rawJSON, err := os.ReadFile(jsonOut)
+	if err != nil {
+		t.Fatalf("read json report: %v", err)
+	}
+	var report auditMonthlyReport
+	if err := json.Unmarshal(rawJSON, &report); err != nil {
+		t.Fatalf("json.Unmarshal(report): %v", err)
+	}
+	if report.LegalTemplate == nil {
+		t.Fatalf("legal_template=nil, want non-nil")
+	}
+	if report.LegalTemplate.Template != "legal-v1" {
+		t.Fatalf("template=%q, want legal-v1", report.LegalTemplate.Template)
+	}
+	if report.LegalTemplate.ContractID != "C-2026-02" {
+		t.Fatalf("contract_id=%q, want C-2026-02", report.LegalTemplate.ContractID)
+	}
+	if report.LegalTemplate.ChecksTotal == 0 {
+		t.Fatalf("checks_total=0, want >0")
+	}
+}
+
 func writeAuditContractRecordWithTimestamp(path string, rec auditEventRecord) error {
 	prev, err := readLastAuditRecordHash(path)
 	if err != nil {

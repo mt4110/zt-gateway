@@ -387,7 +387,7 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 	keys := collectDashboardKeySnapshot(repoRoot, now)
 	signatureHolders := collectDashboardSignatureHolderSnapshot(repoRoot, now)
 	keyRepair := collectDashboardKeyRepairSnapshot(repoRoot, now)
-	danger := collectDashboardDangerStatus(root, unlock, lock, policy, eventSync, audit, receipts, keys, keyRepair)
+	danger := collectDashboardDangerStatus(root, unlock, lock, policy, eventSync, audit, receipts, keys, keyRepair, signatureHolders)
 	controlPlane := collectDashboardControlPlaneStatus(repoRoot, now)
 	incidents := collectDashboardIncidentStatus(repoRoot, now, 30)
 	if incidents.ActiveBreakGlass {
@@ -403,10 +403,10 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 		danger.Level = "high"
 		danger.Count = len(danger.Signals)
 	}
-	kpi := collectDashboardKPIStatus(repoRoot, danger, eventSync, audit, receipts, controlPlane)
+	kpi := collectDashboardKPIStatus(repoRoot, danger, eventSync, audit, receipts, controlPlane, now)
 	alerts := collectDashboardAlertStatus(danger, eventSync, incidents, kpi, controlPlane)
 	return dashboardSnapshot{
-		SchemaVersion:    6,
+		SchemaVersion:    7,
 		GeneratedAt:      now.Format(time.RFC3339),
 		RootKey:          root,
 		Unlock:           unlock,
@@ -572,6 +572,7 @@ func collectDashboardDangerStatus(
 	receipts []dashboardVerificationRecord,
 	keys dashboardKeySnapshot,
 	keyRepair dashboardKeyRepairSnapshot,
+	signatureHolders dashboardSignatureHolderSnapshot,
 ) dashboardDangerStatus {
 	signals := make([]dashboardDangerItem, 0, 16)
 	add := func(level, code, message string) {
@@ -655,6 +656,18 @@ func collectDashboardDangerStatus(
 	}
 	if keyRepair.OpenJobs > 0 {
 		add("high", "key_repair_in_progress", fmt.Sprintf("open key repair jobs=%d", keyRepair.OpenJobs))
+	}
+	if signatureHolders.RealtimeSLOSeconds > 0 && !signatureHolders.RealtimeSLOMet {
+		add(
+			"medium",
+			"signature_holders_realtime_slo_breached",
+			fmt.Sprintf(
+				"delayed signatures=%d max_lag=%ds slo=%ds",
+				signatureHolders.RealtimeDelayedCount,
+				signatureHolders.RealtimeMaxLagSeconds,
+				signatureHolders.RealtimeSLOSeconds,
+			),
+		)
 	}
 	switch unlock.Badge {
 	case "pending":

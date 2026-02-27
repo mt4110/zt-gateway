@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,4 +161,85 @@ values
 			t.Fatalf("error=%q, want tenant_scope_violation", got)
 		}
 	})
+}
+
+func TestHandleDashboardSignatureHoldersAPI_TenantIsolationAtScale(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("db.Begin: %v", err)
+	}
+	for i := 0; i < 1100; i++ {
+		fpA := strings.Repeat("A", 32) + strings.ToUpper(strconv.FormatInt(int64(i), 16))
+		fpB := strings.Repeat("B", 32) + strings.ToUpper(strconv.FormatInt(int64(i), 16))
+		if _, err := tx.Exec(`
+insert into local_sor_signature_holders (tenant_id, signature_id, holder_count_estimated, holder_count_confirmed, updated_at)
+values ('tenant-a', ?1, 10, 8, '2026-02-27T00:00:00Z')
+`, fpA); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("insert tenant-a signature holder: %v", err)
+		}
+		if _, err := tx.Exec(`
+insert into local_sor_signature_holders (tenant_id, signature_id, holder_count_estimated, holder_count_confirmed, updated_at)
+values ('tenant-b', ?1, 12, 9, '2026-02-27T00:00:00Z')
+`, fpB); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("insert tenant-b signature holder: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/signature-holders?tenant_id=tenant-a&page=1&page_size=200&sort=updated_at_desc", nil)
+	rr := httptest.NewRecorder()
+	handleDashboardSignatureHoldersAPI(repoRoot, rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp dashboardSignatureHoldersListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Total != 1100 {
+		t.Fatalf("total=%d, want 1100", resp.Total)
+	}
+	for _, item := range resp.Items {
+		if item.TenantID != "tenant-a" {
+			t.Fatalf("tenant leak detected: tenant_id=%q", item.TenantID)
+		}
+		if strings.Contains(item.SignatureID, "BBBB") {
+			t.Fatalf("tenant leak detected: signature_id=%q", item.SignatureID)
+		}
+	}
+}
+
+func TestCollectDashboardSignatureHolderSnapshot_RealtimeSLO(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_SIGNATURE_HOLDER_SLO_SECONDS", "60")
+	t.Setenv("ZT_DASHBOARD_TENANT_ID", "tenant-a")
+
+	now := time.Date(2026, time.February, 27, 3, 0, 0, 0, time.UTC)
+	mustExecLocalSOR(t, store, `
+insert into local_sor_signature_holders (tenant_id, signature_id, holder_count_estimated, holder_count_confirmed, updated_at)
+values
+  ('tenant-a', 'FP-RECENT', 3, 3, '2026-02-27T02:59:40Z'),
+  ('tenant-a', 'FP-DELAYED', 5, 3, '2026-02-27T02:57:00Z')
+`)
+	s := collectDashboardSignatureHolderSnapshot(repoRoot, now)
+	if s.RealtimeSLOSeconds != 60 {
+		t.Fatalf("realtime_slo_seconds=%d, want 60", s.RealtimeSLOSeconds)
+	}
+	if s.RealtimeSLOMet {
+		t.Fatalf("realtime_slo_met=true, want false")
+	}
+	if s.RealtimeDelayedCount != 1 {
+		t.Fatalf("realtime_delayed_signatures=%d, want 1", s.RealtimeDelayedCount)
+	}
+	if s.RealtimeMaxLagSeconds < 120 {
+		t.Fatalf("realtime_max_lag_seconds=%d, want >=120", s.RealtimeMaxLagSeconds)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,57 @@ values ('asset-1', 'tenant-a', 'client-a', 'a.pdf', 'sha-a', 'local_path', '/tmp
 	}
 }
 
+func TestHandleDashboardClientsAPI_TenantIsolationAtScale(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("db.Begin: %v", err)
+	}
+	for i := 0; i < 1200; i++ {
+		if _, err := tx.Exec(`
+insert into local_sor_clients (client_id, tenant_id, display_name, status, created_at, updated_at)
+values (?1, 'tenant-a', ?2, 'active', '2026-02-27T00:00:00Z', '2026-02-27T00:00:00Z')
+`, "ta-"+formatScaleIndex(i), "Tenant A "+formatScaleIndex(i)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("insert tenant-a client: %v", err)
+		}
+		if _, err := tx.Exec(`
+insert into local_sor_clients (client_id, tenant_id, display_name, status, created_at, updated_at)
+values (?1, 'tenant-b', ?2, 'active', '2026-02-27T00:00:00Z', '2026-02-27T00:00:00Z')
+`, "tb-"+formatScaleIndex(i), "Tenant B "+formatScaleIndex(i)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("insert tenant-b client: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/clients?tenant_id=tenant-a&page=1&page_size=200", nil)
+	rr := httptest.NewRecorder()
+	handleDashboardClientsAPI(repoRoot, rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp dashboardClientsListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if resp.Total != 1200 {
+		t.Fatalf("total=%d, want 1200", resp.Total)
+	}
+	for _, item := range resp.Items {
+		if item.TenantID != "tenant-a" {
+			t.Fatalf("tenant leak detected: tenant_id=%q", item.TenantID)
+		}
+		if strings.HasPrefix(item.ClientID, "tb-") {
+			t.Fatalf("tenant leak detected: client_id=%q", item.ClientID)
+		}
+	}
+}
+
 func setupDashboardClientTestLocalSOR(t *testing.T, repoRoot string) *localSORStore {
 	t.Helper()
 	t.Setenv(localSORMasterKeyEnv, "")
@@ -120,6 +172,10 @@ func mustExecLocalSOR(t *testing.T, store *localSORStore, stmt string) {
 	if _, err := store.db.Exec(strings.TrimSpace(stmt)); err != nil {
 		t.Fatalf("exec failed: %v", err)
 	}
+}
+
+func formatScaleIndex(i int) string {
+	return strings.ToUpper(strconv.FormatInt(int64(100000+i), 36))
 }
 
 func TestIngestDashboardReceiptsToLocalSOR(t *testing.T) {

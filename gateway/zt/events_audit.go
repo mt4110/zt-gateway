@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	auditExternalLedgerEnabledEnv = "ZT_AUDIT_EXTERNAL_LEDGER_ENABLED"
+	auditExternalLedgerPathEnv    = "ZT_AUDIT_EXTERNAL_LEDGER_PATH"
+)
+
 type auditEventRecord struct {
 	EventID          string          `json:"event_id"`
 	EventType        string          `json:"event_type"`
@@ -48,6 +53,18 @@ type auditVerifyOptions struct {
 	AllowLegacyV05A  bool
 }
 
+type auditExternalLedgerRecord struct {
+	LedgerVersion    string `json:"ledger_version"`
+	RecordedAt       string `json:"recorded_at"`
+	EventID          string `json:"event_id"`
+	EventType        string `json:"event_type"`
+	Endpoint         string `json:"endpoint"`
+	RecordSHA256     string `json:"record_sha256"`
+	PrevRecordSHA256 string `json:"prev_record_sha256,omitempty"`
+	PayloadSHA256    string `json:"payload_sha256"`
+	ChainVersion     string `json:"chain_version"`
+}
+
 func (s *eventSpool) auditPath() string { return filepath.Join(s.cfg.SpoolDir, "events.jsonl") }
 
 func (s *eventSpool) appendAuditEvent(endpoint string, payload any) error {
@@ -70,8 +87,53 @@ func (s *eventSpool) appendAuditEvent(endpoint string, payload any) error {
 				return err
 			}
 		}
-		return appendJSONLine(s.auditPath(), record)
+		if err := appendJSONLine(s.auditPath(), record); err != nil {
+			return err
+		}
+		if err := s.appendExternalAuditLedgerRecord(record); err != nil && !suppressStartupDiagnostics {
+			fmt.Fprintf(os.Stderr, "[AUDIT] WARN external ledger append failed: %v\n", err)
+		}
+		return nil
 	})
+}
+
+func (s *eventSpool) appendExternalAuditLedgerRecord(record auditEventRecord) error {
+	if !envBool(auditExternalLedgerEnabledEnv) {
+		return nil
+	}
+	path := resolveExternalAuditLedgerPath(s)
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("external_ledger_path_empty")
+	}
+	ledger := auditExternalLedgerRecord{
+		LedgerVersion:    "v1",
+		RecordedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		EventID:          strings.TrimSpace(record.EventID),
+		EventType:        strings.TrimSpace(record.EventType),
+		Endpoint:         strings.TrimSpace(record.Endpoint),
+		RecordSHA256:     strings.TrimSpace(record.RecordSHA256),
+		PrevRecordSHA256: strings.TrimSpace(record.PrevRecordSHA256),
+		PayloadSHA256:    strings.TrimSpace(record.PayloadSHA256),
+		ChainVersion:     strings.TrimSpace(record.ChainVersion),
+	}
+	return appendJSONLine(path, ledger)
+}
+
+func resolveExternalAuditLedgerPath(s *eventSpool) string {
+	raw := strings.TrimSpace(os.Getenv(auditExternalLedgerPathEnv))
+	if raw == "" {
+		if s == nil {
+			return ""
+		}
+		return filepath.Join(s.cfg.SpoolDir, "audit-external-ledger.jsonl")
+	}
+	if filepath.IsAbs(raw) {
+		return raw
+	}
+	if s == nil {
+		return raw
+	}
+	return filepath.Join(s.cfg.SpoolDir, raw)
 }
 
 func newAuditEventRecord(endpoint string, payloadJSON []byte, now time.Time, prevHash string) auditEventRecord {

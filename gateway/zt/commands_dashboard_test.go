@@ -49,8 +49,8 @@ func TestCollectDashboardSnapshot_Basic(t *testing.T) {
 	}
 
 	snapshot := collectDashboardSnapshot(repoRoot, time.Now().UTC())
-	if snapshot.SchemaVersion != 6 {
-		t.Fatalf("SchemaVersion = %d, want 6", snapshot.SchemaVersion)
+	if snapshot.SchemaVersion != 7 {
+		t.Fatalf("SchemaVersion = %d, want 7", snapshot.SchemaVersion)
 	}
 	if snapshot.Audit.TotalCount != 1 {
 		t.Fatalf("Audit.TotalCount = %d, want 1", snapshot.Audit.TotalCount)

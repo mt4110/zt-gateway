@@ -52,6 +52,10 @@ type dashboardKPIStatus struct {
 	SignatureAnomalyCount              int     `json:"signature_anomaly_count"`
 	SignatureAnomalyFalsePositiveCount int     `json:"signature_anomaly_false_positive_count"`
 	SignatureAnomalyFalsePositiveRatio float64 `json:"signature_anomaly_false_positive_ratio"`
+	SignatureHoldersRealtimeSLOSeconds int64   `json:"signature_holders_realtime_slo_seconds"`
+	SignatureHoldersRealtimeMaxLagSec  int64   `json:"signature_holders_realtime_max_lag_seconds"`
+	SignatureHoldersRealtimeDelayed    int     `json:"signature_holders_realtime_delayed_signatures"`
+	SignatureHoldersRealtimeSLOMet     bool    `json:"signature_holders_realtime_slo_met"`
 	ControlPlaneSLO                    float64 `json:"control_plane_slo_ratio,omitempty"`
 	ControlPlaneBacklog                float64 `json:"control_plane_backlog_ratio,omitempty"`
 }
@@ -332,6 +336,7 @@ func collectDashboardKPIStatus(
 	audit dashboardAuditStatus,
 	receipts []dashboardVerificationRecord,
 	cp dashboardControlPlaneStatus,
+	now time.Time,
 ) dashboardKPIStatus {
 	kpi := dashboardKPIStatus{
 		VerifyReceiptsTotal: len(receipts),
@@ -409,6 +414,12 @@ func collectDashboardKPIStatus(
 			kpi.KeyRepairAutoCompletedJobs = metrics.AutoCompletedJobs
 			kpi.KeyRepairAutoRecoveryRate = metrics.AutoRecoveryRate
 		}
+		if metrics, err := localSOR.collectSignatureHolderRealtimeMetrics(kpi.TenantID, now); err == nil {
+			kpi.SignatureHoldersRealtimeSLOSeconds = metrics.SLOSeconds
+			kpi.SignatureHoldersRealtimeMaxLagSec = metrics.MaxLagSeconds
+			kpi.SignatureHoldersRealtimeDelayed = metrics.DelayedCount
+			kpi.SignatureHoldersRealtimeSLOMet = metrics.SLOMet
+		}
 	}
 	return kpi
 }
@@ -465,6 +476,19 @@ func collectDashboardAlertStatus(
 	}
 	if kpi.SignatureAnomalyCount > 0 && kpi.SignatureAnomalyFalsePositiveRatio > resolveDashboardAnomalyFalsePositiveThreshold() {
 		add("medium", "signature_anomaly_false_positive_high", "kpi", fmt.Sprintf("false-positive ratio=%.4f threshold=%.4f", kpi.SignatureAnomalyFalsePositiveRatio, resolveDashboardAnomalyFalsePositiveThreshold()))
+	}
+	if kpi.SignatureHoldersRealtimeSLOSeconds > 0 && !kpi.SignatureHoldersRealtimeSLOMet {
+		add(
+			"medium",
+			"signature_holders_realtime_slo_breached",
+			"kpi",
+			fmt.Sprintf(
+				"delayed signatures=%d max_lag=%ds slo=%ds",
+				kpi.SignatureHoldersRealtimeDelayed,
+				kpi.SignatureHoldersRealtimeMaxLagSec,
+				kpi.SignatureHoldersRealtimeSLOSeconds,
+			),
+		)
 	}
 	if cp.Configured && cp.LastError != "" {
 		add("medium", "control_plane_dashboard_unreachable", "control_plane", cp.LastError)
