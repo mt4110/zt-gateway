@@ -22,6 +22,8 @@ import (
 
 const (
 	googleDriveAccessTokenEnv = "ZT_GOOGLE_DRIVE_ACCESS_TOKEN"
+	relaySlackWebhookEnv      = "ZT_RELAY_SLACK_WEBHOOK_URL"
+	relayDiscordWebhookEnv    = "ZT_RELAY_DISCORD_WEBHOOK_URL"
 )
 
 var googleDriveUploadEndpoint = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
@@ -78,14 +80,19 @@ func runRelaySlackCommand(args []string) error {
 	payload := map[string]string{"text": text}
 	body, _ := json.Marshal(payload)
 
-	if jsonOut || strings.TrimSpace(webhookURL) == "" {
+	if strings.TrimSpace(webhookURL) != "" {
+		fmt.Println("[RELAY] --webhook-url is ignored for security. Set ZT_RELAY_SLACK_WEBHOOK_URL instead.")
+	}
+	dispatchWebhookURL := strings.TrimSpace(os.Getenv(relaySlackWebhookEnv))
+
+	if jsonOut || dispatchWebhookURL == "" {
 		fmt.Printf("%s\n", string(body))
-		if strings.TrimSpace(webhookURL) == "" {
+		if dispatchWebhookURL == "" {
 			fmt.Println("[RELAY] Slack webhook not set; payload printed only.")
 		}
 	}
-	if strings.TrimSpace(webhookURL) != "" {
-		normalizedURL, err := normalizeRelayWebhookURL("slack", webhookURL)
+	if dispatchWebhookURL != "" {
+		normalizedURL, err := normalizeRelayWebhookURL("slack", dispatchWebhookURL)
 		if err != nil {
 			return err
 		}
@@ -125,14 +132,19 @@ func runRelayDiscordCommand(args []string) error {
 	payload := map[string]string{"content": content}
 	body, _ := json.Marshal(payload)
 
-	if jsonOut || strings.TrimSpace(webhookURL) == "" {
+	if strings.TrimSpace(webhookURL) != "" {
+		fmt.Println("[RELAY] --webhook-url is ignored for security. Set ZT_RELAY_DISCORD_WEBHOOK_URL instead.")
+	}
+	dispatchWebhookURL := strings.TrimSpace(os.Getenv(relayDiscordWebhookEnv))
+
+	if jsonOut || dispatchWebhookURL == "" {
 		fmt.Printf("%s\n", string(body))
-		if strings.TrimSpace(webhookURL) == "" {
+		if dispatchWebhookURL == "" {
 			fmt.Println("[RELAY] Discord webhook not set; payload printed only.")
 		}
 	}
-	if strings.TrimSpace(webhookURL) != "" {
-		normalizedURL, err := normalizeRelayWebhookURL("discord", webhookURL)
+	if dispatchWebhookURL != "" {
+		normalizedURL, err := normalizeRelayWebhookURL("discord", dispatchWebhookURL)
 		if err != nil {
 			return err
 		}
