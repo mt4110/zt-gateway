@@ -844,6 +844,23 @@ func TestBuildTeamBoundarySetupChecks_SignerPinReadinessOKWhenBoundaryDisabled(t
 	}
 }
 
+func TestResolveTeamBoundaryPolicy_RequiredAliasEnv(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv(teamBoundaryRequiredEnv, "")
+	t.Setenv(teamBoundaryRequiredV094Env, "1")
+
+	_, active, err := resolveTeamBoundaryPolicy(repoRoot)
+	if err == nil {
+		t.Fatalf("expected error when %s is set and policy file is missing", teamBoundaryRequiredV094Env)
+	}
+	if !active {
+		t.Fatalf("active = false, want true")
+	}
+	if !strings.Contains(err.Error(), "required but missing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func writeTeamBoundaryPolicyFixture(t *testing.T, repoRoot, signerFingerprint string) {
 	t.Helper()
 	policyDir := filepath.Join(repoRoot, "policy")

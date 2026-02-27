@@ -50,6 +50,18 @@ func TestEventIngestEnvelopeErrorsContract(t *testing.T) {
 			wantError:  "envelope.required",
 		},
 		{
+			name: "raw_payload_blocked_by_default",
+			newServer: func(t *testing.T) *server {
+				t.Helper()
+				return newIngestContractServer(t, nil, false, nil)
+			},
+			body: func(_ *testing.T, _ string) []byte {
+				return []byte(`{"event_id":"evt_raw_blocked_default"}`)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantError:  "envelope.required",
+		},
+		{
 			name: "envelope_endpoint_mismatch",
 			newServer: func(t *testing.T) *server {
 				t.Helper()
@@ -312,6 +324,7 @@ func TestIngestAccepted_AckIntegrityContract(t *testing.T) {
 		t.Run(endpoint, func(t *testing.T) {
 			t.Parallel()
 			srv := newIngestContractServer(t, nil, false, nil)
+			srv.allowUnsignedEvents = true
 			rr := httptest.NewRecorder()
 			body := payloadByEndpoint[endpoint]
 			srv.handleEventIngest(kind).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body)))

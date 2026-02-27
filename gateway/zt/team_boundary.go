@@ -13,7 +13,8 @@ import (
 
 const (
 	teamBoundaryPolicyRelPath   = "policy/team_boundary.toml"
-	teamBoundaryRequiredEnv     = "ZT_TEAM_BOUNDARY_REQUIRED"
+	teamBoundaryRequiredEnv     = "ZT_TEAM_BOUNDARY_REQUIRED" // Legacy.
+	teamBoundaryRequiredV094Env = "ZT_REQUIRE_TEAM_BOUNDARY"
 	teamBoundaryBreakGlassEnv   = "ZT_BREAK_GLASS_REASON"
 	teamBoundaryPolicyFileLabel = "`policy/team_boundary.toml`"
 
@@ -69,7 +70,7 @@ func teamBoundaryPolicyPath(repoRoot string) string {
 }
 
 func isTeamBoundaryRequired() bool {
-	return envBool(teamBoundaryRequiredEnv)
+	return envBool(teamBoundaryRequiredEnv) || envBool(teamBoundaryRequiredV094Env)
 }
 
 func resolveTeamBoundaryPolicy(repoRoot string) (teamBoundaryPolicy, bool, error) {
@@ -903,7 +904,8 @@ func buildTeamBoundarySignerPinConsistencyCheck(repoRoot string, pol teamBoundar
 		check.Message = fmt.Sprintf("verify signer pins are empty (source=%s)", source)
 		quickFixes = append(quickFixes,
 			"Set signer pins via `ZT_SECURE_PACK_SIGNER_FINGERPRINTS` (or `SECURE_PACK_SIGNER_FINGERPRINTS`), or provide `tools/secure-pack/SIGNERS_ALLOWLIST.txt`.",
-			"Mirror the same fingerprint set in `policy/team_boundary.toml` `allowed_signer_fingerprints`.")
+			"Mirror the same fingerprint set in `policy/team_boundary.toml` `allowed_signer_fingerprints`.",
+			"Bootstrap CI signer expected pins with `bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --trust-local-allowlist`.")
 		return check, quickFixes
 	}
 
@@ -946,6 +948,7 @@ func buildVerifySignerPinReadinessCheck(repoRoot string) (setupCheck, []string) 
 		return check, []string{
 			"Set signer pins via `ZT_SECURE_PACK_SIGNER_FINGERPRINTS` (or `SECURE_PACK_SIGNER_FINGERPRINTS`), or provide `tools/secure-pack/SIGNERS_ALLOWLIST.txt`.",
 			"Run `zt config doctor --json` and confirm `team_boundary_signer_pin_consistency` is `ok` before production `zt verify`.",
+			"Bootstrap CI signer expected pins with `bash ./scripts/dev/bootstrap-ci-signer-pin-expected.sh --trust-local-allowlist`.",
 		}
 	}
 	check.Status = "ok"
