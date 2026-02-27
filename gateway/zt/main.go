@@ -89,6 +89,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to detect repository root: %v\n", err)
 		os.Exit(1)
 	}
+	localSOR, err = initializeLocalSOR(repoRoot)
+	if err != nil {
+		printZTErrorCode(ztErrorCodeLocalSORInitFailed)
+		fmt.Fprintf(os.Stderr, "Failed to initialize local SoR: %v\n", err)
+		os.Exit(1)
+	}
 	adapters := newToolAdapters(repoRoot)
 	cpEvents = newEventSpool(repoRoot)
 	clientCfg, clientCfgErr := loadZTClientConfig(repoRoot)

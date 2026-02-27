@@ -17,6 +17,8 @@ type server struct {
 	dataDir                 string
 	policyDir               string
 	apiKey                  string
+	sso                     *controlPlaneSSOConfig
+	stepUp                  *controlPlaneStepUpManager
 	allowUnsignedEvents     bool
 	eventVerifyPub          ed25519.PublicKey
 	policySigner            *policyBundleSigner
@@ -81,6 +83,10 @@ func main() {
 	apiKey := strings.TrimSpace(os.Getenv("ZT_CP_API_KEY"))
 	allowUnsignedEvents := resolveControlPlaneAllowUnsignedEvents()
 	securityStrict := envBoolCP(controlPlaneSecurityStrictEnv)
+	ssoConfig, err := loadControlPlaneSSOConfig()
+	if err != nil {
+		log.Fatalf("invalid control-plane SSO config: %v", err)
+	}
 	verifyPub, err := parseEd25519PublicKeyEnv("ZT_CP_EVENT_VERIFY_PUBKEY_B64")
 	if err != nil {
 		log.Fatalf("invalid ZT_CP_EVENT_VERIFY_PUBKEY_B64: %v", err)
@@ -111,8 +117,12 @@ func main() {
 		}
 		eventKeyRegistryEnabled = ok
 	}
-	if err := validateControlPlaneSecurityConfig(securityStrict, apiKey, verifyPub, eventKeyRegistryEnabled, allowUnsignedEvents); err != nil {
+	if err := validateControlPlaneSecurityConfig(securityStrict, apiKey, ssoConfig != nil && ssoConfig.Enabled, verifyPub, eventKeyRegistryEnabled, allowUnsignedEvents); err != nil {
 		log.Fatalf("invalid control-plane security config: %v", err)
+	}
+	stepUp, err := loadControlPlaneStepUpManager(dataDir)
+	if err != nil {
+		log.Fatalf("invalid control-plane webauthn config: %v", err)
 	}
 
 	if err := os.MkdirAll(filepath.Join(dataDir, "events"), 0o755); err != nil {
@@ -123,6 +133,8 @@ func main() {
 		dataDir:                 dataDir,
 		policyDir:               policyDir,
 		apiKey:                  apiKey,
+		sso:                     ssoConfig,
+		stepUp:                  stepUp,
 		allowUnsignedEvents:     allowUnsignedEvents,
 		eventVerifyPub:          verifyPub,
 		policySigner:            policySigner,
@@ -142,6 +154,12 @@ func main() {
 	mux.HandleFunc("/v1/rules/latest", s.handleRulesLatest)
 	mux.HandleFunc("/v1/dashboard/activity", s.handleDashboardActivity)
 	mux.HandleFunc("/v1/dashboard/activity/groups", s.handleDashboardActivityGroups)
+	mux.HandleFunc("/v1/dashboard/timeseries", s.handleDashboardTimeseries)
+	mux.HandleFunc("/v1/dashboard/drilldown", s.handleDashboardDrilldown)
+	mux.HandleFunc("/v1/auth/webauthn/attestation/options", s.handleWebAuthnAttestationOptions)
+	mux.HandleFunc("/v1/auth/webauthn/attestation/verify", s.handleWebAuthnAttestationVerify)
+	mux.HandleFunc("/v1/auth/webauthn/assertion/options", s.handleWebAuthnAssertionOptions)
+	mux.HandleFunc("/v1/auth/webauthn/assertion/verify", s.handleWebAuthnAssertionVerify)
 	mux.HandleFunc("/v1/admin/event-keys", s.handleAdminEventKeys)
 	mux.HandleFunc("/v1/admin/event-keys/", s.handleAdminEventKeys)
 

@@ -22,16 +22,24 @@ type dashboardOptions struct {
 }
 
 type dashboardSnapshot struct {
-	SchemaVersion int                           `json:"schema_version"`
-	GeneratedAt   string                        `json:"generated_at"`
-	RootKey       dashboardRootKeyStatus        `json:"root_key"`
-	Unlock        unlockTokenVerification       `json:"unlock"`
-	Lock          dashboardLockStatus           `json:"lock"`
-	Danger        dashboardDangerStatus         `json:"danger"`
-	Policy        dashboardPolicyStatus         `json:"policy"`
-	EventSync     dashboardEventSyncStatus      `json:"event_sync"`
-	Audit         dashboardAuditStatus          `json:"audit"`
-	Receipts      []dashboardVerificationRecord `json:"receipts"`
+	SchemaVersion    int                              `json:"schema_version"`
+	GeneratedAt      string                           `json:"generated_at"`
+	RootKey          dashboardRootKeyStatus           `json:"root_key"`
+	Unlock           unlockTokenVerification          `json:"unlock"`
+	Lock             dashboardLockStatus              `json:"lock"`
+	Danger           dashboardDangerStatus            `json:"danger"`
+	Policy           dashboardPolicyStatus            `json:"policy"`
+	EventSync        dashboardEventSyncStatus         `json:"event_sync"`
+	Audit            dashboardAuditStatus             `json:"audit"`
+	Receipts         []dashboardVerificationRecord    `json:"receipts"`
+	ControlPlane     dashboardControlPlaneStatus      `json:"control_plane"`
+	Clients          dashboardClientSnapshot          `json:"clients"`
+	Keys             dashboardKeySnapshot             `json:"keys"`
+	SignatureHolders dashboardSignatureHolderSnapshot `json:"signature_holders"`
+	KeyRepair        dashboardKeyRepairSnapshot       `json:"key_repair"`
+	Incidents        dashboardIncidentStatus          `json:"incidents"`
+	KPI              dashboardKPIStatus               `json:"kpi"`
+	Alerts           dashboardAlertStatus             `json:"alerts"`
 }
 
 type dashboardRootKeyStatus struct {
@@ -141,11 +149,16 @@ func runDashboardCommand(repoRoot string, args []string) error {
 			http.NotFound(w, r)
 			return
 		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(dashboardHTML))
 	})
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		s := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
@@ -181,6 +194,16 @@ func runDashboardCommand(repoRoot string, args []string) error {
 			http.Error(w, fmt.Sprintf("failed to update local lock: %v", err), http.StatusInternalServerError)
 			return
 		}
+		recordAction := "unlock"
+		if state.Locked {
+			recordAction = "lock"
+		}
+		_ = appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
+			Action:    recordAction,
+			Reason:    req.Reason,
+			Actor:     "dashboard",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		})
 		out := dashboardLockStatus{
 			Path:       state.Path,
 			Locked:     state.Locked,
@@ -194,6 +217,140 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(out)
+	})
+	mux.HandleFunc("/api/incident", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+		var req struct {
+			Action     string `json:"action"`
+			Reason     string `json:"reason"`
+			IncidentID string `json:"incident_id"`
+			ApprovedBy string `json:"approved_by"`
+			ExpiresAt  string `json:"expires_at"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
+			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(req.Action))
+		switch action {
+		case "lock", "unlock", "break_glass_start", "break_glass_end", "break-glass-start", "break-glass-end":
+		default:
+			http.Error(w, "action must be lock|unlock|break_glass_start|break_glass_end", http.StatusBadRequest)
+			return
+		}
+		if strings.HasPrefix(action, "break") && strings.TrimSpace(req.Reason) == "" {
+			http.Error(w, "reason is required for break-glass incident operations", http.StatusBadRequest)
+			return
+		}
+		if err := appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
+			Action:     action,
+			Reason:     req.Reason,
+			IncidentID: req.IncidentID,
+			ApprovedBy: req.ApprovedBy,
+			ExpiresAt:  req.ExpiresAt,
+			Actor:      "dashboard",
+			Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		}); err != nil {
+			http.Error(w, fmt.Sprintf("failed to append incident record: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{
+			"ok":           true,
+			"action":       action,
+			"incident_id":  strings.TrimSpace(req.IncidentID),
+			"recorded_at":  time.Now().UTC().Format(time.RFC3339),
+			"audit_path":   dashboardIncidentAuditPath(repoRoot),
+			"next_runbook": "docs/OPERATIONS.md",
+		})
+	})
+	mux.HandleFunc("/api/alerts/dispatch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+		var req dashboardAlertDispatchRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
+			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		alert := collectDashboardSnapshot(repoRoot, time.Now().UTC()).Alerts
+		out, err := dispatchDashboardAlerts(repoRoot, alert, req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("{\"error\":%q}", strings.TrimSpace(err.Error())), http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
+	})
+	mux.HandleFunc("/api/clients", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardClientsAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/clients/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/clients/")
+		rest = strings.TrimSpace(strings.Trim(rest, "/"))
+		if rest == "" {
+			handleDashboardClientsAPI(repoRoot, w, r)
+			return
+		}
+		parts := strings.Split(rest, "/")
+		clientID := strings.TrimSpace(parts[0])
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "signature-holders") {
+			handleDashboardClientSignatureHoldersAPI(repoRoot, clientID, w, r)
+			return
+		}
+		handleDashboardClientDetailAPI(repoRoot, clientID, w, r)
+	})
+	mux.HandleFunc("/api/keys", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardKeysAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/keys/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+		rest = strings.TrimSpace(strings.Trim(rest, "/"))
+		if rest == "" {
+			handleDashboardKeysAPI(repoRoot, w, r)
+			return
+		}
+		parts := strings.Split(rest, "/")
+		keyID := strings.TrimSpace(parts[0])
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "status") {
+			handleDashboardKeyStatusAPI(repoRoot, keyID, w, r)
+			return
+		}
+		handleDashboardKeyDetailAPI(repoRoot, keyID, w, r)
+	})
+	mux.HandleFunc("/api/key-repair/jobs", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardKeyRepairJobsAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/key-repair/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/key-repair/jobs/")
+		rest = strings.TrimSpace(strings.Trim(rest, "/"))
+		if rest == "" {
+			handleDashboardKeyRepairJobsAPI(repoRoot, w, r)
+			return
+		}
+		parts := strings.Split(rest, "/")
+		jobID := strings.TrimSpace(parts[0])
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "transition") {
+			handleDashboardKeyRepairJobTransitionAPI(repoRoot, jobID, w, r)
+			return
+		}
+		handleDashboardKeyRepairJobDetailAPI(repoRoot, jobID, w, r)
+	})
+	mux.HandleFunc("/api/kpi", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardKPIAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/signature-holders", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSignatureHoldersAPI(repoRoot, w, r)
 	})
 
 	addr := strings.TrimSpace(opts.Addr)
@@ -225,18 +382,48 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 	eventSync := collectDashboardEventSyncStatus(repoRoot, now)
 	audit := collectDashboardAuditStatus(repoRoot, 20)
 	receipts := collectDashboardReceipts(repoRoot, 20)
-	danger := collectDashboardDangerStatus(root, unlock, lock, policy, eventSync, audit, receipts)
+	ingestDashboardReceiptsToLocalSOR(repoRoot, receipts, now)
+	clients := collectDashboardClientSnapshot(repoRoot, now)
+	keys := collectDashboardKeySnapshot(repoRoot, now)
+	signatureHolders := collectDashboardSignatureHolderSnapshot(repoRoot, now)
+	keyRepair := collectDashboardKeyRepairSnapshot(repoRoot, now)
+	danger := collectDashboardDangerStatus(root, unlock, lock, policy, eventSync, audit, receipts, keys, keyRepair)
+	controlPlane := collectDashboardControlPlaneStatus(repoRoot, now)
+	incidents := collectDashboardIncidentStatus(repoRoot, now, 30)
+	if incidents.ActiveBreakGlass {
+		msg := "break-glass mode is active"
+		if strings.TrimSpace(incidents.BreakGlassUntil) != "" {
+			msg += " until " + strings.TrimSpace(incidents.BreakGlassUntil)
+		}
+		danger.Signals = append(danger.Signals, dashboardDangerItem{
+			Level:   "high",
+			Code:    "break_glass_active",
+			Message: msg,
+		})
+		danger.Level = "high"
+		danger.Count = len(danger.Signals)
+	}
+	kpi := collectDashboardKPIStatus(repoRoot, danger, eventSync, audit, receipts, controlPlane)
+	alerts := collectDashboardAlertStatus(danger, eventSync, incidents, kpi, controlPlane)
 	return dashboardSnapshot{
-		SchemaVersion: 1,
-		GeneratedAt:   now.Format(time.RFC3339),
-		RootKey:       root,
-		Unlock:        unlock,
-		Lock:          lock,
-		Danger:        danger,
-		Policy:        policy,
-		EventSync:     eventSync,
-		Audit:         audit,
-		Receipts:      receipts,
+		SchemaVersion:    6,
+		GeneratedAt:      now.Format(time.RFC3339),
+		RootKey:          root,
+		Unlock:           unlock,
+		Lock:             lock,
+		Danger:           danger,
+		Policy:           policy,
+		EventSync:        eventSync,
+		Audit:            audit,
+		Receipts:         receipts,
+		ControlPlane:     controlPlane,
+		Clients:          clients,
+		Keys:             keys,
+		SignatureHolders: signatureHolders,
+		KeyRepair:        keyRepair,
+		Incidents:        incidents,
+		KPI:              kpi,
+		Alerts:           alerts,
 	}
 }
 
@@ -383,6 +570,8 @@ func collectDashboardDangerStatus(
 	eventSync dashboardEventSyncStatus,
 	audit dashboardAuditStatus,
 	receipts []dashboardVerificationRecord,
+	keys dashboardKeySnapshot,
+	keyRepair dashboardKeyRepairSnapshot,
 ) dashboardDangerStatus {
 	signals := make([]dashboardDangerItem, 0, 16)
 	add := func(level, code, message string) {
@@ -454,6 +643,18 @@ func collectDashboardDangerStatus(
 		if !r.SignatureValid {
 			add("high", "receipt_signature_invalid", "signature invalid at "+r.Path)
 		}
+	}
+	if strings.TrimSpace(keys.Error) != "" {
+		add("medium", "key_lifecycle_snapshot_error", keys.Error)
+	}
+	if keys.CompromisedCount > 0 {
+		add("high", "local_sor_keys_compromised", fmt.Sprintf("compromised keys=%d", keys.CompromisedCount))
+	}
+	if strings.TrimSpace(keyRepair.Error) != "" {
+		add("medium", "key_repair_snapshot_error", keyRepair.Error)
+	}
+	if keyRepair.OpenJobs > 0 {
+		add("high", "key_repair_in_progress", fmt.Sprintf("open key repair jobs=%d", keyRepair.OpenJobs))
 	}
 	switch unlock.Badge {
 	case "pending":
@@ -687,6 +888,22 @@ const dashboardHTML = `<!doctype html>
       <div class="card"><h2>Unlock Token <span id="unlockBadge" class="badge badge-none">未設定</span></h2><pre id="unlock"></pre></div>
       <div class="card"><h2>Policy</h2><pre id="policy"></pre></div>
       <div class="card"><h2>Event Sync</h2><pre id="sync"></pre></div>
+      <div class="card"><h2>KPI / SLO</h2><pre id="kpi"></pre></div>
+      <div class="card"><h2>Control Plane</h2><pre id="cp"></pre></div>
+      <div class="card"><h2>Clients (Local SoR)</h2><pre id="clients"></pre></div>
+      <div class="card"><h2>Keys (Lifecycle)</h2><pre id="keys"></pre></div>
+      <div class="card"><h2>Signature Holders</h2><pre id="signatureHolders"></pre></div>
+      <div class="card"><h2>Key Repair Jobs</h2><pre id="keyRepair"></pre></div>
+      <div class="card"><h2>Incidents</h2><pre id="incidents"></pre></div>
+      <div class="card">
+        <h2>Alerts <span id="alertBadge" class="badge badge-danger-low">LOW</span></h2>
+        <div class="controls">
+          <input id="alertChannel" placeholder="channel: slack|discord|line|webhook" />
+          <button type="button" onclick="dispatchAlerts(true)">Dry-run</button>
+          <button type="button" onclick="dispatchAlerts(false)">Dispatch</button>
+        </div>
+        <pre id="alerts"></pre>
+      </div>
       <div class="card" style="grid-column: 1 / -1;">
         <h2>Recent Audit Events</h2>
         <table><thead><tr><th>time</th><th>type</th><th>result</th><th>signer</th></tr></thead><tbody id="audit"></tbody></table>
@@ -698,6 +915,20 @@ const dashboardHTML = `<!doctype html>
     </div>
   </div>
   <script>
+    function setBadge(node, level) {
+      const state = String(level || 'low').toLowerCase();
+      node.className = 'badge badge-danger-' + (['low', 'medium', 'high'].includes(state) ? state : 'low');
+      node.textContent = state.toUpperCase();
+    }
+
+    function appendCells(tr, values) {
+      values.forEach(v => {
+        const td = document.createElement('td');
+        td.textContent = String(v == null ? '' : v);
+        tr.appendChild(td);
+      });
+    }
+
     async function setLocalLock(action) {
       const reason = document.getElementById('lockReason').value || '';
       const res = await fetch('/api/lock', {
@@ -713,8 +944,28 @@ const dashboardHTML = `<!doctype html>
       await load();
     }
 
+    async function dispatchAlerts(dryRun) {
+      const channel = (document.getElementById('alertChannel').value || '').trim();
+      const res = await fetch('/api/alerts/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: channel, dry_run: !!dryRun })
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        alert('alert dispatch failed: ' + text);
+        return;
+      }
+      await load();
+      alert('alert dispatch succeeded: ' + text);
+    }
+
     async function load() {
       const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) {
+        document.getElementById('meta').textContent = 'status fetch failed: HTTP ' + r.status;
+        return;
+      }
       const d = await r.json();
       document.getElementById('meta').textContent = 'generated_at=' + (d.generated_at || '');
       document.getElementById('danger').textContent = JSON.stringify(d.danger, null, 2);
@@ -723,12 +974,21 @@ const dashboardHTML = `<!doctype html>
       document.getElementById('unlock').textContent = JSON.stringify(d.unlock, null, 2);
       document.getElementById('policy').textContent = JSON.stringify(d.policy, null, 2);
       document.getElementById('sync').textContent = JSON.stringify(d.event_sync, null, 2);
+      document.getElementById('kpi').textContent = JSON.stringify(d.kpi, null, 2);
+      document.getElementById('cp').textContent = JSON.stringify(d.control_plane, null, 2);
+      document.getElementById('clients').textContent = JSON.stringify(d.clients, null, 2);
+      document.getElementById('keys').textContent = JSON.stringify(d.keys, null, 2);
+      document.getElementById('signatureHolders').textContent = JSON.stringify(d.signature_holders, null, 2);
+      document.getElementById('keyRepair').textContent = JSON.stringify(d.key_repair, null, 2);
+      document.getElementById('incidents').textContent = JSON.stringify(d.incidents, null, 2);
+      document.getElementById('alerts').textContent = JSON.stringify(d.alerts, null, 2);
 
       const dangerBadge = document.getElementById('dangerBadge');
       const dangerState = ((d.danger && d.danger.level) || 'low').toLowerCase();
       const dangerLabels = { low: 'LOW', medium: 'MEDIUM', high: 'HIGH' };
       dangerBadge.textContent = dangerLabels[dangerState] || 'LOW';
       dangerBadge.className = 'badge badge-danger-' + (['low', 'medium', 'high'].includes(dangerState) ? dangerState : 'low');
+      setBadge(document.getElementById('alertBadge'), d.alerts && d.alerts.level);
 
       const lockBadge = document.getElementById('lockBadge');
       const locked = !!(d.lock && d.lock.locked);
@@ -745,7 +1005,7 @@ const dashboardHTML = `<!doctype html>
       audit.innerHTML = '';
       (d.audit.recent || []).forEach(x => {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + (x.timestamp || '') + '</td><td>' + (x.event_type || '') + '</td><td>' + (x.result || '') + '</td><td>' + (x.signature_key_id || '') + '</td>';
+        appendCells(tr, [x.timestamp || '', x.event_type || '', x.result || '', x.signature_key_id || '']);
         audit.appendChild(tr);
       });
 
@@ -753,7 +1013,7 @@ const dashboardHTML = `<!doctype html>
       receipts.innerHTML = '';
       (d.receipts || []).forEach(x => {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + (x.verified_at || '') + '</td><td>' + (x.client || '') + '</td><td>' + (x.policy_result || '') + '</td><td>' + x.tamper_detected + '</td><td>' + (x.path || '') + '</td>';
+        appendCells(tr, [x.verified_at || '', x.client || '', x.policy_result || '', !!x.tamper_detected, x.path || '']);
         receipts.appendChild(tr);
       });
     }

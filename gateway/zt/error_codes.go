@@ -53,6 +53,7 @@ const (
 	ztErrorCodeVerifySignerPinMismatch                = "ZT_VERIFY_SIGNER_PIN_MISMATCH"
 	ztErrorCodeVerifySignerPinConfig                  = "ZT_VERIFY_SIGNER_PIN_CONFIG_INVALID"
 	ztErrorCodeVerifyAuditAppendFail                  = "ZT_VERIFY_AUDIT_APPEND_FAILED"
+	ztErrorCodeLocalSORInitFailed                     = "ZT_LOCAL_SOR_INIT_FAILED"
 )
 
 func printZTErrorCode(code string) {

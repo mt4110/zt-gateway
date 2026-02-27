@@ -22,9 +22,16 @@ type adminEventKeyPatchRequest struct {
 }
 
 func (s *server) handleAdminEventKeys(w http.ResponseWriter, r *http.Request) {
-	if err := s.checkAPIKey(r); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+	authCtx, err := s.authenticateControlPlaneRequest(r, true)
+	if err != nil {
+		writeControlPlaneAuthError(w, err)
 		return
+	}
+	if r.Method != http.MethodGet && s.stepUp != nil {
+		if err := s.stepUp.validateAdminMutationStepUp(r, authCtx); err != nil {
+			writeControlPlaneStepUpError(w, err)
+			return
+		}
 	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "postgres_not_configured"})

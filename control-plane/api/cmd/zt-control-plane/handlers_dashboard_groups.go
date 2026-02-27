@@ -20,6 +20,13 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		})
 		return
 	}
+
+	scope, tenantID, err := s.resolveDashboardAccess(r, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		writeDashboardAuthzError(w, err)
+		return
+	}
+
 	groupBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("group_by")))
 	if groupBy != "tenant" && groupBy != "kind" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_group_by"})
@@ -54,7 +61,6 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_include_zero"})
 		return
 	}
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
 	kindFilters, err := parseDashboardKindsQuery(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_kind"})
@@ -75,8 +81,8 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	whereClauses := make([]string, 0, 4)
-	args := make([]any, 0, 4)
+	whereClauses := make([]string, 0, 6)
+	args := make([]any, 0, 8)
 	if tenantID != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("envelope_tenant_id = $%d", len(args)+1))
 		args = append(args, tenantID)
@@ -204,5 +210,11 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 		"window":            window,
 		"source":            "event_ingest",
 		"generated_at":      time.Now().UTC().Format(time.RFC3339),
+		"authz":             scope,
+		"tenant_isolation": map[string]any{
+			"enforced":             scope.Enforced,
+			"cross_tenant_allowed": scope.Role == dashboardRoleAdmin,
+			"effective_tenant_id":  tenantID,
+		},
 	})
 }

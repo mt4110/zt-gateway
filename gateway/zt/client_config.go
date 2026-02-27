@@ -13,6 +13,7 @@ type ztClientConfig struct {
 	AutoSync        bool
 	ControlPlaneURL string
 	APIKey          string
+	BearerToken     string
 }
 
 func defaultZTClientConfig() ztClientConfig {
@@ -62,6 +63,8 @@ func loadZTClientConfig(repoRoot string) (ztClientConfig, error) {
 			cfg.ControlPlaneURL = parseStringValue(val)
 		case "api_key":
 			cfg.APIKey = parseStringValue(val)
+		case "bearer_token":
+			cfg.BearerToken = parseStringValue(val)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -106,6 +109,16 @@ func resolveControlPlaneAPIKey(cfg ztClientConfig) (string, string) {
 		return v, "env:ZT_CONTROL_PLANE_API_KEY"
 	}
 	if v := strings.TrimSpace(cfg.APIKey); v != "" {
+		return v, "config:" + cfg.Source
+	}
+	return "", "default:empty"
+}
+
+func resolveControlPlaneBearerToken(cfg ztClientConfig) (string, string) {
+	if v := strings.TrimSpace(os.Getenv("ZT_CONTROL_PLANE_BEARER_TOKEN")); v != "" {
+		return v, "env:ZT_CONTROL_PLANE_BEARER_TOKEN"
+	}
+	if v := strings.TrimSpace(cfg.BearerToken); v != "" {
 		return v, "config:" + cfg.Source
 	}
 	return "", "default:empty"

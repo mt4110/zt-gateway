@@ -144,6 +144,8 @@ go run ./gateway/zt setup --json
 - `danger.level=high|medium|low` で運用リスクを集約表示
 - `danger.signals[]` に原因コードを列挙（例: `tools_lock_signature_unverified`, `receipt_tamper_detected`）
 - `Local Lock` は dashboard から lock/unlock 操作でき、`send` と `relay` を停止できます（fail-closed）
+- v0.9.5/0.9.6 で `control_plane` / `kpi` / `incidents` / `alerts` を同一JSONに統合（ローカル+CP統合モデル）
+- incident 操作（`lock` / `unlock` / `break_glass_start` / `break_glass_end`）は `.zt-spool/dashboard_incidents.jsonl` に監査記録
 
 ロック状態ファイル（既定）:
 
@@ -161,8 +163,134 @@ go run ./gateway/zt setup --json
 ```bash
 go run ./gateway/zt dashboard
 # または
-go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock'
+go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock, .kpi, .alerts, .control_plane'
 ```
+
+Local dashboard API（LFC-1005: クライアント別資産ビュー）:
+
+- `GET /api/clients` : クライアント一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/clients/{client_id}` : クライアント単位の資産一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `sort`:
+  - clients: `created_at_desc|created_at_asc|last_seen_desc|last_seen_asc`
+  - assets: `last_seen_desc|last_seen_asc|created_at_desc|created_at_asc`
+- tenant 固定運用時（`ZT_DASHBOARD_TENANT_ID` 設定）は fail-closed で検証
+  - 未指定: `tenant_scope_required`
+  - 不一致: `tenant_scope_violation`
+
+Local dashboard API（LFC-1006: 鍵ライフサイクル可視化）:
+
+- `GET /api/keys` : 鍵一覧（`tenant_id`, `q`, `status`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/keys/{key_id}` : 鍵詳細
+- `POST /api/keys/{key_id}/status` : 鍵状態遷移（body: `status`, `reason`, `actor`, `evidence_ref`）
+  - status: `active|rotating|revoked|compromised`
+  - 遷移時は `local_sor_incidents(action=key_status_transition)` に監査記録
+- `compromised` 鍵が1件以上ある場合、`danger` は fail-closed で `high` になる
+
+Local dashboard API（LFC-1007: Key Repair MVP）:
+
+- `GET /api/key-repair/jobs` : 修復ジョブ一覧（`tenant_id`, `key_id`, `q`, `state`, `page`, `page_size`, `sort`, `export=csv`）
+- `POST /api/key-repair/jobs` : 修復ジョブ起票（body: `key_id`, `trigger`, `operator`, `summary`, `evidence_ref`, `runbook_id`）
+- `GET /api/key-repair/jobs/{job_id}` : 修復ジョブ詳細
+- `POST /api/key-repair/jobs/{job_id}/transition` : 状態遷移（body: `state`, `operator`, `summary`, `evidence_ref`, `runbook_id`）
+  - state: `detected -> contained -> rekeyed -> rewrapped -> completed`（`failed` は各段階から遷移可）
+- 鍵が `compromised` になると、`key_repair_detected` を自動起票（runbook付き）
+- `key_repair` の open job がある間は `danger` に `key_repair_in_progress`（high）を表示
+
+Local dashboard API（LFC-1008: 利用回数/KPI集計）:
+
+- `GET /api/kpi` : dashboard と同一計算の KPI/SLO を返却
+- KPI は `local_sor_exchanges` を一次ソースに集計
+  - `exchange_total`, `send_count`, `receive_count`, `verify_receipts_total`, `verify_pass_count`, `verify_fail_count`
+- tenant SLO 表示:
+  - `tenant_id`
+  - `verify_pass_slo_target`（`ZT_DASHBOARD_SLO_VERIFY_PASS_TARGET`, default `0.99`）
+  - `verify_pass_slo_met`, `backlog_slo_met`
+- backlog は `backlog_threshold_seconds` と `event_sync` の oldest age で判定
+
+Local dashboard API（LFC-1009: 署名保有者数 MVP）:
+
+- `GET /api/signature-holders` : tenant 単位の署名保有者一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- `GET /api/clients/{client_id}/signature-holders` : client drill-down（同じ query/CSV をサポート）
+- `signature_id` は signer fingerprint を使用
+- 表示項目:
+  - `holder_count_estimated`（distinct client 数）
+  - `holder_count_confirmed`（verify pass を返した distinct client 数）
+  - `event_count` / `client_event_count`（算出根拠イベント件数）
+- receipt 取込時に `local_sor_signature_holders` を自動更新
+
+Local dashboard API（LFC-1010: 外部通知安全ゲート）:
+
+- `POST /api/alerts/dispatch` : 外部通知送信（body: `channel`, `webhook_url`, `dry_run`）
+  - `channel`: `slack|discord|line|webhook`（未指定時は `webhook`）
+- fail-closed 条件:
+  - `ZT_DASHBOARD_ALERT_DISPATCH_ENABLED=1` が未設定なら拒否
+  - webhook URL が HTTPS 以外なら拒否
+  - `ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS` が空/不一致なら拒否
+- 送信 payload は最小化（`level/count` と alert code のみ。詳細メッセージは外部送信しない）
+- 送信結果（`rejected|dry_run|failed|sent`）は監査ログ `.zt-spool/events.jsonl` に
+  `event_type=dashboard_alert_dispatch` として記録
+
+Control Plane dashboard API（tenant/role authz）:
+
+- `GET /v1/dashboard/activity` : 検索/ページング/CSV export（`q`, `page`, `page_size`, `export=csv`）
+- `GET /v1/dashboard/activity/groups` : tenant/kind 集計
+- `GET /v1/dashboard/timeseries` : SLO/drift/backlog-proxy の時系列
+- `GET /v1/dashboard/drilldown` : event -> receipt -> policy -> runbook
+
+認証/認可ヘッダ:
+
+- `X-API-Key`（`ZT_CP_API_KEY` を設定している場合は必須）
+- `Authorization: Bearer <JWT>`（`ZT_CP_SSO_ENABLED=1` の場合）
+- `X-ZT-Dashboard-Role` (`viewer|operator|auditor|admin`)
+- `X-ZT-Tenant-ID`（auth有効時に非adminは必須）
+  - SSO時は tenant はJWT claim（`ZT_CP_SSO_TENANT_CLAIM`）を優先
+
+SSO（OIDC/SAML連携のJWT検証）を有効化する例:
+
+```bash
+export ZT_CP_SSO_ENABLED=1
+export ZT_CP_SSO_ISSUER="https://issuer.example.com/"
+export ZT_CP_SSO_AUDIENCE="zt-control-plane"
+export ZT_CP_SSO_ROLE_CLAIM="role"        # default: role
+export ZT_CP_SSO_TENANT_CLAIM="tenant_id" # default: tenant_id
+export ZT_CP_SSO_ADMIN_ROLES="admin,security-admin"
+export ZT_CP_SSO_JWT_HS256_SECRET="<shared-secret>"
+# RS256 を使う場合は代わりに:
+# export ZT_CP_SSO_JWT_RS256_PUBKEY_PEM="$(cat ./keys/sso_rsa_pub.pem)"
+```
+
+Passkey/WebAuthn 二段目認証（LFC-1004）を有効化する例:
+
+```bash
+export ZT_CP_WEBAUTHN_ENABLED=1
+export ZT_CP_WEBAUTHN_RP_ID="localhost"
+export ZT_CP_WEBAUTHN_RP_ORIGIN="http://localhost:3000"
+# 管理変更APIにstep-up必須（default: enabled when WEBAuthn enabled）
+export ZT_CP_WEBAUTHN_ENFORCE_ADMIN_MUTATIONS=1
+```
+
+WebAuthn ceremony API:
+
+- `POST /v1/auth/webauthn/attestation/options`
+- `POST /v1/auth/webauthn/attestation/verify`
+- `POST /v1/auth/webauthn/assertion/options`
+- `POST /v1/auth/webauthn/assertion/verify`（`step_up_token` を払い出し）
+
+管理変更API（event keyの POST/PUT/PATCH/DELETE）は、WebAuthn step-up有効時に
+`X-ZT-Step-Up-Token` が無いと fail-closed で拒否されます。
+
+`zt dashboard` から Control Plane へ SSOで接続する場合:
+
+```bash
+export ZT_CONTROL_PLANE_BEARER_TOKEN="<JWT>"
+go run ./gateway/zt dashboard
+```
+
+外部通知（Slack/Discord/LINE/Webhook）は **デフォルト無効**:
+
+- `ZT_DASHBOARD_ALERT_DISPATCH_ENABLED=1` で明示有効化
+- `ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS`（許可ホスト列挙）が空なら送信拒否
+- HTTPS以外の webhook URL は拒否（fail-closed）
 
 ### 3) relay drive の Google Drive API 直upload（任意）
 

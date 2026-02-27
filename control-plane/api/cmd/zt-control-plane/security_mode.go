@@ -30,6 +30,7 @@ func resolveControlPlaneAllowUnsignedEvents() bool {
 func validateControlPlaneSecurityConfig(
 	securityStrict bool,
 	apiKey string,
+	ssoEnabled bool,
 	verifyPub ed25519.PublicKey,
 	eventKeyRegistryEnabled bool,
 	allowUnsignedEvents bool,
@@ -37,8 +38,8 @@ func validateControlPlaneSecurityConfig(
 	if !securityStrict {
 		return nil
 	}
-	if strings.TrimSpace(apiKey) == "" {
-		return fmt.Errorf("%s=1 requires ZT_CP_API_KEY", controlPlaneSecurityStrictEnv)
+	if strings.TrimSpace(apiKey) == "" && !ssoEnabled {
+		return fmt.Errorf("%s=1 requires ZT_CP_API_KEY or %s=1", controlPlaneSecurityStrictEnv, controlPlaneSSOEnabledEnv)
 	}
 	if allowUnsignedEvents {
 		return fmt.Errorf("%s=1 is incompatible with %s/%s", controlPlaneSecurityStrictEnv, controlPlaneAllowUnsignedEventsEnv, controlPlaneAllowRawEventsAliasEnv)

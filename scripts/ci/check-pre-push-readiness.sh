@@ -4,55 +4,61 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
-echo "[1/18] go test ./gateway/zt"
+echo "[1/20] go test ./gateway/zt"
 go test ./gateway/zt -count=1
 
-echo "[2/18] zt contract gate"
+echo "[2/20] zt contract gate"
 bash ./scripts/ci/check-zt-contract-gate.sh
 
-echo "[3/18] control-plane contract gate"
+echo "[3/20] control-plane contract gate"
 bash ./scripts/ci/check-control-plane-contract-gate.sh
 
-echo "[4/18] policy contract gate"
+echo "[4/20] dashboard contract gate"
+bash ./scripts/ci/check-dashboard-contract-gate.sh
+
+echo "[5/20] policy contract gate"
 bash ./scripts/ci/check-policy-contract-gate.sh
 
-echo "[5/18] policy rollout gate"
+echo "[6/20] policy rollout gate"
 bash ./scripts/ci/check-policy-rollout-gate.sh
 
-echo "[6/18] policy set gate"
+echo "[7/20] policy set gate"
 bash ./scripts/ci/check-policy-set-gate.sh
 
-echo "[7/18] sync observability gate"
+echo "[8/20] sync observability gate"
 bash ./scripts/ci/check-sync-observability-gate.sh
 
-echo "[8/18] OpenAPI contract gate"
+echo "[9/20] OpenAPI contract gate"
 bash ./scripts/ci/check-openapi-contract-gate.sh
 
-echo "[9/18] v0.7.0 core gate"
+echo "[10/20] v0.7.0 core gate"
 bash ./scripts/ci/check-v070-core-gate.sh
 
-echo "[10/18] v0.8.0 core gate"
+echo "[11/20] v0.8.0 core gate"
 bash ./scripts/ci/check-v080-core-gate.sh
 
-echo "[11/18] v0.9.0 core gate"
+echo "[12/20] v0.9.0 core gate"
 bash ./scripts/ci/check-v090-core-gate.sh
 
-echo "[12/18] v0.9.2 boundary gate"
+echo "[13/20] v0.9.2 boundary gate"
 bash ./scripts/ci/check-v092-boundary-gate.sh
 
-echo "[13/18] v0.9.3 remaining gap gate"
+echo "[14/20] v0.9.3 remaining gap gate"
 bash ./scripts/ci/check-v093-remaining-gap-gate.sh
 
-echo "[14/18] v0.9.4 true-zt gate"
+echo "[15/20] v0.9.4 true-zt gate"
 bash ./scripts/ci/check-v094-true-zt-gate.sh
 
-echo "[15/18] go test ./tools/secure-pack/internal/workflows"
+echo "[16/20] v1.0 commercial gate"
+bash ./scripts/ci/check-v100-commercial-gate.sh
+
+echo "[17/20] go test ./tools/secure-pack/internal/workflows"
 go test ./tools/secure-pack/internal/workflows -count=1
 
-echo "[16/18] fixture supply-chain gate"
+echo "[18/20] fixture supply-chain gate"
 bash ./scripts/ci/check-zt-setup-json-gate.sh
 
-echo "[17/18] actual repo supply-chain gate"
+echo "[19/20] actual repo supply-chain gate"
 if [[ "${SKIP_ACTUAL_GATE:-0}" == "1" ]]; then
   echo "skipped (SKIP_ACTUAL_GATE=1)"
 else
@@ -75,7 +81,7 @@ else
   bash ./scripts/ci/check-zt-setup-json-actual-gate.sh
 fi
 
-echo "[18/18] git status summary (manual review before commit/push)"
+echo "[20/20] git status summary (manual review before commit/push)"
 git status --short
 
 echo
