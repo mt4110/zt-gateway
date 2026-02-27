@@ -146,16 +146,11 @@ func runDashboardCommand(repoRoot string, args []string) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.URL.Path)), "/api/") {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(dashboardHTML))
+		serveDashboardUI(w, r)
 	})
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		s := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr)
@@ -233,6 +228,15 @@ func runDashboardCommand(repoRoot string, args []string) error {
 	})
 	mux.HandleFunc("/api/signature-holders", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardSignatureHoldersAPI(repoRoot, w, r)
+	})
+	mux.HandleFunc("/api/auth/providers", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSSOProvidersAPI(w, r)
+	})
+	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSSOLoginAPI(w, r)
+	})
+	mux.HandleFunc("/api/auth/callback", func(w http.ResponseWriter, r *http.Request) {
+		handleDashboardSSOCallbackAPI(w, r)
 	})
 
 	fmt.Printf("[DASHBOARD] listening on http://%s\n", listenAddr)
@@ -918,191 +922,3 @@ func flagSet(name string) *flag.FlagSet {
 	fs.SetOutput(os.Stderr)
 	return fs
 }
-
-const dashboardHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>zt-gateway local dashboard</title>
-  <style>
-    body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #0b1220; color: #e5e7eb; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
-    h1 { margin: 0 0 4px 0; font-size: 24px; }
-    .muted { color: #93a0b5; font-size: 13px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-top: 14px; }
-    .card { background: #121a2b; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
-    .card h2 { margin: 0 0 8px 0; font-size: 15px; }
-    .badge { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; margin-left: 6px; vertical-align: middle; }
-    .badge-active { background: #064e3b; color: #6ee7b7; }
-    .badge-pending { background: #713f12; color: #fcd34d; }
-    .badge-expired { background: #7f1d1d; color: #fca5a5; }
-    .badge-inactive { background: #1f2937; color: #cbd5e1; }
-    .badge-none { background: #111827; color: #94a3b8; }
-    .badge-danger-low { background: #064e3b; color: #86efac; }
-    .badge-danger-medium { background: #78350f; color: #fde68a; }
-    .badge-danger-high { background: #7f1d1d; color: #fecaca; }
-    .badge-lock-locked { background: #7f1d1d; color: #fecaca; }
-    .badge-lock-unlocked { background: #065f46; color: #6ee7b7; }
-    .controls { display: flex; gap: 8px; margin-bottom: 8px; }
-    .controls input { flex: 1; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 8px; font-size: 12px; }
-    .controls button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
-    .controls button:hover { background: #334155; }
-    pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; color: #d1d5db; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { border-bottom: 1px solid #1f2937; text-align: left; padding: 6px 4px; vertical-align: top; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>zt-gateway local dashboard</h1>
-    <div class="muted" id="meta">Loading...</div>
-    <div class="grid">
-      <div class="card"><h2>Danger Signals <span id="dangerBadge" class="badge badge-danger-low">LOW</span></h2><pre id="danger"></pre></div>
-      <div class="card">
-        <h2>Local Lock <span id="lockBadge" class="badge badge-lock-unlocked">UNLOCKED</span></h2>
-        <div class="controls">
-          <input id="lockReason" placeholder="reason (incident, investigation, etc.)" />
-          <button type="button" onclick="setLocalLock('lock')">Lock</button>
-          <button type="button" onclick="setLocalLock('unlock')">Unlock</button>
-        </div>
-        <pre id="lock"></pre>
-      </div>
-      <div class="card"><h2>Root Key</h2><pre id="root"></pre></div>
-      <div class="card"><h2>Unlock Token <span id="unlockBadge" class="badge badge-none">未設定</span></h2><pre id="unlock"></pre></div>
-      <div class="card"><h2>Policy</h2><pre id="policy"></pre></div>
-      <div class="card"><h2>Event Sync</h2><pre id="sync"></pre></div>
-      <div class="card"><h2>KPI / SLO</h2><pre id="kpi"></pre></div>
-      <div class="card"><h2>Control Plane</h2><pre id="cp"></pre></div>
-      <div class="card"><h2>Clients (Local SoR)</h2><pre id="clients"></pre></div>
-      <div class="card"><h2>Keys (Lifecycle)</h2><pre id="keys"></pre></div>
-      <div class="card"><h2>Signature Holders</h2><pre id="signatureHolders"></pre></div>
-      <div class="card"><h2>Key Repair Jobs</h2><pre id="keyRepair"></pre></div>
-      <div class="card"><h2>Incidents</h2><pre id="incidents"></pre></div>
-      <div class="card">
-        <h2>Alerts <span id="alertBadge" class="badge badge-danger-low">LOW</span></h2>
-        <div class="controls">
-          <input id="alertChannel" placeholder="channel: slack|discord|line|webhook" />
-          <button type="button" onclick="dispatchAlerts(true)">Dry-run</button>
-          <button type="button" onclick="dispatchAlerts(false)">Dispatch</button>
-        </div>
-        <pre id="alerts"></pre>
-      </div>
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>Recent Audit Events</h2>
-        <table><thead><tr><th>time</th><th>type</th><th>result</th><th>signer</th></tr></thead><tbody id="audit"></tbody></table>
-      </div>
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>Recent Receipts</h2>
-        <table><thead><tr><th>verified_at</th><th>client</th><th>policy</th><th>tamper</th><th>path</th></tr></thead><tbody id="receipts"></tbody></table>
-      </div>
-    </div>
-  </div>
-  <script>
-    function setBadge(node, level) {
-      const state = String(level || 'low').toLowerCase();
-      node.className = 'badge badge-danger-' + (['low', 'medium', 'high'].includes(state) ? state : 'low');
-      node.textContent = state.toUpperCase();
-    }
-
-    function appendCells(tr, values) {
-      values.forEach(v => {
-        const td = document.createElement('td');
-        td.textContent = String(v == null ? '' : v);
-        tr.appendChild(td);
-      });
-    }
-
-    async function setLocalLock(action) {
-      const reason = document.getElementById('lockReason').value || '';
-      const res = await fetch('/api/lock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action, reason: reason })
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        alert('lock update failed: ' + body);
-        return;
-      }
-      await load();
-    }
-
-    async function dispatchAlerts(dryRun) {
-      const channel = (document.getElementById('alertChannel').value || '').trim();
-      const res = await fetch('/api/alerts/dispatch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel: channel, dry_run: !!dryRun })
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        alert('alert dispatch failed: ' + text);
-        return;
-      }
-      await load();
-      alert('alert dispatch succeeded: ' + text);
-    }
-
-    async function load() {
-      const r = await fetch('/api/status', { cache: 'no-store' });
-      if (!r.ok) {
-        document.getElementById('meta').textContent = 'status fetch failed: HTTP ' + r.status;
-        return;
-      }
-      const d = await r.json();
-      document.getElementById('meta').textContent = 'generated_at=' + (d.generated_at || '');
-      document.getElementById('danger').textContent = JSON.stringify(d.danger, null, 2);
-      document.getElementById('lock').textContent = JSON.stringify(d.lock, null, 2);
-      document.getElementById('root').textContent = JSON.stringify(d.root_key, null, 2);
-      document.getElementById('unlock').textContent = JSON.stringify(d.unlock, null, 2);
-      document.getElementById('policy').textContent = JSON.stringify(d.policy, null, 2);
-      document.getElementById('sync').textContent = JSON.stringify(d.event_sync, null, 2);
-      document.getElementById('kpi').textContent = JSON.stringify(d.kpi, null, 2);
-      document.getElementById('cp').textContent = JSON.stringify(d.control_plane, null, 2);
-      document.getElementById('clients').textContent = JSON.stringify(d.clients, null, 2);
-      document.getElementById('keys').textContent = JSON.stringify(d.keys, null, 2);
-      document.getElementById('signatureHolders').textContent = JSON.stringify(d.signature_holders, null, 2);
-      document.getElementById('keyRepair').textContent = JSON.stringify(d.key_repair, null, 2);
-      document.getElementById('incidents').textContent = JSON.stringify(d.incidents, null, 2);
-      document.getElementById('alerts').textContent = JSON.stringify(d.alerts, null, 2);
-
-      const dangerBadge = document.getElementById('dangerBadge');
-      const dangerState = ((d.danger && d.danger.level) || 'low').toLowerCase();
-      const dangerLabels = { low: 'LOW', medium: 'MEDIUM', high: 'HIGH' };
-      dangerBadge.textContent = dangerLabels[dangerState] || 'LOW';
-      dangerBadge.className = 'badge badge-danger-' + (['low', 'medium', 'high'].includes(dangerState) ? dangerState : 'low');
-      setBadge(document.getElementById('alertBadge'), d.alerts && d.alerts.level);
-
-      const lockBadge = document.getElementById('lockBadge');
-      const locked = !!(d.lock && d.lock.locked);
-      lockBadge.textContent = locked ? 'LOCKED' : 'UNLOCKED';
-      lockBadge.className = 'badge ' + (locked ? 'badge-lock-locked' : 'badge-lock-unlocked');
-
-      const badge = document.getElementById('unlockBadge');
-      const state = (d.unlock && d.unlock.badge) || 'none';
-      const labels = { active: '有効', pending: '解除申請中', expired: '期限切れ', inactive: '無効', none: '未設定' };
-      badge.textContent = labels[state] || '無効';
-      badge.className = 'badge badge-' + (['active', 'pending', 'expired', 'inactive', 'none'].includes(state) ? state : 'inactive');
-
-      const audit = document.getElementById('audit');
-      audit.innerHTML = '';
-      (d.audit.recent || []).forEach(x => {
-        const tr = document.createElement('tr');
-        appendCells(tr, [x.timestamp || '', x.event_type || '', x.result || '', x.signature_key_id || '']);
-        audit.appendChild(tr);
-      });
-
-      const receipts = document.getElementById('receipts');
-      receipts.innerHTML = '';
-      (d.receipts || []).forEach(x => {
-        const tr = document.createElement('tr');
-        appendCells(tr, [x.verified_at || '', x.client || '', x.policy_result || '', !!x.tamper_detected, x.path || '']);
-        receipts.appendChild(tr);
-      });
-    }
-    load();
-    setInterval(load, 5000);
-  </script>
-</body>
-</html>`

@@ -172,6 +172,37 @@ go run ./gateway/zt dashboard
 go run ./gateway/zt dashboard --json | jq '.danger, .lock, .unlock, .kpi, .alerts, .control_plane'
 ```
 
+Svelte SPA dashboard（Glass UI + OAuth SSO）:
+
+- `zt dashboard` は Svelte SPA を配信し、`Scan` と `Findings` を 1-click で切り替え
+- Primary CTA は 1つ固定（`Start Scan` / `Export Evidence`）、Export系は `More` の secondary menu に集約
+- OAuth SSO popup は `GET /api/auth/login?provider=<google|apple|icloud>` を使用し、callback でブラウザセッションへ token を返す
+
+OAuth SSO provider 設定（ローカル dashboard 用）:
+
+```bash
+# 共通（optional: callback URL を固定したいとき）
+export ZT_DASHBOARD_SSO_REDIRECT_BASE_URL="http://127.0.0.1:8787"
+
+# Google
+export ZT_DASHBOARD_SSO_GOOGLE_CLIENT_ID="<google-client-id>"
+export ZT_DASHBOARD_SSO_GOOGLE_CLIENT_SECRET="<google-client-secret>" # optional
+
+# Apple
+export ZT_DASHBOARD_SSO_APPLE_CLIENT_ID="<apple-services-id>"
+export ZT_DASHBOARD_SSO_APPLE_CLIENT_SECRET="<apple-client-secret-jwt>"
+
+# iCloud（未設定時は Apple 設定をフォールバック利用）
+export ZT_DASHBOARD_SSO_ICLOUD_CLIENT_ID="<icloud-client-id>"
+export ZT_DASHBOARD_SSO_ICLOUD_CLIENT_SECRET="<icloud-client-secret-jwt>"
+```
+
+SSO API:
+
+- `GET /api/auth/providers` : provider の有効/無効状態
+- `GET /api/auth/login?provider=...` : OAuth authorize へリダイレクト
+- `GET|POST /api/auth/callback?provider=...` : code exchange 後に popup へ結果を postMessage
+
 Local dashboard API（LFC-1005: クライアント別資産ビュー）:
 
 - `GET /api/clients` : クライアント一覧（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）

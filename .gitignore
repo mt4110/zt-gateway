@@ -35,6 +35,8 @@ result-*
 # Generated artifacts / temp outputs
 artifact.zp/
 dist/
+!gateway/zt/dashboard-ui/dist/
+!gateway/zt/dashboard-ui/dist/**
 extracted_*/
 *.spkg.tgz
 tmp/
@@ -42,6 +44,7 @@ tmp_*/
 
 # Tool caches
 .cache/
+node_modules/
 tmp_gocache/
 **/.cache/
 **/tmp_gocache/
