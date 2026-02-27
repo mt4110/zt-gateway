@@ -9,12 +9,14 @@ import (
 )
 
 type dashboardSignatureHolderSnapshot struct {
-	TenantID              string                          `json:"tenant_id,omitempty"`
-	TotalSignatures       int                             `json:"total_signatures"`
-	TotalEstimatedHolders int                             `json:"total_estimated_holders"`
-	TotalConfirmedHolders int                             `json:"total_confirmed_holders"`
-	Recent                []localSORSignatureHolderRecord `json:"recent,omitempty"`
-	Error                 string                          `json:"error,omitempty"`
+	TenantID                 string                          `json:"tenant_id,omitempty"`
+	TotalSignatures          int                             `json:"total_signatures"`
+	TotalEstimatedHolders    int                             `json:"total_estimated_holders"`
+	TotalConfirmedHolders    int                             `json:"total_confirmed_holders"`
+	ConfirmedCoverageRatio   float64                         `json:"confirmed_coverage_ratio"`
+	EstimatedVsConfirmedMode string                          `json:"estimated_vs_confirmed_mode"`
+	Recent                   []localSORSignatureHolderRecord `json:"recent,omitempty"`
+	Error                    string                          `json:"error,omitempty"`
 }
 
 type dashboardSignatureHoldersListResponse struct {
@@ -54,6 +56,8 @@ func collectDashboardSignatureHolderSnapshot(repoRoot string, now time.Time) das
 		out.TotalEstimatedHolders += item.HolderCountEstimated
 		out.TotalConfirmedHolders += item.HolderCountConfirmed
 	}
+	out.ConfirmedCoverageRatio = localSORConfirmedCoverageRatio(out.TotalConfirmedHolders, out.TotalEstimatedHolders)
+	out.EstimatedVsConfirmedMode = "estimated_vs_confirmed"
 	return out
 }
 
@@ -198,6 +202,8 @@ func writeDashboardSignatureHoldersCSV(w http.ResponseWriter, filename string, i
 		"signature_id",
 		"holder_count_estimated",
 		"holder_count_confirmed",
+		"confirmed_coverage_ratio",
+		"confirmation_status",
 		"event_count",
 		"client_event_count",
 		"last_seen_at",
@@ -208,6 +214,8 @@ func writeDashboardSignatureHoldersCSV(w http.ResponseWriter, filename string, i
 			item.SignatureID,
 			strconv.Itoa(item.HolderCountEstimated),
 			strconv.Itoa(item.HolderCountConfirmed),
+			strconv.FormatFloat(item.ConfirmedCoverageRatio, 'f', 6, 64),
+			item.ConfirmationStatus,
 			strconv.Itoa(item.EventCount),
 			strconv.Itoa(item.ClientEventCount),
 			item.LastSeenAt,

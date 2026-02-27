@@ -36,6 +36,13 @@ type localSORKeyRepairJob struct {
 	EvidenceRef string `json:"evidence_ref,omitempty"`
 }
 
+type localSORKeyRepairAutomationMetrics struct {
+	TotalJobs         int
+	AutoTriggeredJobs int
+	AutoCompletedJobs int
+	AutoRecoveryRate  float64
+}
+
 func normalizeLocalSORKeyRepairState(raw string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case localSORKeyRepairStateDetected:
@@ -559,4 +566,36 @@ func scanLocalSORKeyRepairJob(scan func(dest ...any) error) (localSORKeyRepairJo
 		return localSORKeyRepairJob{}, err
 	}
 	return item, nil
+}
+
+func (s *localSORStore) collectKeyRepairAutomationMetrics(tenantID string) (localSORKeyRepairAutomationMetrics, error) {
+	if s == nil || s.db == nil {
+		return localSORKeyRepairAutomationMetrics{}, fmt.Errorf("local sor is not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if err := validateLocalSORTenantID(tenantID); err != nil {
+		return localSORKeyRepairAutomationMetrics{}, err
+	}
+	out := localSORKeyRepairAutomationMetrics{}
+	if err := s.db.QueryRow(`
+select
+  count(*) as total_jobs,
+  coalesce(sum(case
+    when lower(coalesce(trigger,'')) like 'auto%'
+      or lower(coalesce(trigger,'')) in ('compromised_key_detected', 'signature_anomaly')
+    then 1 else 0 end), 0) as auto_triggered_jobs,
+  coalesce(sum(case
+    when (lower(coalesce(trigger,'')) like 'auto%'
+      or lower(coalesce(trigger,'')) in ('compromised_key_detected', 'signature_anomaly'))
+      and state = 'completed'
+    then 1 else 0 end), 0) as auto_completed_jobs
+from local_sor_key_repair_jobs
+where tenant_id = ?1
+`, tenantID).Scan(&out.TotalJobs, &out.AutoTriggeredJobs, &out.AutoCompletedJobs); err != nil {
+		return localSORKeyRepairAutomationMetrics{}, err
+	}
+	if out.AutoTriggeredJobs > 0 {
+		out.AutoRecoveryRate = float64(out.AutoCompletedJobs) / float64(out.AutoTriggeredJobs)
+	}
+	return out, nil
 }

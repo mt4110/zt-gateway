@@ -107,6 +107,12 @@ values
 		if resp.Items[0].EventCount != 2 {
 			t.Fatalf("event_count=%d, want 2", resp.Items[0].EventCount)
 		}
+		if resp.Items[0].ConfirmationStatus != "confirmed" {
+			t.Fatalf("confirmation_status=%q, want confirmed", resp.Items[0].ConfirmationStatus)
+		}
+		if resp.Items[1].ConfirmationStatus != "estimated_only" {
+			t.Fatalf("confirmation_status(second)=%q, want estimated_only", resp.Items[1].ConfirmationStatus)
+		}
 	})
 
 	t.Run("client drill-down", func(t *testing.T) {

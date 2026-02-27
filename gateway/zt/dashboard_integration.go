@@ -28,26 +28,32 @@ type dashboardControlPlaneStatus struct {
 }
 
 type dashboardKPIStatus struct {
-	TenantID            string  `json:"tenant_id,omitempty"`
-	ExchangeTotal       int     `json:"exchange_total"`
-	SendCount           int     `json:"send_count"`
-	ReceiveCount        int     `json:"receive_count"`
-	VerifyReceiptsTotal int     `json:"verify_receipts_total"`
-	VerifyPassCount     int     `json:"verify_pass_count"`
-	VerifyFailCount     int     `json:"verify_fail_count"`
-	VerifyPassRatio     float64 `json:"verify_pass_ratio"`
-	AuditTotal          int     `json:"audit_total"`
-	AuditInvalid        int     `json:"audit_invalid"`
-	AuditInvalidRatio   float64 `json:"audit_invalid_ratio"`
-	BacklogBreached     bool    `json:"backlog_breached"`
-	BacklogThresholdSec int64   `json:"backlog_threshold_seconds"`
-	BacklogSLOMet       bool    `json:"backlog_slo_met"`
-	VerifyPassSLOTarget float64 `json:"verify_pass_slo_target"`
-	VerifyPassSLOMet    bool    `json:"verify_pass_slo_met"`
-	DangerHighCount     int     `json:"danger_high_count"`
-	DangerMediumCount   int     `json:"danger_medium_count"`
-	ControlPlaneSLO     float64 `json:"control_plane_slo_ratio,omitempty"`
-	ControlPlaneBacklog float64 `json:"control_plane_backlog_ratio,omitempty"`
+	TenantID                           string  `json:"tenant_id,omitempty"`
+	ExchangeTotal                      int     `json:"exchange_total"`
+	SendCount                          int     `json:"send_count"`
+	ReceiveCount                       int     `json:"receive_count"`
+	VerifyReceiptsTotal                int     `json:"verify_receipts_total"`
+	VerifyPassCount                    int     `json:"verify_pass_count"`
+	VerifyFailCount                    int     `json:"verify_fail_count"`
+	VerifyPassRatio                    float64 `json:"verify_pass_ratio"`
+	AuditTotal                         int     `json:"audit_total"`
+	AuditInvalid                       int     `json:"audit_invalid"`
+	AuditInvalidRatio                  float64 `json:"audit_invalid_ratio"`
+	BacklogBreached                    bool    `json:"backlog_breached"`
+	BacklogThresholdSec                int64   `json:"backlog_threshold_seconds"`
+	BacklogSLOMet                      bool    `json:"backlog_slo_met"`
+	VerifyPassSLOTarget                float64 `json:"verify_pass_slo_target"`
+	VerifyPassSLOMet                   bool    `json:"verify_pass_slo_met"`
+	DangerHighCount                    int     `json:"danger_high_count"`
+	DangerMediumCount                  int     `json:"danger_medium_count"`
+	KeyRepairAutoTriggeredJobs         int     `json:"key_repair_auto_triggered_jobs"`
+	KeyRepairAutoCompletedJobs         int     `json:"key_repair_auto_completed_jobs"`
+	KeyRepairAutoRecoveryRate          float64 `json:"key_repair_auto_recovery_rate"`
+	SignatureAnomalyCount              int     `json:"signature_anomaly_count"`
+	SignatureAnomalyFalsePositiveCount int     `json:"signature_anomaly_false_positive_count"`
+	SignatureAnomalyFalsePositiveRatio float64 `json:"signature_anomaly_false_positive_ratio"`
+	ControlPlaneSLO                    float64 `json:"control_plane_slo_ratio,omitempty"`
+	ControlPlaneBacklog                float64 `json:"control_plane_backlog_ratio,omitempty"`
 }
 
 type dashboardIncidentStatus struct {
@@ -364,6 +370,21 @@ func collectDashboardKPIStatus(
 			kpi.ExchangeTotal = kpi.VerifyReceiptsTotal
 		}
 	}
+	for _, r := range receipts {
+		policyResult := strings.ToLower(strings.TrimSpace(r.PolicyResult))
+		signatureAnomaly := !r.SignatureValid || r.TamperDetected
+		if !signatureAnomaly {
+			continue
+		}
+		kpi.SignatureAnomalyCount++
+		if strings.Contains(policyResult, "pass") {
+			kpi.SignatureAnomalyFalsePositiveCount++
+		}
+	}
+	kpi.SignatureAnomalyFalsePositiveRatio = dashboardRatio(
+		float64(kpi.SignatureAnomalyFalsePositiveCount),
+		float64(kpi.SignatureAnomalyCount),
+	)
 	kpi.VerifyPassRatio = dashboardRatio(float64(kpi.VerifyPassCount), float64(kpi.VerifyReceiptsTotal))
 	kpi.AuditInvalidRatio = dashboardRatio(float64(kpi.AuditInvalid), float64(kpi.AuditTotal))
 	kpi.BacklogBreached = eventSync.PendingCount > 0 && eventSync.OldestPendingAgeSec > kpi.BacklogThresholdSec
@@ -381,6 +402,13 @@ func collectDashboardKPIStatus(
 	if summary, ok := cp.Timeseries["summary"].(map[string]any); ok {
 		kpi.ControlPlaneSLO = dashboardAnyFloat(summary["slo_verify_ratio"])
 		kpi.ControlPlaneBacklog = dashboardAnyFloat(summary["backlog_ratio"])
+	}
+	if localSOR != nil && localSOR.db != nil && strings.TrimSpace(kpi.TenantID) != "" {
+		if metrics, err := localSOR.collectKeyRepairAutomationMetrics(kpi.TenantID); err == nil {
+			kpi.KeyRepairAutoTriggeredJobs = metrics.AutoTriggeredJobs
+			kpi.KeyRepairAutoCompletedJobs = metrics.AutoCompletedJobs
+			kpi.KeyRepairAutoRecoveryRate = metrics.AutoRecoveryRate
+		}
 	}
 	return kpi
 }
@@ -435,6 +463,9 @@ func collectDashboardAlertStatus(
 	if incidents.ActiveBreakGlass {
 		add("high", "break_glass_active", "incident", "break-glass mode is active")
 	}
+	if kpi.SignatureAnomalyCount > 0 && kpi.SignatureAnomalyFalsePositiveRatio > resolveDashboardAnomalyFalsePositiveThreshold() {
+		add("medium", "signature_anomaly_false_positive_high", "kpi", fmt.Sprintf("false-positive ratio=%.4f threshold=%.4f", kpi.SignatureAnomalyFalsePositiveRatio, resolveDashboardAnomalyFalsePositiveThreshold()))
+	}
 	if cp.Configured && cp.LastError != "" {
 		add("medium", "control_plane_dashboard_unreachable", "control_plane", cp.LastError)
 	}
@@ -487,6 +518,24 @@ func dashboardAnyFloat(v any) float64 {
 	default:
 		return 0
 	}
+}
+
+func resolveDashboardAnomalyFalsePositiveThreshold() float64 {
+	raw := strings.TrimSpace(os.Getenv("ZT_DASHBOARD_ANOMALY_FALSE_POSITIVE_THRESHOLD"))
+	if raw == "" {
+		return 0.20
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0.20
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 func parseDashboardAlertAllowHosts(raw string) map[string]struct{} {

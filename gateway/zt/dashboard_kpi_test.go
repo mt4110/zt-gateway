@@ -24,7 +24,13 @@ values
   ('ex-4', 'tenant-a', 'client-a', 'asset-4', 'send', 'ok', 'n/a', 'FP1', '2026-02-27T00:03:00Z'),
   ('ex-5', 'tenant-a', 'client-a', 'asset-5', 'receive', 'ok', 'n/a', 'FP1', '2026-02-27T00:04:00Z')
 `)
-
+	mustExecLocalSOR(t, store, `
+insert into local_sor_key_repair_jobs (job_id, tenant_id, key_id, trigger, state, runbook_id, started_at, updated_at)
+values
+  ('kr-auto-done', 'tenant-a', 'key-a', 'auto_detected', 'completed', 'docs/OPERATIONS.md#key-repair', '2026-02-27T00:10:00Z', '2026-02-27T00:20:00Z'),
+  ('kr-auto-open', 'tenant-a', 'key-b', 'compromised_key_detected', 'contained', 'docs/OPERATIONS.md#key-repair', '2026-02-27T00:11:00Z', '2026-02-27T00:21:00Z'),
+  ('kr-manual', 'tenant-a', 'key-c', 'manual_investigation', 'completed', 'docs/OPERATIONS.md#key-repair', '2026-02-27T00:12:00Z', '2026-02-27T00:22:00Z')
+`)
 	snapshot := collectDashboardSnapshot(repoRoot, time.Now().UTC())
 	kpi := snapshot.KPI
 
@@ -57,6 +63,15 @@ values
 	}
 	if kpi.VerifyPassSLOMet {
 		t.Fatalf("verify_pass_slo_met=true, want false")
+	}
+	if kpi.KeyRepairAutoTriggeredJobs != 2 {
+		t.Fatalf("key_repair_auto_triggered_jobs=%d, want 2", kpi.KeyRepairAutoTriggeredJobs)
+	}
+	if kpi.KeyRepairAutoCompletedJobs != 1 {
+		t.Fatalf("key_repair_auto_completed_jobs=%d, want 1", kpi.KeyRepairAutoCompletedJobs)
+	}
+	if math.Abs(kpi.KeyRepairAutoRecoveryRate-0.5) > 0.0001 {
+		t.Fatalf("key_repair_auto_recovery_rate=%f, want 0.5", kpi.KeyRepairAutoRecoveryRate)
 	}
 }
 
@@ -101,5 +116,29 @@ values
 	}
 	if math.Abs(resp.KPI.VerifyPassRatio-expected.VerifyPassRatio) > 0.0001 {
 		t.Fatalf("verify_pass_ratio=%f, want %f", resp.KPI.VerifyPassRatio, expected.VerifyPassRatio)
+	}
+}
+
+func TestCollectDashboardKPIStatus_ComputesSignatureAnomalyFalsePositiveRatio(t *testing.T) {
+	kpi := collectDashboardKPIStatus(
+		t.TempDir(),
+		dashboardDangerStatus{},
+		dashboardEventSyncStatus{},
+		dashboardAuditStatus{},
+		[]dashboardVerificationRecord{
+			{PolicyResult: "pass", SignatureValid: false, TamperDetected: false},
+			{PolicyResult: "deny", SignatureValid: false, TamperDetected: true},
+			{PolicyResult: "pass", SignatureValid: true, TamperDetected: false},
+		},
+		dashboardControlPlaneStatus{},
+	)
+	if kpi.SignatureAnomalyCount != 2 {
+		t.Fatalf("signature_anomaly_count=%d, want 2", kpi.SignatureAnomalyCount)
+	}
+	if kpi.SignatureAnomalyFalsePositiveCount != 1 {
+		t.Fatalf("signature_anomaly_false_positive_count=%d, want 1", kpi.SignatureAnomalyFalsePositiveCount)
+	}
+	if math.Abs(kpi.SignatureAnomalyFalsePositiveRatio-0.5) > 0.0001 {
+		t.Fatalf("signature_anomaly_false_positive_ratio=%f, want 0.5", kpi.SignatureAnomalyFalsePositiveRatio)
 	}
 }

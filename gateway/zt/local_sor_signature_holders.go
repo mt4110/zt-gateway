@@ -7,13 +7,15 @@ import (
 )
 
 type localSORSignatureHolderRecord struct {
-	SignatureID          string `json:"signature_id"`
-	TenantID             string `json:"tenant_id"`
-	HolderCountEstimated int    `json:"holder_count_estimated"`
-	HolderCountConfirmed int    `json:"holder_count_confirmed"`
-	EventCount           int    `json:"event_count"`
-	LastSeenAt           string `json:"last_seen_at"`
-	ClientEventCount     int    `json:"client_event_count,omitempty"`
+	SignatureID            string  `json:"signature_id"`
+	TenantID               string  `json:"tenant_id"`
+	HolderCountEstimated   int     `json:"holder_count_estimated"`
+	HolderCountConfirmed   int     `json:"holder_count_confirmed"`
+	ConfirmedCoverageRatio float64 `json:"confirmed_coverage_ratio"`
+	ConfirmationStatus     string  `json:"confirmation_status"`
+	EventCount             int     `json:"event_count"`
+	LastSeenAt             string  `json:"last_seen_at"`
+	ClientEventCount       int     `json:"client_event_count,omitempty"`
 }
 
 func (s *localSORStore) observeSignatureHolderFromReceipt(tenantID string, receipt verificationReceipt, now time.Time) error {
@@ -148,6 +150,7 @@ order by ` + orderBy + `
 		); err != nil {
 			return nil, 0, err
 		}
+		item = finalizeLocalSORSignatureHolderRecord(item)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -264,10 +267,37 @@ order by ` + orderBy + `
 		); err != nil {
 			return nil, 0, err
 		}
+		item = finalizeLocalSORSignatureHolderRecord(item)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+func finalizeLocalSORSignatureHolderRecord(item localSORSignatureHolderRecord) localSORSignatureHolderRecord {
+	item.ConfirmedCoverageRatio = localSORConfirmedCoverageRatio(item.HolderCountConfirmed, item.HolderCountEstimated)
+	item.ConfirmationStatus = localSORConfirmationStatus(item.HolderCountConfirmed, item.HolderCountEstimated)
+	return item
+}
+
+func localSORConfirmedCoverageRatio(confirmed, estimated int) float64 {
+	if estimated <= 0 {
+		return 0
+	}
+	return float64(confirmed) / float64(estimated)
+}
+
+func localSORConfirmationStatus(confirmed, estimated int) string {
+	if estimated <= 0 {
+		return "none"
+	}
+	if confirmed <= 0 {
+		return "estimated_only"
+	}
+	if confirmed < estimated {
+		return "partial"
+	}
+	return "confirmed"
 }

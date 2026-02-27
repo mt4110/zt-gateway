@@ -171,6 +171,31 @@ func TestResolveDashboardControlPlaneClient_IncludesBearerToken(t *testing.T) {
 	}
 }
 
+func TestCollectDashboardAlertStatus_IncludesAnomalyFalsePositiveSignal(t *testing.T) {
+	t.Setenv("ZT_DASHBOARD_ANOMALY_FALSE_POSITIVE_THRESHOLD", "0.20")
+	alerts := collectDashboardAlertStatus(
+		dashboardDangerStatus{Level: "low", Signals: []dashboardDangerItem{{Level: "low", Code: "healthy", Message: "ok"}}},
+		dashboardEventSyncStatus{},
+		dashboardIncidentStatus{},
+		dashboardKPIStatus{
+			SignatureAnomalyCount:              4,
+			SignatureAnomalyFalsePositiveCount: 1,
+			SignatureAnomalyFalsePositiveRatio: 0.25,
+		},
+		dashboardControlPlaneStatus{},
+	)
+	found := false
+	for _, item := range alerts.Items {
+		if item.Code == "signature_anomaly_false_positive_high" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("alerts missing signature_anomaly_false_positive_high: %#v", alerts.Items)
+	}
+}
+
 func setupDashboardAlertDispatchTestEnv(t *testing.T) string {
 	t.Helper()
 	repoRoot := t.TempDir()
