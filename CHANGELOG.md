@@ -22,15 +22,15 @@
 - local GPG smoke test setup script for packet verification
 - `zt send --share-json` now includes `receipt_hint` (`version` / `path` / `command`) for receiver-side `--receipt-out` guidance
 - `zt send --share-json` now includes `channel_templates` (`version` / `slack_text` / `email_subject` / `email_body`) for Cloud-Agnostic Wrapper handoff
-- v0.8.0 architecture baseline docs (`docs/architecture/V0.8.0_DESIGN.md`, `docs/architecture/V0.8.0_IMPLEMENTATION_TICKETS.md`)
-- v0.9.0 architecture baseline docs (`docs/architecture/V0.9.0_DESIGN.md`, `docs/architecture/V0.9.0_IMPLEMENTATION_TICKETS.md`)
+- v0.8.0 architecture baseline docs (archived)
+- v0.9.0 architecture baseline docs (archived)
 - expected-pin bootstrap for `check-zt-setup-json-actual-gate.sh` (`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED`)
 - v1 blueprint freeze decisions for receipt ID / audit retention / trust profile thresholds / OS fix priority
 - one-command CI variable bootstrap script (`scripts/dev/bootstrap-ci-root-pin-expected.sh`)
 - v0.9.7 dashboard safety gate (`scripts/ci/check-v097-dashboard-safety-gate.sh`)
-- v0.9.8 design baseline for dashboard mutation fail-closed hardening (`docs/architecture/V0.9.8_DESIGN.md`)
+- v0.9.8 design baseline for dashboard mutation fail-closed hardening (archived)
 - v0.9.8 dashboard auth gate (`scripts/ci/check-v098-dashboard-auth-gate.sh`)
-- v0.9.9 design baseline for dashboard mutation auth coverage closure (`docs/architecture/V0.9.9_DESIGN.md`)
+- v0.9.9 design baseline for dashboard mutation auth coverage closure (archived)
 - v0.9.9 dashboard mutation coverage gate (`scripts/ci/check-v099-dashboard-mutation-coverage-gate.sh`)
 - v1.3 operations gap-closure gate (`scripts/ci/check-v130-operations-gap-closure-gate.sh`)
 - one-command trust pin bootstrap script (`scripts/dev/bootstrap-ci-trust-pins.sh`)
