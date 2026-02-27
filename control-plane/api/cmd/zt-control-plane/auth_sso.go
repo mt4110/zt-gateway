@@ -184,9 +184,13 @@ func (s *server) authenticateControlPlaneRequest(r *http.Request, requireAdmin b
 	}
 
 	if s.sso != nil && s.sso.Enabled {
-		ssoCtx, err := s.sso.authenticateBearerToken(r, requireAdmin)
+		ssoCtx, err := s.sso.authenticateBearerToken(r, false)
 		if err != nil {
 			return ctx, err
+		}
+		ssoCtx = s.applySCIMMapping(ssoCtx)
+		if requireAdmin && ssoCtx.Role != dashboardRoleAdmin {
+			return ctx, &controlPlaneAuthError{Status: http.StatusForbidden, Code: "role_not_allowed"}
 		}
 		return ssoCtx, nil
 	}

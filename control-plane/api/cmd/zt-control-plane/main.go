@@ -18,6 +18,7 @@ type server struct {
 	policyDir               string
 	apiKey                  string
 	sso                     *controlPlaneSSOConfig
+	scim                    *controlPlaneSCIMSyncManager
 	stepUp                  *controlPlaneStepUpManager
 	allowUnsignedEvents     bool
 	eventVerifyPub          ed25519.PublicKey
@@ -124,6 +125,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid control-plane webauthn config: %v", err)
 	}
+	scim, err := loadControlPlaneSCIMSyncManager(dataDir)
+	if err != nil {
+		log.Fatalf("invalid control-plane scim sync config: %v", err)
+	}
 
 	if err := os.MkdirAll(filepath.Join(dataDir, "events"), 0o755); err != nil {
 		log.Fatalf("failed to create data dir: %v", err)
@@ -134,6 +139,7 @@ func main() {
 		policyDir:               policyDir,
 		apiKey:                  apiKey,
 		sso:                     ssoConfig,
+		scim:                    scim,
 		stepUp:                  stepUp,
 		allowUnsignedEvents:     allowUnsignedEvents,
 		eventVerifyPub:          verifyPub,
@@ -162,6 +168,7 @@ func main() {
 	mux.HandleFunc("/v1/auth/webauthn/assertion/verify", s.handleWebAuthnAssertionVerify)
 	mux.HandleFunc("/v1/admin/event-keys", s.handleAdminEventKeys)
 	mux.HandleFunc("/v1/admin/event-keys/", s.handleAdminEventKeys)
+	mux.HandleFunc("/v1/admin/scim/sync", s.handleAdminSCIMSync)
 
 	log.Printf("zt-control-plane listening on %s (data=%s policy=%s)", addr, dataDir, policyDir)
 	if err := http.ListenAndServe(addr, loggingMiddleware(mux)); err != nil {
