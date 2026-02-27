@@ -302,6 +302,28 @@ v1.1 運用拡張（LFC-1102/1103/1107）:
 - `ZT_DASHBOARD_ANOMALY_FALSE_POSITIVE_THRESHOLD`（default `0.20`）超過時は
   alerts に `signature_anomaly_false_positive_high` を表示
 
+v1.2 大規模/モバイル統合（LFC-1201〜1207）:
+
+- 管理変更APIの監査メタに mobile MFA コンテキストを記録（`X-ZT-MFA-Platform` / `X-ZT-MFA-Device-ID` / `X-ZT-MFA-Factor` + AMR）
+- SSO を multi-issuer 化:
+  - `ZT_CP_SSO_TRUSTED_ISSUERS`（CSV）
+  - `ZT_CP_SSO_ENTERPRISE_ISSUERS`（CSV）
+  - `ZT_CP_SSO_ENTERPRISE_POLICY=allow_all|enterprise_only|enterprise_or_apple`
+  - `ZT_CP_SSO_APPLE_ISSUER`（default `https://appleid.apple.com`）
+- `/healthz` に HA 計測値を追加（`ha.rpo_*` / `ha.rto_*`）:
+  - `ZT_CP_HA_ENABLED`
+  - `ZT_CP_HA_RPO_OBJECTIVE_SECONDS`（default `60`）
+  - `ZT_CP_HA_RTO_OBJECTIVE_SECONDS`（default `300`）
+- signature holders に realtime 推定遅延 SLO を追加:
+  - `realtime_estimate_lag_seconds`
+  - `realtime_estimate_slo_seconds`
+  - `realtime_estimate_slo_met`
+  - `ZT_DASHBOARD_SIGNATURE_HOLDER_SLO_SECONDS`（default `120`）
+- `zt audit report --template legal-v1 --contract-id <id>` で法務テンプレ付き月次監査レポートを生成
+- 改ざん耐性オプション（外部台帳）:
+  - `ZT_AUDIT_EXTERNAL_LEDGER_ENABLED=1`
+  - `ZT_AUDIT_EXTERNAL_LEDGER_PATH=<path>`（default `.zt-spool/audit-external-ledger.jsonl`）
+
 監査運用（LFC-1104/1106）:
 
 - `zt audit report --month YYYY-MM --json-out <path> --pdf-out <path>` で月次監査レポートを生成
@@ -688,6 +710,7 @@ flowchart LR
 - v0.9.2 異常系ユースケース/復旧runbook正本は `docs/V0.9.2_ABNORMAL_USECASES.md`
 - v1.0 セールス向け運用パック（導入チェックリスト / security note / runbook / 5分デモ）は `docs/V1_SALES_OPERATIONS_PACK.md`
 - v1.1 運用拡張の契約固定は `scripts/ci/check-v110-operations-gate.sh` を実行
+- v1.2 大規模/モバイル統合の契約固定は `scripts/ci/check-v120-scale-mobile-gate.sh` を実行
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
