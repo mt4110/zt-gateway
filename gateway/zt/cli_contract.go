@@ -8,6 +8,8 @@ const (
 	cliScanSignature         = "scan [--tui] [--force-public] [--update] [--strict] [--no-auto-sync] <path>"
 	cliVerifySignature       = "verify [--receipt-out <path>] [--sync-now] [--no-auto-sync] [--break-glass-reason <text>] <packet.spkg.tgz>"
 	cliAuditSignature        = "audit verify [--file <path>] [--require-signature] [--compat-v05a]"
+	cliAuditReportSignature  = "audit report [--file <path>] [--month <YYYY-MM>] [--json-out <path>] [--pdf-out <path>]"
+	cliAuditRotateSignature  = "audit rotate [--file <path>] [--archive-dir <path>] [--retention-days <days>]"
 	cliSyncSignature         = "sync [--force] [--json]"
 	cliPolicySignature       = "policy status [--json] [--kind extension|scan|all]"
 	cliConfigSignature       = "config doctor [--json]"

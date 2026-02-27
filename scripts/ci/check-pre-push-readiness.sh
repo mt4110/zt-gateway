@@ -52,13 +52,16 @@ bash ./scripts/ci/check-v094-true-zt-gate.sh
 echo "[16/20] v1.0 commercial gate"
 bash ./scripts/ci/check-v100-commercial-gate.sh
 
-echo "[17/20] go test ./tools/secure-pack/internal/workflows"
+echo "[17/21] v1.1 operations gate"
+bash ./scripts/ci/check-v110-operations-gate.sh
+
+echo "[18/21] go test ./tools/secure-pack/internal/workflows"
 go test ./tools/secure-pack/internal/workflows -count=1
 
-echo "[18/20] fixture supply-chain gate"
+echo "[19/21] fixture supply-chain gate"
 bash ./scripts/ci/check-zt-setup-json-gate.sh
 
-echo "[19/20] actual repo supply-chain gate"
+echo "[20/21] actual repo supply-chain gate"
 if [[ "${SKIP_ACTUAL_GATE:-0}" == "1" ]]; then
   echo "skipped (SKIP_ACTUAL_GATE=1)"
 else
@@ -81,7 +84,7 @@ else
   bash ./scripts/ci/check-zt-setup-json-actual-gate.sh
 fi
 
-echo "[20/20] git status summary (manual review before commit/push)"
+echo "[21/21] git status summary (manual review before commit/push)"
 git status --short
 
 echo

@@ -236,6 +236,8 @@ Control Plane dashboard API（tenant/role authz）:
 - `GET /v1/dashboard/activity/groups` : tenant/kind 集計
 - `GET /v1/dashboard/timeseries` : SLO/drift/backlog-proxy の時系列
 - `GET /v1/dashboard/drilldown` : event -> receipt -> policy -> runbook
+- `POST /v1/admin/scim/sync` : SCIM 同期（admin only, role mapping 反映）
+- `GET /v1/admin/scim/sync` : SCIM 同期状態（適用ユーザー数 / 最終同期時刻）
 
 認証/認可ヘッダ:
 
@@ -291,6 +293,20 @@ go run ./gateway/zt dashboard
 - `ZT_DASHBOARD_ALERT_DISPATCH_ENABLED=1` で明示有効化
 - `ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS`（許可ホスト列挙）が空なら送信拒否
 - HTTPS以外の webhook URL は拒否（fail-closed）
+
+v1.1 運用拡張（LFC-1102/1103/1107）:
+
+- signature holders API は `confirmed_coverage_ratio` / `confirmation_status` を返却
+- KPI に `key_repair_auto_recovery_rate`（自動起票ジョブの完了率）を追加
+- KPI に `signature_anomaly_false_positive_ratio` を追加
+- `ZT_DASHBOARD_ANOMALY_FALSE_POSITIVE_THRESHOLD`（default `0.20`）超過時は
+  alerts に `signature_anomaly_false_positive_high` を表示
+
+監査運用（LFC-1104/1106）:
+
+- `zt audit report --month YYYY-MM --json-out <path> --pdf-out <path>` で月次監査レポートを生成
+- `zt audit rotate --retention-days <days>` で月次ローテーションと保持期間削除を実行
+- `ZT_AUDIT_RETENTION_DAYS`（default `90`）で保持日数を設定
 
 ### 3) relay drive の Google Drive API 直upload（任意）
 
@@ -671,6 +687,7 @@ flowchart LR
 - v0.9.2 では break-glass 理由不足を `ZT_SEND_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` / `ZT_VERIFY_TEAM_BOUNDARY_BREAK_GLASS_REASON_REQUIRED` で即時切り分けできる
 - v0.9.2 異常系ユースケース/復旧runbook正本は `docs/V0.9.2_ABNORMAL_USECASES.md`
 - v1.0 セールス向け運用パック（導入チェックリスト / security note / runbook / 5分デモ）は `docs/V1_SALES_OPERATIONS_PACK.md`
+- v1.1 運用拡張の契約固定は `scripts/ci/check-v110-operations-gate.sh` を実行
 - 実artifactをリポジトリに置く運用では、actual repo ゲート `scripts/ci/check-zt-setup-json-actual-gate.sh` も有効化し、`ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS_EXPECTED` を GitHub Actions Variables（推奨）に配布する
 - 監査/通知は `--share-json` と event spool を使い、運用手順を人依存にしすぎない
 
