@@ -164,6 +164,20 @@ func runConfigDoctor(repoRoot string, args []string) error {
 			Message: c.Message,
 		})
 	}
+	if fileExists(scanProfileSelection.ExtensionPolicyPath) {
+		if extPol, err := loadExtensionPolicy(scanProfileSelection.ExtensionPolicyPath); err == nil {
+			rebuildCheck, _ := buildRebuildSanitizerCoverageCheck(extPol)
+			appendSetupCheckAsDoctor(rebuildCheck)
+		} else {
+			result.Warnings++
+			result.Checks = append(result.Checks, doctorCheck{
+				Name:    rebuildSanitizerCoverageCheckName,
+				Status:  "warn",
+				Code:    rebuildSanitizerPolicyUnavailableCode,
+				Message: fmt.Sprintf("failed to load %s (%v)", scanProfileSelection.ExtensionPolicyPath, err),
+			})
+		}
+	}
 	var scanPol *scanPolicy
 	if parsedScanPol, err := loadScanPolicy(scanProfileSelection.ScanPolicyPath); err != nil {
 		result.Warnings++

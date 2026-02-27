@@ -44,8 +44,11 @@ func emitScanEventFromSecureScanJSON(command string, targetPath string, scanJSON
 	emitControlPlaneEvent("/v1/events/scan", payload)
 }
 
-func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash string, decision policyDecision) {
+func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash string, decision policyDecision, rebuildProvenance map[string]any) {
 	sha := hashPathSHA256(artifactPath)
+	if rebuildProvenance == nil {
+		rebuildProvenance = map[string]any{}
+	}
 	payload := map[string]any{
 		"event_id":           fmt.Sprintf("evt_art_%d", time.Now().UTC().UnixNano()),
 		"occurred_at":        time.Now().UTC().Format(time.RFC3339Nano),
@@ -61,6 +64,7 @@ func emitArtifactEvent(kind, artifactPath, inputPath, client string, ruleHash st
 		"rule_hash":          ruleHash,
 		"artifact_path":      artifactPath,
 		"policy_decision":    normalizePolicyDecision(decision),
+		"rebuild_provenance": rebuildProvenance,
 	}
 	applyTeamBoundaryMetadata(payload)
 	emitControlPlaneEvent("/v1/events/artifact", payload)

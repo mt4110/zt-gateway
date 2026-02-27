@@ -521,6 +521,43 @@ func TestCollectSetupPreflightChecksWithPolicy_StrictProfileClamAVRequirement(t 
 	}
 }
 
+func TestCollectSetupPreflightChecks_RebuildSanitizerCoverageFail(t *testing.T) {
+	repoRoot := t.TempDir()
+	policyDir := filepath.Join(repoRoot, "policy")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "extension_policy.toml"), []byte(`
+max_size_mb=50
+scan_only_extensions=[".txt"]
+scan_rebuild_extensions=[".jpg",".pdf"]
+deny_extensions=[".exe"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "scan_policy.toml"), []byte(`
+required_scanners=["ClamAV","YARA"]
+require_clamav_db=true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := collectSetupPreflightChecks(repoRoot)
+	c, ok := findSetupCheckByName(got.Checks, rebuildSanitizerCoverageCheckName)
+	if !ok {
+		t.Fatalf("missing check: %s", rebuildSanitizerCoverageCheckName)
+	}
+	if c.Status != "fail" {
+		t.Fatalf("status = %q, want fail", c.Status)
+	}
+	if c.Code != rebuildSanitizerUnsupportedExtsCode {
+		t.Fatalf("code = %q, want %q", c.Code, rebuildSanitizerUnsupportedExtsCode)
+	}
+	if !strings.Contains(c.Message, ".pdf") {
+		t.Fatalf("message = %q, want unsupported extension details", c.Message)
+	}
+}
+
 func TestBuildBreakglassTrustedSignersSetupCheck_NoConfigWarn(t *testing.T) {
 	repoRoot := t.TempDir()
 	check, _ := buildBreakglassTrustedSignersSetupCheck(repoRoot)
