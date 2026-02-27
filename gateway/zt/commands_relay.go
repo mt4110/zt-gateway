@@ -646,7 +646,11 @@ func resolveRelayShareMessage(packetPath, format string) (receiverShareMessage, 
 }
 
 func postWebhookJSON(url string, payload []byte) error {
-	req, err := http.NewRequest(http.MethodPost, strings.TrimSpace(url), bytes.NewReader(payload))
+	parsedURL, err := normalizeWebhookDispatchURL(url)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, parsedURL, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -664,7 +668,7 @@ func postWebhookJSON(url string, payload []byte) error {
 	return nil
 }
 
-func normalizeRelayWebhookURL(channel, raw string) (string, error) {
+func normalizeWebhookDispatchURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("webhook URL is required")
@@ -680,11 +684,41 @@ func normalizeRelayWebhookURL(channel, raw string) (string, error) {
 		return "", fmt.Errorf("webhook URL must not include user info")
 	}
 	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
-	if !relayWebhookHostAllowed(channel, host) {
-		return "", fmt.Errorf("webhook host is not allowed for channel %s", strings.TrimSpace(channel))
+	if !webhookDispatchHostAllowed(host) {
+		return "", fmt.Errorf("webhook host is not allowed")
 	}
 	u.Fragment = ""
 	return u.String(), nil
+}
+
+func webhookDispatchHostAllowed(host string) bool {
+	if host == "" {
+		return false
+	}
+	// Relay commands allow official Slack/Discord webhook domains by default.
+	if relayWebhookHostAllowed("slack", host) || relayWebhookHostAllowed("discord", host) {
+		return true
+	}
+	// Dashboard dispatch can extend allow-list via explicit environment policy.
+	allowHosts := parseDashboardAlertAllowHosts(os.Getenv("ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS"))
+	_, ok := allowHosts[host]
+	return ok
+}
+
+func normalizeRelayWebhookURL(channel, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("webhook URL is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("webhook URL must be absolute HTTPS URL")
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if !relayWebhookHostAllowed(channel, host) {
+		return "", fmt.Errorf("webhook host is not allowed for channel %s", strings.TrimSpace(channel))
+	}
+	return normalizeWebhookDispatchURL(raw)
 }
 
 func relayWebhookHostAllowed(channel, host string) bool {
