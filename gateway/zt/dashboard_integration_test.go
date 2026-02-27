@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +122,60 @@ func TestDispatchDashboardAlerts_FailedPostAudited(t *testing.T) {
 	rec := lastDashboardAlertDispatchAuditRecord(t, repoRoot)
 	if rec.Result != "failed" {
 		t.Fatalf("audit result = %q, want failed", rec.Result)
+	}
+}
+
+func TestV098HandleDashboardAlertDispatchAPI_RemoteBindTokenRequiredAudited(t *testing.T) {
+	repoRoot := setupDashboardAlertDispatchTestEnv(t)
+	t.Setenv("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED", "1")
+	body := bytes.NewBufferString(`{"channel":"webhook","dry_run":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/alerts/dispatch", body)
+	rr := httptest.NewRecorder()
+	handleDashboardAlertDispatchAPI(repoRoot, "0.0.0.0:8787", rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_token_required" {
+		t.Fatalf("error=%q, want dashboard_mutation_token_required", got)
+	}
+	rec := lastDashboardAlertDispatchAuditRecord(t, repoRoot)
+	if rec.Result != "rejected" {
+		t.Fatalf("audit result = %q, want rejected", rec.Result)
+	}
+	if rec.ReasonCode != "dashboard_mutation_token_required" {
+		t.Fatalf("audit reason_code = %q, want dashboard_mutation_token_required", rec.ReasonCode)
+	}
+}
+
+func TestV098HandleDashboardAlertDispatchAPI_RemoteBindTokenMismatchAudited(t *testing.T) {
+	repoRoot := setupDashboardAlertDispatchTestEnv(t)
+	t.Setenv("ZT_DASHBOARD_ALERT_DISPATCH_ENABLED", "1")
+	t.Setenv("ZT_DASHBOARD_MUTATION_TOKEN", "token-1")
+	body := bytes.NewBufferString(`{"channel":"webhook","dry_run":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/alerts/dispatch", body)
+	req.Header.Set(dashboardMutationTokenHdr, "token-2")
+	rr := httptest.NewRecorder()
+	handleDashboardAlertDispatchAPI(repoRoot, "0.0.0.0:8787", rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_auth_failed" {
+		t.Fatalf("error=%q, want dashboard_mutation_auth_failed", got)
+	}
+	rec := lastDashboardAlertDispatchAuditRecord(t, repoRoot)
+	if rec.Result != "rejected" {
+		t.Fatalf("audit result = %q, want rejected", rec.Result)
+	}
+	if rec.ReasonCode != "dashboard_mutation_auth_failed" {
+		t.Fatalf("audit reason_code = %q, want dashboard_mutation_auth_failed", rec.ReasonCode)
 	}
 }
 

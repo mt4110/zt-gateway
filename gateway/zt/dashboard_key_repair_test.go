@@ -118,7 +118,7 @@ values ('key-repair', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPR
 		req := httptest.NewRequest(http.MethodPost, "/api/key-repair/jobs/"+created.Job.JobID+"/transition?tenant_id=tenant-a", bytes.NewReader(raw))
 		req.Header.Set("Content-Type", "application/json")
 		rr := httptest.NewRecorder()
-		handleDashboardKeyRepairJobTransitionAPI(repoRoot, created.Job.JobID, rr, req)
+		handleDashboardKeyRepairJobTransitionAPI(repoRoot, "127.0.0.1:8787", created.Job.JobID, rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("transition %s: status=%d body=%s", state, rr.Code, rr.Body.String())
 		}
@@ -153,5 +153,49 @@ where tenant_id='tenant-a' and action='key_repair_transition' and reason like '%
 	}
 	if transitionCount == 0 {
 		t.Fatalf("transition incidents count=0, want >0")
+	}
+}
+
+func TestV098HandleDashboardKeyRepairJobTransitionAPI_RemoteBindRejectsWithoutToken(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := setupDashboardClientTestLocalSOR(t, repoRoot)
+	t.Setenv("ZT_DASHBOARD_TENANT_ID", "tenant-a")
+
+	mustExecLocalSOR(t, store, `
+insert into local_sor_keys (key_id, tenant_id, client_id, key_purpose, status, fingerprint, created_at, rotated_at, revoked_at, compromise_flag)
+values ('key-repair-auth', 'tenant-a', 'client-a', 'artifact_signing', 'active', 'FPAUTH', '2026-02-27T00:00:00Z', null, null, 0)
+`)
+	job, _, err := store.createKeyRepairJob(
+		"tenant-a",
+		"key-repair-auth",
+		"manual_investigation",
+		"ops-user",
+		"start repair workflow",
+		"",
+		"docs/OPERATIONS.md#kr-001",
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatalf("createKeyRepairJob: %v", err)
+	}
+
+	transitionReq := dashboardKeyRepairTransitionRequest{
+		State:    localSORKeyRepairStateContained,
+		Operator: "ops-user",
+	}
+	raw, _ := json.Marshal(transitionReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/key-repair/jobs/"+job.JobID+"/transition?tenant_id=tenant-a", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handleDashboardKeyRepairJobTransitionAPI(repoRoot, "0.0.0.0:8787", job.JobID, rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v body=%s", err, rr.Body.String())
+	}
+	if got, _ := out["error"].(string); got != "dashboard_mutation_token_required" {
+		t.Fatalf("error=%q, want dashboard_mutation_token_required", got)
 	}
 }

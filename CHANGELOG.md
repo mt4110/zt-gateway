@@ -28,6 +28,8 @@
 - v1 blueprint freeze decisions for receipt ID / audit retention / trust profile thresholds / OS fix priority
 - one-command CI variable bootstrap script (`scripts/dev/bootstrap-ci-root-pin-expected.sh`)
 - v0.9.7 dashboard safety gate (`scripts/ci/check-v097-dashboard-safety-gate.sh`)
+- v0.9.8 design baseline for dashboard mutation fail-closed hardening (`docs/architecture/V0.9.8_DESIGN.md`)
+- v0.9.8 dashboard auth gate (`scripts/ci/check-v098-dashboard-auth-gate.sh`)
 
 ### Changed
 
@@ -35,6 +37,8 @@
 - `zt verify` output format aligned across legacy artifact and packet modes
 - `secure-scan` JSON now includes `rule_hash`
 - `zt dashboard` now emits `danger.signals[].code=dashboard_alert_dispatch_unsafe_config` when external alert dispatch is enabled without webhook allowlist
+- `zt dashboard` mutating APIs now fail-closed on non-loopback bind when `ZT_DASHBOARD_MUTATION_TOKEN` is unset, and require `X-ZT-Dashboard-Token` match when token is configured
+- `/api/alerts/dispatch` auth拒否時の監査イベントに `reason_code`（`dashboard_mutation_token_required` / `dashboard_mutation_auth_failed`）を固定出力
 
 ### Security
 

@@ -4,70 +4,73 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
-echo "[1/23] go test ./gateway/zt"
+echo "[1/24] go test ./gateway/zt"
 go test ./gateway/zt -count=1
 
-echo "[2/23] zt contract gate"
+echo "[2/24] zt contract gate"
 bash ./scripts/ci/check-zt-contract-gate.sh
 
-echo "[3/23] control-plane contract gate"
+echo "[3/24] control-plane contract gate"
 bash ./scripts/ci/check-control-plane-contract-gate.sh
 
-echo "[4/23] dashboard contract gate"
+echo "[4/24] dashboard contract gate"
 bash ./scripts/ci/check-dashboard-contract-gate.sh
 
-echo "[5/23] policy contract gate"
+echo "[5/24] policy contract gate"
 bash ./scripts/ci/check-policy-contract-gate.sh
 
-echo "[6/23] policy rollout gate"
+echo "[6/24] policy rollout gate"
 bash ./scripts/ci/check-policy-rollout-gate.sh
 
-echo "[7/23] policy set gate"
+echo "[7/24] policy set gate"
 bash ./scripts/ci/check-policy-set-gate.sh
 
-echo "[8/23] sync observability gate"
+echo "[8/24] sync observability gate"
 bash ./scripts/ci/check-sync-observability-gate.sh
 
-echo "[9/23] OpenAPI contract gate"
+echo "[9/24] OpenAPI contract gate"
 bash ./scripts/ci/check-openapi-contract-gate.sh
 
-echo "[10/23] v0.7.0 core gate"
+echo "[10/24] v0.7.0 core gate"
 bash ./scripts/ci/check-v070-core-gate.sh
 
-echo "[11/23] v0.8.0 core gate"
+echo "[11/24] v0.8.0 core gate"
 bash ./scripts/ci/check-v080-core-gate.sh
 
-echo "[12/23] v0.9.0 core gate"
+echo "[12/24] v0.9.0 core gate"
 bash ./scripts/ci/check-v090-core-gate.sh
 
-echo "[13/23] v0.9.2 boundary gate"
+echo "[13/24] v0.9.2 boundary gate"
 bash ./scripts/ci/check-v092-boundary-gate.sh
 
-echo "[14/23] v0.9.3 remaining gap gate"
+echo "[14/24] v0.9.3 remaining gap gate"
 bash ./scripts/ci/check-v093-remaining-gap-gate.sh
 
-echo "[15/23] v0.9.4 true-zt gate"
+echo "[15/24] v0.9.4 true-zt gate"
 bash ./scripts/ci/check-v094-true-zt-gate.sh
 
-echo "[16/23] v0.9.7 dashboard safety gate"
+echo "[16/24] v0.9.7 dashboard safety gate"
 bash ./scripts/ci/check-v097-dashboard-safety-gate.sh
 
-echo "[17/23] v1.0 commercial gate"
+echo "[17/24] v0.9.8 dashboard auth gate"
+bash ./scripts/ci/check-v098-dashboard-auth-gate.sh
+
+echo "[18/24] v1.0 commercial gate"
 bash ./scripts/ci/check-v100-commercial-gate.sh
 
-echo "[18/23] v1.1 operations gate"
+echo "[19/24] v1.1 operations gate"
 bash ./scripts/ci/check-v110-operations-gate.sh
 
-echo "[19/23] v1.2 scale/mobile gate"
+echo "[20/24] v1.2 scale/mobile gate"
 bash ./scripts/ci/check-v120-scale-mobile-gate.sh
 
-echo "[20/23] go test ./tools/secure-pack/internal/workflows"
+echo "[21/24] go test ./tools/secure-pack/internal/workflows"
 go test ./tools/secure-pack/internal/workflows -count=1
 
-echo "[21/23] fixture supply-chain gate"
+echo "[22/24] fixture supply-chain gate"
 bash ./scripts/ci/check-zt-setup-json-gate.sh
 
-echo "[22/23] actual repo supply-chain gate"
+echo "[23/24] actual repo supply-chain gate"
 if [[ "${SKIP_ACTUAL_GATE:-0}" == "1" ]]; then
   echo "skipped (SKIP_ACTUAL_GATE=1)"
 else
@@ -90,7 +93,7 @@ else
   bash ./scripts/ci/check-zt-setup-json-actual-gate.sh
 fi
 
-echo "[23/23] git status summary (manual review before commit/push)"
+echo "[24/24] git status summary (manual review before commit/push)"
 git status --short
 
 echo

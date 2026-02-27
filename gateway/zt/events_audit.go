@@ -23,6 +23,7 @@ type auditEventRecord struct {
 	EventType        string          `json:"event_type"`
 	Timestamp        string          `json:"timestamp"`
 	Result           string          `json:"result"`
+	ReasonCode       string          `json:"reason_code,omitempty"`
 	PolicyDecision   *policyDecision `json:"policy_decision,omitempty"`
 	Endpoint         string          `json:"endpoint"`
 	PayloadSHA256    string          `json:"payload_sha256"`
@@ -37,6 +38,7 @@ type auditEventRecord struct {
 type auditPayloadFields struct {
 	EventID        string
 	Result         string
+	ReasonCode     string
 	Command        string
 	PolicyDecision *policyDecision
 }
@@ -155,6 +157,7 @@ func newAuditEventRecord(endpoint string, payloadJSON []byte, now time.Time, pre
 		EventType:      eventType,
 		Timestamp:      now.Format(time.RFC3339Nano),
 		Result:         result,
+		ReasonCode:     strings.TrimSpace(fields.ReasonCode),
 		PolicyDecision: fields.PolicyDecision,
 		Endpoint:       strings.TrimSpace(endpoint),
 		PayloadSHA256:  sha256HexBytes(payloadJSON),
@@ -505,6 +508,7 @@ func parseAuditPayloadFields(payloadJSON []byte) auditPayloadFields {
 	return auditPayloadFields{
 		EventID:        stringFromAnyMap(payload, "event_id"),
 		Result:         stringFromAnyMap(payload, "result"),
+		ReasonCode:     stringFromAnyMap(payload, "reason_code"),
 		Command:        stringFromAnyMap(payload, "command"),
 		PolicyDecision: dec,
 	}

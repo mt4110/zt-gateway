@@ -136,8 +136,9 @@ func runDashboardCommand(repoRoot string, args []string) error {
 	if err != nil {
 		return err
 	}
+	listenAddr := normalizeDashboardListenAddr(opts.Addr)
 	if opts.JSON {
-		s := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+		s := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr)
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(s)
@@ -157,7 +158,7 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		_, _ = w.Write([]byte(dashboardHTML))
 	})
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		s := collectDashboardSnapshot(repoRoot, time.Now().UTC())
+		s := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		enc := json.NewEncoder(w)
@@ -165,132 +166,13 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		_ = enc.Encode(s)
 	})
 	mux.HandleFunc("/api/lock", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req struct {
-			Action string `json:"action"`
-			Reason string `json:"reason"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		action := strings.ToLower(strings.TrimSpace(req.Action))
-		var locked bool
-		switch action {
-		case "lock", "on", "enable":
-			locked = true
-		case "unlock", "off", "disable":
-			locked = false
-		default:
-			http.Error(w, "action must be lock|unlock", http.StatusBadRequest)
-			return
-		}
-		state, err := writeLocalOperationLock(repoRoot, locked, req.Reason, "dashboard", time.Now().UTC())
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to update local lock: %v", err), http.StatusInternalServerError)
-			return
-		}
-		recordAction := "unlock"
-		if state.Locked {
-			recordAction = "lock"
-		}
-		_ = appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
-			Action:    recordAction,
-			Reason:    req.Reason,
-			Actor:     "dashboard",
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
-		out := dashboardLockStatus{
-			Path:       state.Path,
-			Locked:     state.Locked,
-			Reason:     state.Reason,
-			LockedAt:   state.LockedAt,
-			UnlockedAt: state.UnlockedAt,
-			UpdatedAt:  state.UpdatedAt,
-			UpdatedBy:  state.UpdatedBy,
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		handleDashboardLockAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/incident", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req struct {
-			Action     string `json:"action"`
-			Reason     string `json:"reason"`
-			IncidentID string `json:"incident_id"`
-			ApprovedBy string `json:"approved_by"`
-			ExpiresAt  string `json:"expires_at"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		action := strings.ToLower(strings.TrimSpace(req.Action))
-		switch action {
-		case "lock", "unlock", "break_glass_start", "break_glass_end", "break-glass-start", "break-glass-end":
-		default:
-			http.Error(w, "action must be lock|unlock|break_glass_start|break_glass_end", http.StatusBadRequest)
-			return
-		}
-		if strings.HasPrefix(action, "break") && strings.TrimSpace(req.Reason) == "" {
-			http.Error(w, "reason is required for break-glass incident operations", http.StatusBadRequest)
-			return
-		}
-		if err := appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
-			Action:     action,
-			Reason:     req.Reason,
-			IncidentID: req.IncidentID,
-			ApprovedBy: req.ApprovedBy,
-			ExpiresAt:  req.ExpiresAt,
-			Actor:      "dashboard",
-			Timestamp:  time.Now().UTC().Format(time.RFC3339),
-		}); err != nil {
-			http.Error(w, fmt.Sprintf("failed to append incident record: %v", err), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{
-			"ok":           true,
-			"action":       action,
-			"incident_id":  strings.TrimSpace(req.IncidentID),
-			"recorded_at":  time.Now().UTC().Format(time.RFC3339),
-			"audit_path":   dashboardIncidentAuditPath(repoRoot),
-			"next_runbook": "docs/OPERATIONS.md",
-		})
+		handleDashboardIncidentAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/alerts/dispatch", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req dashboardAlertDispatchRequest
-		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		alert := collectDashboardSnapshot(repoRoot, time.Now().UTC()).Alerts
-		out, err := dispatchDashboardAlerts(repoRoot, alert, req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("{\"error\":%q}", strings.TrimSpace(err.Error())), http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		handleDashboardAlertDispatchAPI(repoRoot, listenAddr, w, r)
 	})
 	mux.HandleFunc("/api/clients", func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardClientsAPI(repoRoot, w, r)
@@ -341,7 +223,7 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		parts := strings.Split(rest, "/")
 		jobID := strings.TrimSpace(parts[0])
 		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "transition") {
-			handleDashboardKeyRepairJobTransitionAPI(repoRoot, jobID, w, r)
+			handleDashboardKeyRepairJobTransitionAPI(repoRoot, listenAddr, jobID, w, r)
 			return
 		}
 		handleDashboardKeyRepairJobDetailAPI(repoRoot, jobID, w, r)
@@ -353,18 +235,14 @@ func runDashboardCommand(repoRoot string, args []string) error {
 		handleDashboardSignatureHoldersAPI(repoRoot, w, r)
 	})
 
-	addr := strings.TrimSpace(opts.Addr)
-	if addr == "" {
-		addr = "127.0.0.1:8787"
-	}
-	fmt.Printf("[DASHBOARD] listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	fmt.Printf("[DASHBOARD] listening on http://%s\n", listenAddr)
+	return http.ListenAndServe(listenAddr, mux)
 }
 
 func parseDashboardArgs(args []string) (dashboardOptions, error) {
 	fs := flagSet("dashboard")
 	var opts dashboardOptions
-	fs.StringVar(&opts.Addr, "addr", "127.0.0.1:8787", "Listen address")
+	fs.StringVar(&opts.Addr, "addr", dashboardDefaultListenAddr, "Listen address")
 	fs.BoolVar(&opts.JSON, "json", false, "Emit JSON snapshot instead of serving UI")
 	if err := fs.Parse(args); err != nil {
 		return dashboardOptions{}, err
@@ -375,7 +253,153 @@ func parseDashboardArgs(args []string) (dashboardOptions, error) {
 	return opts, nil
 }
 
+func handleDashboardLockAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		return
+	}
+	defer r.Body.Close()
+	var req struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	var locked bool
+	switch action {
+	case "lock", "on", "enable":
+		locked = true
+	case "unlock", "off", "disable":
+		locked = false
+	default:
+		http.Error(w, "action must be lock|unlock", http.StatusBadRequest)
+		return
+	}
+	state, err := writeLocalOperationLock(repoRoot, locked, req.Reason, "dashboard", time.Now().UTC())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to update local lock: %v", err), http.StatusInternalServerError)
+		return
+	}
+	recordAction := "unlock"
+	if state.Locked {
+		recordAction = "lock"
+	}
+	_ = appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
+		Action:    recordAction,
+		Reason:    req.Reason,
+		Actor:     "dashboard",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	out := dashboardLockStatus{
+		Path:       state.Path,
+		Locked:     state.Locked,
+		Reason:     state.Reason,
+		LockedAt:   state.LockedAt,
+		UnlockedAt: state.UnlockedAt,
+		UpdatedAt:  state.UpdatedAt,
+		UpdatedBy:  state.UpdatedBy,
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+}
+
+func handleDashboardIncidentAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if ok, _ := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		return
+	}
+	defer r.Body.Close()
+	var req struct {
+		Action     string `json:"action"`
+		Reason     string `json:"reason"`
+		IncidentID string `json:"incident_id"`
+		ApprovedBy string `json:"approved_by"`
+		ExpiresAt  string `json:"expires_at"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	switch action {
+	case "lock", "unlock", "break_glass_start", "break_glass_end", "break-glass-start", "break-glass-end":
+	default:
+		http.Error(w, "action must be lock|unlock|break_glass_start|break_glass_end", http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(action, "break") && strings.TrimSpace(req.Reason) == "" {
+		http.Error(w, "reason is required for break-glass incident operations", http.StatusBadRequest)
+		return
+	}
+	if err := appendDashboardIncidentRecord(repoRoot, dashboardIncidentRecord{
+		Action:     action,
+		Reason:     req.Reason,
+		IncidentID: req.IncidentID,
+		ApprovedBy: req.ApprovedBy,
+		ExpiresAt:  req.ExpiresAt,
+		Actor:      "dashboard",
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to append incident record: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(map[string]any{
+		"ok":           true,
+		"action":       action,
+		"incident_id":  strings.TrimSpace(req.IncidentID),
+		"recorded_at":  time.Now().UTC().Format(time.RFC3339),
+		"audit_path":   dashboardIncidentAuditPath(repoRoot),
+		"next_runbook": "docs/OPERATIONS.md",
+	})
+}
+
+func handleDashboardAlertDispatchAPI(repoRoot, listenAddr string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if ok, reason := requireDashboardMutationAuth(w, r, listenAddr); !ok {
+		alert := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr).Alerts
+		_ = appendDashboardAlertDispatchAudit(repoRoot, "rejected", reason, "webhook", "", false, alert)
+		return
+	}
+	defer r.Body.Close()
+	var req dashboardAlertDispatchRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	alert := collectDashboardSnapshotWithListenAddr(repoRoot, time.Now().UTC(), listenAddr).Alerts
+	out, err := dispatchDashboardAlerts(repoRoot, alert, req)
+	if err != nil {
+		writeDashboardClientJSON(w, http.StatusForbidden, map[string]any{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
+}
+
 func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot {
+	return collectDashboardSnapshotWithListenAddr(repoRoot, now, "")
+}
+
+func collectDashboardSnapshotWithListenAddr(repoRoot string, now time.Time, listenAddr string) dashboardSnapshot {
 	root, unlock := collectDashboardRootKeyStatus(repoRoot, now)
 	lock := collectDashboardLockStatus(repoRoot)
 	policy := collectDashboardPolicyStatus(repoRoot, now)
@@ -404,6 +428,7 @@ func collectDashboardSnapshot(repoRoot string, now time.Time) dashboardSnapshot 
 		danger.Count = len(danger.Signals)
 	}
 	applyDashboardExternalDispatchGuardrail(&danger)
+	applyDashboardMutationGuardrail(&danger, listenAddr)
 	kpi := collectDashboardKPIStatus(repoRoot, danger, eventSync, audit, receipts, controlPlane, now)
 	alerts := collectDashboardAlertStatus(danger, eventSync, incidents, kpi, controlPlane)
 	return dashboardSnapshot{
@@ -447,6 +472,27 @@ func applyDashboardExternalDispatchGuardrail(danger *dashboardDangerStatus) {
 		Level:   "high",
 		Code:    "dashboard_alert_dispatch_unsafe_config",
 		Message: "external alert dispatch is enabled but ZT_DASHBOARD_ALERT_WEBHOOK_ALLOW_HOSTS is empty",
+	})
+	danger.Level = "high"
+	danger.Count = len(danger.Signals)
+}
+
+func applyDashboardMutationGuardrail(danger *dashboardDangerStatus, listenAddr string) {
+	if danger == nil {
+		return
+	}
+	if !dashboardRemoteMutationLockActive(listenAddr) {
+		return
+	}
+	for _, sig := range danger.Signals {
+		if strings.EqualFold(strings.TrimSpace(sig.Code), "dashboard_remote_bind_mutation_locked") {
+			return
+		}
+	}
+	danger.Signals = append(danger.Signals, dashboardDangerItem{
+		Level:   "high",
+		Code:    "dashboard_remote_bind_mutation_locked",
+		Message: "dashboard is bound to non-loopback address without ZT_DASHBOARD_MUTATION_TOKEN; mutating APIs are locked",
 	})
 	danger.Level = "high"
 	danger.Count = len(danger.Signals)

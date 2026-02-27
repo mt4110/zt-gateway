@@ -362,6 +362,33 @@ curl -sS -X POST http://127.0.0.1:8787/api/lock \
   -d '{"action":"unlock","reason":"incident closed"}'
 ```
 
+## dashboard mutation API 認可（v0.9.8）
+
+対象 mutation API:
+
+- `/api/lock`
+- `/api/incident`
+- `/api/alerts/dispatch`
+- `/api/key-repair/jobs/<job_id>/transition`
+
+fail-closed 契約:
+
+- 非 loopback bind（例: `--addr 0.0.0.0:8787`）かつ `ZT_DASHBOARD_MUTATION_TOKEN` 未設定時、対象 API は `403` + `dashboard_mutation_token_required`
+- `ZT_DASHBOARD_MUTATION_TOKEN` 設定時、`X-ZT-Dashboard-Token` が一致しない要求は `403` + `dashboard_mutation_auth_failed`
+- `/api/alerts/dispatch` の監査イベントには auth 拒否理由が `reason_code` として記録される
+
+remote bind 運用例:
+
+```bash
+export ZT_DASHBOARD_MUTATION_TOKEN='replace-with-long-random-token'
+go run ./gateway/zt dashboard --addr 0.0.0.0:8787
+
+curl -sS -X POST http://127.0.0.1:8787/api/lock \
+  -H 'content-type: application/json' \
+  -H "X-ZT-Dashboard-Token: ${ZT_DASHBOARD_MUTATION_TOKEN}" \
+  -d '{"action":"lock","reason":"incident triage"}'
+```
+
 送信系の停止確認:
 
 ```bash
@@ -555,6 +582,7 @@ fixtureゲート（ロジック回帰検知）:
 - `scripts/ci/check-zt-setup-json-gate.sh`
 - 固定署名fixtureで `zt setup --json` を実行し、supply-chain 3項目の `ok` を検証
 - policy 契約は `scripts/ci/check-policy-contract-gate.sh` で独立実行（bundle署名 / keyset / activation / decision / policy e2e）
+- dashboard mutation 認可契約は `scripts/ci/check-v098-dashboard-auth-gate.sh` で独立実行
 
 actual repo ゲート（実artifact直検査）:
 
