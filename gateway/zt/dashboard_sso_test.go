@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDashboardSSOProvidersAPI(t *testing.T) {
@@ -114,5 +116,42 @@ func TestDashboardSSOLoginAndCallback(t *testing.T) {
 	}
 	if !strings.Contains(body, `"provider":"google"`) {
 		t.Fatalf("callback body missing provider")
+	}
+}
+
+func TestValidateDashboardIDTokenClaims(t *testing.T) {
+	provider := dashboardSSOProvider{
+		ID:       "google",
+		Issuer:   "https://accounts.google.com",
+		ClientID: "client-a",
+	}
+	state := dashboardSSOState{
+		Nonce: "nonce-a",
+	}
+	claims := map[string]any{
+		"iss":   "https://accounts.google.com",
+		"aud":   "client-a",
+		"nonce": "nonce-a",
+		"exp":   float64(time.Now().UTC().Add(5 * time.Minute).Unix()),
+	}
+	if err := validateDashboardIDTokenClaims(provider, state, claims); err != nil {
+		t.Fatalf("validate claims failed: %v", err)
+	}
+	claims["nonce"] = "nonce-b"
+	if err := validateDashboardIDTokenClaims(provider, state, claims); err == nil {
+		t.Fatalf("nonce mismatch should fail")
+	}
+}
+
+func TestParseDashboardJWTClaims(t *testing.T) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"issuer-a","aud":"client-a"}`))
+	token := header + "." + payload + ".sig"
+	claims, ok := parseDashboardJWTClaims(token)
+	if !ok {
+		t.Fatalf("parse claims failed")
+	}
+	if got := strings.TrimSpace(claimString(claims, "iss")); got != "issuer-a" {
+		t.Fatalf("iss=%q, want issuer-a", got)
 	}
 }

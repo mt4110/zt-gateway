@@ -135,3 +135,13 @@ func TestHandleDashboardSaaSQuotePDFAPI(t *testing.T) {
 		t.Fatalf("body does not look like pdf")
 	}
 }
+
+func TestRecommendSaaSThresholds_OrgTrialReachable(t *testing.T) {
+	sizeMB, files, tier := recommendSaaSThresholds(8, 100)
+	if tier != "org_trial" {
+		t.Fatalf("tier=%q, want org_trial", tier)
+	}
+	if sizeMB != 8 || files != 100 {
+		t.Fatalf("thresholds=%dMB/%d, want 8MB/100", sizeMB, files)
+	}
+}

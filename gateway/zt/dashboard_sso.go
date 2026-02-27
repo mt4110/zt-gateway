@@ -60,6 +60,7 @@ type dashboardSSOProvider struct {
 type dashboardSSOState struct {
 	Provider     string
 	CodeVerifier string
+	Nonce        string
 	RedirectURI  string
 	ExpiresAt    time.Time
 }
@@ -145,6 +146,7 @@ func handleDashboardSSOLoginAPI(w http.ResponseWriter, r *http.Request) {
 	rememberDashboardSSOState(state, dashboardSSOState{
 		Provider:     providerID,
 		CodeVerifier: verifier,
+		Nonce:        nonce,
 		RedirectURI:  redirectURI,
 		ExpiresAt:    time.Now().UTC().Add(dashboardSSOStateTTL),
 	})
@@ -217,15 +219,28 @@ func handleDashboardSSOCallbackAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{
-		"ok":           true,
-		"provider":     providerID,
-		"token_type":   strings.TrimSpace(token.TokenType),
-		"access_token": strings.TrimSpace(token.AccessToken),
-		"id_token":     strings.TrimSpace(token.IDToken),
-		"expires_in":   token.ExpiresIn,
+		"ok":              true,
+		"provider":        providerID,
+		"token_type":      strings.TrimSpace(token.TokenType),
+		"access_token":    strings.TrimSpace(token.AccessToken),
+		"id_token":        strings.TrimSpace(token.IDToken),
+		"expires_in":      token.ExpiresIn,
+		"claims_verified": false,
 	}
 	if claims, ok := parseDashboardJWTClaims(token.IDToken); ok && len(claims) > 0 {
-		out["claims"] = claims
+		if err := validateDashboardIDTokenClaims(provider, ssoState, claims); err != nil {
+			writeDashboardSSOCallbackHTML(w, map[string]any{
+				"ok":       false,
+				"provider": providerID,
+				"error":    "id_token_claim_validation_failed",
+				"detail":   err.Error(),
+			})
+			return
+		}
+		out["claims_unverified"] = claims
+		out["claims_validation"] = "payload_checks_passed_signature_unverified"
+	} else if strings.TrimSpace(token.IDToken) != "" {
+		out["claims_validation"] = "claims_unavailable_signature_unverified"
 	}
 	writeDashboardSSOCallbackHTML(w, out)
 }
@@ -448,6 +463,82 @@ func parseDashboardJWTClaims(token string) (map[string]any, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+func validateDashboardIDTokenClaims(provider dashboardSSOProvider, state dashboardSSOState, claims map[string]any) error {
+	expectedIssuer := strings.TrimSpace(provider.Issuer)
+	if expectedIssuer != "" {
+		if iss := strings.TrimSpace(claimString(claims, "iss")); iss != "" && iss != expectedIssuer {
+			return fmt.Errorf("issuer mismatch: got=%q want=%q", iss, expectedIssuer)
+		}
+	}
+	expectedAud := strings.TrimSpace(provider.ClientID)
+	if expectedAud != "" {
+		if !claimContainsAudience(claims["aud"], expectedAud) {
+			return fmt.Errorf("audience mismatch")
+		}
+	}
+	if nonce := strings.TrimSpace(state.Nonce); nonce != "" {
+		got := strings.TrimSpace(claimString(claims, "nonce"))
+		if got == "" {
+			return fmt.Errorf("nonce missing")
+		}
+		if got != nonce {
+			return fmt.Errorf("nonce mismatch")
+		}
+	}
+	if expUnix, ok := claimUnix(claims["exp"]); ok {
+		if now := time.Now().UTC(); now.After(time.Unix(expUnix, 0).Add(2 * time.Minute)) {
+			return fmt.Errorf("id_token expired")
+		}
+	}
+	return nil
+}
+
+func claimString(claims map[string]any, key string) string {
+	if claims == nil {
+		return ""
+	}
+	raw, ok := claims[key]
+	if !ok {
+		return ""
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+func claimContainsAudience(aud any, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return true
+	}
+	switch v := aud.(type) {
+	case string:
+		return strings.TrimSpace(v) == expected
+	case []any:
+		for _, item := range v {
+			s, ok := item.(string)
+			if ok && strings.TrimSpace(s) == expected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func claimUnix(raw any) (int64, bool) {
+	switch v := raw.(type) {
+	case float64:
+		return int64(v), true
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	}
+	return 0, false
 }
 
 func firstNonEmpty(values ...string) string {

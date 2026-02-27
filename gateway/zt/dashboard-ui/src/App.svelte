@@ -16,6 +16,7 @@
     accessToken: string;
     idToken: string;
     claims: Record<string, unknown>;
+    claimsVerified: boolean;
     expiresIn: number;
     loggedInAt: string;
   };
@@ -185,6 +186,7 @@
       if (!parsed || !parsed.provider) {
         return null;
       }
+      parsed.claimsVerified = Boolean(parsed.claimsVerified);
       return parsed;
     } catch {
       return null;
@@ -193,10 +195,13 @@
 
   function persistSession(session: SSOSession | null): void {
     if (!session) {
+      sessionStorage.removeItem(SSO_SESSION_KEY);
       localStorage.removeItem(SSO_SESSION_KEY);
       return;
     }
-    localStorage.setItem(SSO_SESSION_KEY, JSON.stringify(session));
+    sessionStorage.setItem(SSO_SESSION_KEY, JSON.stringify(session));
+    // Backward-compat cleanup: older builds stored tokens in localStorage.
+    localStorage.removeItem(SSO_SESSION_KEY);
   }
 
   async function fetchProviders(): Promise<void> {
@@ -265,7 +270,7 @@
     anchor.href = url;
     anchor.download = name;
     anchor.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   function exportEvidenceJSON(): void {
@@ -335,12 +340,16 @@
     return headers;
   }
 
-  async function runMutation(path: string, body: Record<string, unknown>): Promise<void> {
-    if (!tenantID.trim()) {
+  async function runMutation(path: string, body: Record<string, unknown>, requireTenant = true): Promise<void> {
+    if (requireTenant && !tenantID.trim()) {
       showToast('tenant_id is required');
       return;
     }
-    const url = path.includes('?') ? `${path}&tenant_id=${encodeURIComponent(tenantID)}` : `${path}?tenant_id=${encodeURIComponent(tenantID)}`;
+    const url = requireTenant
+      ? path.includes('?')
+        ? `${path}&tenant_id=${encodeURIComponent(tenantID)}`
+        : `${path}?tenant_id=${encodeURIComponent(tenantID)}`
+      : path;
     const res = await fetch(url, {
       method: 'POST',
       headers: mutationHeaders(),
@@ -358,11 +367,11 @@
   }
 
   async function submitLock(action: 'lock' | 'unlock'): Promise<void> {
-    await runMutation('/api/lock', { action, reason: lockReason.trim() });
+    await runMutation('/api/lock', { action, reason: lockReason.trim() }, false);
   }
 
   async function submitIncident(): Promise<void> {
-    await runMutation('/api/incident', { action: incidentAction, reason: incidentReason.trim() });
+    await runMutation('/api/incident', { action: incidentAction, reason: incidentReason.trim() }, false);
   }
 
   async function submitKeyStatus(): Promise<void> {
@@ -503,7 +512,11 @@
       tokenType: String(payload.token_type ?? 'Bearer'),
       accessToken: String(payload.access_token ?? ''),
       idToken: String(payload.id_token ?? ''),
-      claims: (payload.claims as Record<string, unknown>) ?? {},
+      claims:
+        ((payload.claims_unverified as Record<string, unknown>) ??
+          (payload.claims as Record<string, unknown>) ??
+          {}),
+      claimsVerified: Boolean(payload.claims_verified ?? false),
       expiresIn: Number(payload.expires_in ?? 0),
       loggedInAt: new Date().toISOString()
     };
@@ -513,7 +526,12 @@
   }
 
   onMount(async () => {
-    ssoSession = parseStoredSession(localStorage.getItem(SSO_SESSION_KEY));
+    ssoSession =
+      parseStoredSession(sessionStorage.getItem(SSO_SESSION_KEY)) ??
+      parseStoredSession(localStorage.getItem(SSO_SESSION_KEY));
+    if (ssoSession) {
+      persistSession(ssoSession);
+    }
     window.addEventListener('message', onSSOResult);
 
     await Promise.all([fetchProviders(), refreshSnapshot(true), fetchSaaSConfig(), fetchSaaSEconomics()]);
@@ -606,6 +624,7 @@
         <code>{ssoSession.tokenType} {ssoSession.accessToken ? `${ssoSession.accessToken.slice(0, 16)}...` : '(id_token only)'}</code>
         <button class="menu-btn" on:click={clearSession}>Sign out</button>
       </div>
+      <p class="muted">OIDC claims: {ssoSession.claimsVerified ? 'verified' : 'unverified'}</p>
     </section>
   {/if}
 

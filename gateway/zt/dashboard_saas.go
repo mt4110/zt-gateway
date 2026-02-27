@@ -467,10 +467,10 @@ func clampFloat(v, minV, maxV float64) float64 {
 
 func recommendSaaSThresholds(avgFileMB float64, filesPerMonth int) (int, int, string) {
 	switch {
-	case avgFileMB <= 16 && filesPerMonth <= 500:
-		return 16, 500, "personal_free"
 	case avgFileMB <= 8 && filesPerMonth <= 100:
 		return 8, 100, "org_trial"
+	case avgFileMB <= 16 && filesPerMonth <= 500:
+		return 16, 500, "personal_free"
 	case avgFileMB <= 256 && filesPerMonth <= 120000:
 		return 256, 120000, "growth"
 	default:
@@ -496,7 +496,7 @@ func buildSinglePagePDF(lines []string) []byte {
 			stream.WriteString("0 -14 Td\n")
 		}
 		stream.WriteString("(")
-		stream.WriteString(escapeSaaSPDFText(line))
+		stream.WriteString(escapeSaaSPDFText(sanitizeSaaSPDFText(line)))
 		stream.WriteString(") Tj\n")
 	}
 	stream.WriteString("ET\n")
@@ -534,4 +534,21 @@ func escapeSaaSPDFText(s string) string {
 		")", "\\)",
 	)
 	return replacer.Replace(s)
+}
+
+func sanitizeSaaSPDFText(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= 32 && r <= 126 {
+			b.WriteRune(r)
+			continue
+		}
+		// This minimalist PDF builder uses Type1 Helvetica and ASCII only.
+		b.WriteByte('?')
+	}
+	return b.String()
 }

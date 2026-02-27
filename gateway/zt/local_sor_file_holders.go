@@ -27,6 +27,8 @@ type localSORFileHolderTimelinePoint struct {
 	ExchangeCount int    `json:"exchange_count"`
 }
 
+const localSORMaxTimelineWindowDays = 400
+
 func (s *localSORStore) listFileHolders(tenantID, q, sortBy string, limit, offset int, exportAll bool) ([]localSORFileHolderRecord, int, error) {
 	if s == nil || s.db == nil {
 		return nil, 0, fmt.Errorf("local sor is not initialized")
@@ -167,8 +169,8 @@ func (s *localSORStore) fileHolderTimeline(tenantID, contentSHA256 string, windo
 	if windowDays <= 0 {
 		windowDays = 30
 	}
-	if windowDays > 400 {
-		windowDays = 400
+	if windowDays > localSORMaxTimelineWindowDays {
+		windowDays = localSORMaxTimelineWindowDays
 	}
 
 	type holderInterval struct {
@@ -245,17 +247,45 @@ group by bucket_day
 		return nil, err
 	}
 
-	out := make([]localSORFileHolderTimelinePoint, 0, windowDays)
+	// Use fixed-size working buffers so allocation does not scale with arbitrary input.
+	deltaByDay := make([]int, localSORMaxTimelineWindowDays+1)
+	for _, iv := range intervals {
+		if iv.lastSeen.Before(start) {
+			continue
+		}
+		startIdx := 0
+		if iv.firstSeen.After(start) {
+			startIdx = int(iv.firstSeen.Sub(start) / (24 * time.Hour))
+		}
+		endIdx := windowDays - 1
+		if iv.lastSeen.Before(start.Add(time.Duration(windowDays) * 24 * time.Hour)) {
+			endIdx = int(iv.lastSeen.Sub(start) / (24 * time.Hour))
+		}
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		if startIdx >= windowDays {
+			continue
+		}
+		if endIdx < 0 {
+			continue
+		}
+		if endIdx >= windowDays {
+			endIdx = windowDays - 1
+		}
+		if endIdx < startIdx {
+			continue
+		}
+		deltaByDay[startIdx]++
+		deltaByDay[endIdx+1]--
+	}
+
+	out := make([]localSORFileHolderTimelinePoint, 0, localSORMaxTimelineWindowDays)
 	prev := 0
+	count := 0
 	for i := 0; i < windowDays; i++ {
 		dayStart := start.AddDate(0, 0, i)
-		dayEndExclusive := dayStart.Add(24 * time.Hour)
-		count := 0
-		for _, iv := range intervals {
-			if iv.firstSeen.Before(dayEndExclusive) && !iv.lastSeen.Before(dayStart) {
-				count++
-			}
-		}
+		count += deltaByDay[i]
 		delta := count - prev
 		point := localSORFileHolderTimelinePoint{
 			BucketStart:   dayStart.Format(time.RFC3339),
