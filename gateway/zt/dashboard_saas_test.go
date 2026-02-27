@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,6 +80,31 @@ func TestHandleDashboardSaaSEconomicsAPI_PersonalTrialApplied(t *testing.T) {
 	}
 }
 
+func TestHandleDashboardSaaSEconomicsAPI_DataOverageWithZeroBillableFiles(t *testing.T) {
+	t.Setenv(dashboardSaaSTrialEnabledEnv, "1")
+	t.Setenv(dashboardSaaSTrialFilesPerUserEnv, "500")
+	t.Setenv(dashboardSaaSTrialDataGBPerUserEnv, "5")
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/economics?files_per_month=500&active_users=10&trial_users=1&avg_file_mb=20&retention_days=30", nil)
+	rr := httptest.NewRecorder()
+	handleDashboardSaaSEconomicsAPI(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var out dashboardSaaSEconomics
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if out.BillableFiles != 0 {
+		t.Fatalf("billable_files=%d, want 0", out.BillableFiles)
+	}
+	if out.BillableDataGB <= 0 {
+		t.Fatalf("billable_data_gb=%f, want >0", out.BillableDataGB)
+	}
+	if out.RecommendedMonthlyUSD <= 0 {
+		t.Fatalf("recommended_monthly_minimum_usd=%f, want >0", out.RecommendedMonthlyUSD)
+	}
+}
+
 func TestHandleDashboardSaaSStripePriceAPI(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/saas/stripe-price?files_per_month=12000&avg_file_mb=10&retention_days=30", nil)
 	rr := httptest.NewRecorder()
@@ -95,6 +121,12 @@ func TestHandleDashboardSaaSStripePriceAPI(t *testing.T) {
 	}
 	if out.GrossUnitPriceUSD <= 0 {
 		t.Fatalf("gross_unit_price_usd=%f, want >0", out.GrossUnitPriceUSD)
+	}
+	if out.BillableFiles > 0 {
+		wantGross := math.Round(out.GrossUnitPriceUSD*float64(out.BillableFiles)*100) / 100
+		if out.GrossChargeUSD != wantGross {
+			t.Fatalf("gross_charge_usd=%f, want %f based on rounded unit", out.GrossChargeUSD, wantGross)
+		}
 	}
 }
 
@@ -117,6 +149,31 @@ func TestHandleDashboardSaaSStripePriceAPI_TrialZeroCharge(t *testing.T) {
 	}
 	if out.GrossUnitPriceUSD != 0 {
 		t.Fatalf("gross_unit_price_usd=%f, want 0", out.GrossUnitPriceUSD)
+	}
+}
+
+func TestHandleDashboardSaaSStripePriceAPI_DataOverageChargeWithoutBillableFiles(t *testing.T) {
+	t.Setenv(dashboardSaaSTrialEnabledEnv, "1")
+	t.Setenv(dashboardSaaSTrialFilesPerUserEnv, "500")
+	t.Setenv(dashboardSaaSTrialDataGBPerUserEnv, "5")
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/stripe-price?files_per_month=500&active_users=10&trial_users=1&avg_file_mb=20&retention_days=30", nil)
+	rr := httptest.NewRecorder()
+	handleDashboardSaaSStripePriceAPI(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var out dashboardStripePriceResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if out.BillableFiles != 0 {
+		t.Fatalf("billable_files=%d, want 0", out.BillableFiles)
+	}
+	if out.GrossChargeUSD <= 0 {
+		t.Fatalf("gross_charge_usd=%f, want >0", out.GrossChargeUSD)
+	}
+	if out.GrossUnitPriceUSD != 0 {
+		t.Fatalf("gross_unit_price_usd=%f, want 0 when billable_files=0", out.GrossUnitPriceUSD)
 	}
 }
 

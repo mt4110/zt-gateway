@@ -35,7 +35,7 @@ legacy_targets=(
   "tools/secure-pack/README.md"
   "tools/secure-pack/README_EN.md"
 )
-legacy_command_pattern='(zt verify[^\n]*(\./artifact\.zp|<artifact\.zp>)|secure-pack (receive|verify)[^\n]*(\./artifact\.zp|<artifact\.zp>))'
+legacy_command_pattern='(zt verify.*(\./artifact\.zp|<artifact\.zp>)|secure-pack (receive|verify).*(\./artifact\.zp|<artifact\.zp>))'
 if search_pattern "${legacy_command_pattern}" "${legacy_targets[@]}" >/dev/null; then
   echo "found legacy artifact.zp command usage in operational docs" >&2
   search_pattern "${legacy_command_pattern}" "${legacy_targets[@]}" >&2

@@ -221,10 +221,10 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 	billableFiles := filesPerMonth
 	billableDataGB := monthlySignedGB
 	trialApplied := false
-	trialAllowanceFiles := maxInt(cfg.TrialFilesPerUser*trialUsers, 0)
+	trialAllowanceFiles := maxDashboardInt(cfg.TrialFilesPerUser*trialUsers, 0)
 	trialAllowanceDataGB := math.Max(cfg.TrialDataGBPerUser*float64(trialUsers), 0)
 	if cfg.TrialEnabled && trialUsers > 0 {
-		billableFiles = maxInt(filesPerMonth-trialAllowanceFiles, 0)
+		billableFiles = maxDashboardInt(filesPerMonth-trialAllowanceFiles, 0)
 		billableDataGB = math.Max(monthlySignedGB-trialAllowanceDataGB, 0)
 		trialApplied = billableFiles < filesPerMonth || billableDataGB < monthlySignedGB
 	}
@@ -245,8 +245,11 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 		unitPrice = math.Max(cfg.PriceFloorUSD, recommendedRevenue/float64(billableFiles))
 	}
 	recommendedMonthly := 0.0
+	if billableFiles > 0 || billableDataGB > 0 {
+		recommendedMonthly = recommendedRevenue
+	}
 	if billableFiles > 0 {
-		recommendedMonthly = math.Max(recommendedRevenue, unitPrice*float64(maxInt(cfg.IncludedFiles-trialAllowanceFiles, 1)))
+		recommendedMonthly = math.Max(recommendedMonthly, unitPrice*float64(maxDashboardInt(cfg.IncludedFiles-trialAllowanceFiles, 1)))
 	}
 
 	variablePerFile := 0.0
@@ -313,7 +316,7 @@ func computeDashboardStripePrice(cfg dashboardSaaSConfig, eco dashboardSaaSEcono
 	if netRevenue < 0 {
 		netRevenue = 0
 	}
-	if eco.BillableFiles <= 0 || netRevenue <= 0 {
+	if netRevenue <= 0 || (eco.BillableFiles <= 0 && eco.BillableDataGB <= 0) {
 		return dashboardStripePriceResponse{
 			Currency:                 cfg.Currency,
 			NetRecommendedRevenueUSD: 0,
@@ -333,8 +336,12 @@ func computeDashboardStripePrice(cfg dashboardSaaSConfig, eco dashboardSaaSEcono
 	grossCharge = round2(grossCharge)
 	stripeFee := round2(grossCharge*stripeRate + stripeFixed)
 	unit := 0.0
-	unit = grossCharge / float64(eco.BillableFiles)
-	unit = roundUpToUnit(unit, cfg.StripeRoundUnit)
+	if eco.BillableFiles > 0 {
+		unit = grossCharge / float64(eco.BillableFiles)
+		unit = roundUpToUnit(unit, cfg.StripeRoundUnit)
+		grossCharge = round2(unit * float64(eco.BillableFiles))
+		stripeFee = round2(grossCharge*stripeRate + stripeFixed)
+	}
 
 	return dashboardStripePriceResponse{
 		Currency:                 cfg.Currency,
@@ -484,6 +491,13 @@ func roundUpToUnit(v, unit float64) float64 {
 		return v
 	}
 	return math.Ceil(v/unit) * unit
+}
+
+func maxDashboardInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func buildSinglePagePDF(lines []string) []byte {
