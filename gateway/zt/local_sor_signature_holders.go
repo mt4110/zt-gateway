@@ -95,6 +95,7 @@ func (s *localSORStore) listSignatureHolders(tenantID, q, sortBy string, limit, 
 	if q != "" {
 		like = "%" + q + "%"
 	}
+	limit, offset = normalizeLocalSORPaging(limit, offset, exportAll)
 
 	var total int
 	if err := s.db.QueryRow(`
@@ -149,7 +150,7 @@ order by ` + orderBy + `
 	}
 	defer rows.Close()
 
-	items := make([]localSORSignatureHolderRecord, 0, limit)
+	items := make([]localSORSignatureHolderRecord, 0)
 	now := time.Now().UTC()
 	slo := resolveSignatureHolderRealtimeSLOSeconds()
 	for rows.Next() {
@@ -191,6 +192,7 @@ func (s *localSORStore) listClientSignatureHolders(tenantID, clientID, q, sortBy
 	if q != "" {
 		like = "%" + q + "%"
 	}
+	limit, offset = normalizeLocalSORPaging(limit, offset, exportAll)
 
 	var total int
 	if err := s.db.QueryRow(`
@@ -268,7 +270,7 @@ order by ` + orderBy + `
 	}
 	defer rows.Close()
 
-	items := make([]localSORSignatureHolderRecord, 0, limit)
+	items := make([]localSORSignatureHolderRecord, 0)
 	now := time.Now().UTC()
 	slo := resolveSignatureHolderRealtimeSLOSeconds()
 	for rows.Next() {

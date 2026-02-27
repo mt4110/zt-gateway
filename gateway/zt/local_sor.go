@@ -19,6 +19,8 @@ const (
 	localSORDBPathEnv          = "ZT_LOCAL_SOR_DB_PATH"
 	localSORAllowPlaintextEnv  = "ZT_LOCAL_SOR_ALLOW_PLAINTEXT_DEV"
 	localSORDefaultDBPath      = ".zt-spool/local-sor.db"
+	localSORDefaultPageSize    = 20
+	localSORMaxPageSize        = 200
 	localSORMetaSchemaVersion  = "schema_version"
 	localSORMetaEncryptionMode = "encryption_mode"
 	localSORMetaKeyID          = "encryption_key_id"
@@ -279,6 +281,19 @@ func validateLocalSORTenantID(tenantID string) error {
 		return fmt.Errorf("tenant_id is required")
 	}
 	return nil
+}
+
+func normalizeLocalSORPaging(limit, offset int, exportAll bool) (normalizedLimit, normalizedOffset int) {
+	if limit <= 0 {
+		limit = localSORDefaultPageSize
+	}
+	if limit > localSORMaxPageSize {
+		limit = localSORMaxPageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func closeLocalSOR() {

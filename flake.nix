@@ -15,7 +15,7 @@
             pname = "zt-bin";
             version = "0.1.0";
             src = ./gateway/zt;
-            vendorHash = null;
+            vendorHash = "sha256-dsmRXd5moOA08U2Hbi9Z3Hy1inZFiDOD9AMS56uk+8g=";
             env.GOWORK = "off";
             doCheck = false;
         };

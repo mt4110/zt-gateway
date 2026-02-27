@@ -212,6 +212,7 @@ func (s *localSORStore) listKeys(tenantID, q, status, sortBy string, limit, offs
 	if q != "" {
 		like = "%" + q + "%"
 	}
+	limit, offset = normalizeLocalSORPaging(limit, offset, exportAll)
 
 	var total int
 	if err := s.db.QueryRow(`
@@ -263,7 +264,7 @@ order by ` + orderBy + `
 	}
 	defer rows.Close()
 
-	items := make([]localSORKeyRecord, 0, limit)
+	items := make([]localSORKeyRecord, 0)
 	for rows.Next() {
 		item, err := scanLocalSORKeyRecord(rows.Scan)
 		if err != nil {

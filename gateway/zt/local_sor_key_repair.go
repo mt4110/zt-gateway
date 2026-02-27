@@ -440,6 +440,7 @@ func (s *localSORStore) listKeyRepairJobs(tenantID, keyID, q, state, sortBy stri
 	if q != "" {
 		like = "%" + q + "%"
 	}
+	limit, offset = normalizeLocalSORPaging(limit, offset, exportAll)
 
 	var total int
 	if err := s.db.QueryRow(`
@@ -486,7 +487,7 @@ order by ` + orderBy + `
 	}
 	defer rows.Close()
 
-	items := make([]localSORKeyRepairJob, 0, limit)
+	items := make([]localSORKeyRepairJob, 0)
 	for rows.Next() {
 		item, err := scanLocalSORKeyRepairJob(rows.Scan)
 		if err != nil {

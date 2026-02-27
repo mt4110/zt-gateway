@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+const (
+	dashboardActivityDefaultPageSize = 20
+	dashboardActivityMaxPageSize     = 200
+)
+
 func (s *server) handleDashboardActivity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
@@ -47,19 +52,20 @@ func (s *server) handleDashboardActivity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	pageSize := 20
-	if v, ok, err := parsePositiveIntQuery(r, "page_size", 200); err != nil {
+	pageSize := dashboardActivityDefaultPageSize
+	if v, ok, err := parsePositiveIntQuery(r, "page_size", dashboardActivityMaxPageSize); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_page_size"})
 		return
 	} else if ok {
 		pageSize = v
 	}
-	if v, ok, err := parsePositiveIntQuery(r, "limit", 200); err != nil {
+	if v, ok, err := parsePositiveIntQuery(r, "limit", dashboardActivityMaxPageSize); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_limit"})
 		return
 	} else if ok {
 		pageSize = v
 	}
+	pageSize = normalizeDashboardActivityPageSize(pageSize)
 	page := 1
 	if v, ok, err := parsePositiveIntQuery(r, "page", 50000); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_page"})
@@ -159,7 +165,7 @@ select ingest_id, kind, coalesce(event_id,''), coalesce(envelope_tenant_id,''), 
 	}
 	defer rows.Close()
 
-	recent := make([]recentRow, 0, pageSize)
+	recent := make([]recentRow, 0)
 	tenantLeakDropped := 0
 	for rows.Next() {
 		var rr recentRow
@@ -272,4 +278,14 @@ select ingest_id, kind, coalesce(event_id,''), coalesce(envelope_tenant_id,''), 
 			"dropped_leak_rows":    tenantLeakDropped,
 		},
 	})
+}
+
+func normalizeDashboardActivityPageSize(pageSize int) int {
+	if pageSize <= 0 {
+		return dashboardActivityDefaultPageSize
+	}
+	if pageSize > dashboardActivityMaxPageSize {
+		return dashboardActivityMaxPageSize
+	}
+	return pageSize
 }

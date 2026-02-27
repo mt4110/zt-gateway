@@ -154,6 +154,7 @@ func (s *localSORStore) listClients(tenantID, q, sortBy string, limit, offset in
 	if q != "" {
 		like = "%" + q + "%"
 	}
+	limit, offset = normalizeLocalSORPaging(limit, offset, exportAll)
 
 	var total int
 	if err := s.db.QueryRow(`
@@ -212,7 +213,7 @@ order by ` + orderBy + `
 	}
 	defer rows.Close()
 
-	items := make([]localSORClientSummary, 0, limit)
+	items := make([]localSORClientSummary, 0)
 	for rows.Next() {
 		var item localSORClientSummary
 		if err := rows.Scan(
@@ -300,6 +301,7 @@ func (s *localSORStore) listClientAssets(tenantID, clientID, q, sortBy string, l
 	if q != "" {
 		like = "%" + q + "%"
 	}
+	limit, offset = normalizeLocalSORPaging(limit, offset, exportAll)
 
 	var total int
 	if err := s.db.QueryRow(`
@@ -335,7 +337,7 @@ order by ` + orderBy + `
 	}
 	defer rows.Close()
 
-	items := make([]localSORAssetRecord, 0, limit)
+	items := make([]localSORAssetRecord, 0)
 	for rows.Next() {
 		var item localSORAssetRecord
 		if err := rows.Scan(
