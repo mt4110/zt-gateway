@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -69,19 +70,19 @@ func (s *server) collectControlPlaneHAStatus(ctx context.Context, now time.Time)
 		return out
 	}
 
-	var latest sql.NullTime
-	if err := s.db.QueryRowContext(ctx, `select max(received_at) from event_ingest`).Scan(&latest); err != nil {
+	var latest time.Time
+	if err := s.db.QueryRowContext(ctx, `select received_at from event_ingest order by received_at desc limit 1`).Scan(&latest); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			out.Notes = "ha_measurement_no_data"
+			return out
+		}
 		out.Notes = "ha_measurement_failed"
 		return out
 	}
-	if !latest.Valid {
-		out.Notes = "ha_measurement_no_data"
-		return out
+	out.RPOMeasuredSeconds = int64(now.Sub(latest.UTC()).Seconds())
+	if out.RPOMeasuredSeconds < 0 {
+		out.RPOMeasuredSeconds = 0
 	}
-	out.MeasurementReady = true
-	out.MeasurementSource = "event_ingest"
-	out.MeasuredAt = now.Format(time.RFC3339)
-	out.RPOMeasuredSeconds = int64(now.Sub(latest.Time.UTC()).Seconds())
 
 	var maxGapSec sql.NullFloat64
 	if err := s.db.QueryRowContext(ctx, `
@@ -92,11 +93,18 @@ from (
   where received_at >= $1
 ) g
 where gap is not null
-`, now.Add(-24*time.Hour)).Scan(&maxGapSec); err == nil && maxGapSec.Valid && maxGapSec.Float64 >= 0 {
-		out.RTOMeasuredSeconds = int64(maxGapSec.Float64)
-	} else {
-		out.RTOMeasuredSeconds = 0
+`, now.Add(-24*time.Hour)).Scan(&maxGapSec); err != nil {
+		out.Notes = "ha_measurement_rto_failed"
+		return out
 	}
+	if !maxGapSec.Valid || maxGapSec.Float64 < 0 {
+		out.Notes = "ha_measurement_rto_invalid"
+		return out
+	}
+	out.RTOMeasuredSeconds = int64(maxGapSec.Float64)
+	out.MeasurementReady = true
+	out.MeasurementSource = "event_ingest"
+	out.MeasuredAt = now.Format(time.RFC3339)
 	out.RPOMet = out.RPOMeasuredSeconds <= out.RPOObjectiveSeconds
 	out.RTOMet = out.RTOMeasuredSeconds <= out.RTOObjectiveSeconds
 	return out

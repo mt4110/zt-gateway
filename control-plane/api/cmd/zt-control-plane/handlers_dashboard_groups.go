@@ -129,7 +129,7 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 	}
 	grouped := make([]groupItem, 0)
 	var total int64
-	tenantLeakDropped := 0
+	var tenantLeakDropped int64
 	for rows.Next() {
 		var key string
 		var count int64
@@ -138,7 +138,7 @@ func (s *server) handleDashboardActivityGroups(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if groupBy == "tenant" && tenantID != "" && strings.TrimSpace(key) != "" && strings.TrimSpace(key) != tenantID {
-			tenantLeakDropped += int(count)
+			tenantLeakDropped += count
 			continue
 		}
 		total += count

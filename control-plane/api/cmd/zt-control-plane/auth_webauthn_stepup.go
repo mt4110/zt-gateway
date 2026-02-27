@@ -70,6 +70,7 @@ type controlPlaneWebAuthnState struct {
 
 type controlPlaneWebAuthnUser struct {
 	Subject     string                   `json:"subject"`
+	Issuer      string                   `json:"issuer,omitempty"`
 	TenantID    string                   `json:"tenant_id,omitempty"`
 	DisplayName string                   `json:"display_name,omitempty"`
 	Credentials []webauthnlib.Credential `json:"credentials"`
@@ -78,6 +79,7 @@ type controlPlaneWebAuthnUser struct {
 type controlPlaneWebAuthnSession struct {
 	ID        string
 	Kind      string
+	Issuer    string
 	Subject   string
 	TenantID  string
 	ExpiresAt time.Time
@@ -86,6 +88,7 @@ type controlPlaneWebAuthnSession struct {
 
 type controlPlaneWebAuthnStepUpToken struct {
 	Token     string
+	Issuer    string
 	Subject   string
 	TenantID  string
 	ExpiresAt time.Time
@@ -339,7 +342,7 @@ func decodeJSONBodyLimit(r *http.Request, out any, max int64) error {
 }
 
 func (m *controlPlaneStepUpManager) beginAttestation(authCtx controlPlaneAuthContext, displayName string) (map[string]any, error) {
-	user := m.ensureUser(authCtx.Subject, authCtx.TenantID, displayName)
+	user := m.ensureUser(authCtx.Subject, authCtx.TenantID, authCtx.Issuer, displayName)
 	creation, session, err := m.wa.BeginRegistration(
 		user,
 		webauthnlib.WithAuthenticatorSelection(
@@ -360,6 +363,7 @@ func (m *controlPlaneStepUpManager) beginAttestation(authCtx controlPlaneAuthCon
 	m.sessions[sessionID] = controlPlaneWebAuthnSession{
 		ID:        sessionID,
 		Kind:      "attestation",
+		Issuer:    authCtx.Issuer,
 		Subject:   authCtx.Subject,
 		TenantID:  authCtx.TenantID,
 		ExpiresAt: expiresAt,
@@ -388,7 +392,7 @@ func (m *controlPlaneStepUpManager) verifyAttestation(authCtx controlPlaneAuthCo
 	if err != nil || cred == nil {
 		return nil, fmt.Errorf("invalid_webauthn_attestation")
 	}
-	if err := m.upsertCredential(user.Subject, *cred); err != nil {
+	if err := m.upsertCredential(user.Subject, user.TenantID, user.Issuer, *cred); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -399,7 +403,7 @@ func (m *controlPlaneStepUpManager) verifyAttestation(authCtx controlPlaneAuthCo
 }
 
 func (m *controlPlaneStepUpManager) beginAssertion(authCtx controlPlaneAuthContext) (map[string]any, error) {
-	user := m.getUser(authCtx.Subject)
+	user := m.getUser(authCtx.Subject, authCtx.TenantID, authCtx.Issuer)
 	if user == nil || len(user.Credentials) == 0 {
 		return nil, fmt.Errorf("webauthn_credential_not_registered")
 	}
@@ -421,6 +425,7 @@ func (m *controlPlaneStepUpManager) beginAssertion(authCtx controlPlaneAuthConte
 	m.sessions[sessionID] = controlPlaneWebAuthnSession{
 		ID:        sessionID,
 		Kind:      "assertion",
+		Issuer:    authCtx.Issuer,
 		Subject:   authCtx.Subject,
 		TenantID:  authCtx.TenantID,
 		ExpiresAt: expiresAt,
@@ -449,10 +454,10 @@ func (m *controlPlaneStepUpManager) verifyAssertion(authCtx controlPlaneAuthCont
 	if err != nil || cred == nil {
 		return nil, fmt.Errorf("invalid_webauthn_assertion")
 	}
-	if err := m.upsertCredential(user.Subject, *cred); err != nil {
+	if err := m.upsertCredential(user.Subject, user.TenantID, user.Issuer, *cred); err != nil {
 		return nil, err
 	}
-	token, expiresAt, err := m.issueStepUpToken(authCtx.Subject, authCtx.TenantID)
+	token, expiresAt, err := m.issueStepUpToken(authCtx.Subject, authCtx.TenantID, authCtx.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("webauthn_step_up_issue_failed")
 	}
@@ -494,6 +499,10 @@ func (m *controlPlaneStepUpManager) validateAdminMutationStepUp(r *http.Request,
 		delete(m.stepUpTokens, token)
 		return &controlPlaneAuthError{Status: http.StatusForbidden, Code: "mfa_step_up_subject_mismatch"}
 	}
+	if strings.TrimSpace(grant.Issuer) != "" && strings.TrimSpace(authCtx.Issuer) != "" && strings.TrimSpace(grant.Issuer) != strings.TrimSpace(authCtx.Issuer) {
+		delete(m.stepUpTokens, token)
+		return &controlPlaneAuthError{Status: http.StatusForbidden, Code: "mfa_step_up_issuer_mismatch"}
+	}
 	if strings.TrimSpace(grant.TenantID) != "" && strings.TrimSpace(authCtx.TenantID) != "" && strings.TrimSpace(grant.TenantID) != strings.TrimSpace(authCtx.TenantID) {
 		delete(m.stepUpTokens, token)
 		return &controlPlaneAuthError{Status: http.StatusForbidden, Code: "mfa_step_up_tenant_mismatch"}
@@ -532,24 +541,32 @@ func (m *controlPlaneStepUpManager) hasFreshStepUpClaim(authCtx controlPlaneAuth
 	return now.Sub(authCtx.AuthTime) <= m.cfg.MaxClaimAge
 }
 
-func (m *controlPlaneStepUpManager) ensureUser(subject, tenantID, displayName string) *controlPlaneWebAuthnUser {
+func (m *controlPlaneStepUpManager) ensureUser(subject, tenantID, issuer, displayName string) *controlPlaneWebAuthnUser {
+	subject = strings.TrimSpace(subject)
+	tenantID = strings.TrimSpace(tenantID)
+	issuer = strings.TrimSpace(issuer)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	user := m.users[strings.TrimSpace(subject)]
+	userKey := controlPlaneStepUpPrincipalKey(subject, tenantID, issuer)
+	user := m.users[userKey]
 	if user == nil {
 		user = &controlPlaneWebAuthnUser{
-			Subject:     strings.TrimSpace(subject),
-			TenantID:    strings.TrimSpace(tenantID),
+			Subject:     subject,
+			Issuer:      issuer,
+			TenantID:    tenantID,
 			DisplayName: strings.TrimSpace(displayName),
 			Credentials: make([]webauthnlib.Credential, 0, 4),
 		}
 		if user.DisplayName == "" {
 			user.DisplayName = user.Subject
 		}
-		m.users[user.Subject] = user
+		m.users[userKey] = user
 	} else {
-		if strings.TrimSpace(tenantID) != "" {
-			user.TenantID = strings.TrimSpace(tenantID)
+		if tenantID != "" {
+			user.TenantID = tenantID
+		}
+		if issuer != "" {
+			user.Issuer = issuer
 		}
 		if strings.TrimSpace(displayName) != "" {
 			user.DisplayName = strings.TrimSpace(displayName)
@@ -558,16 +575,23 @@ func (m *controlPlaneStepUpManager) ensureUser(subject, tenantID, displayName st
 	return user
 }
 
-func (m *controlPlaneStepUpManager) getUser(subject string) *controlPlaneWebAuthnUser {
+func (m *controlPlaneStepUpManager) getUser(subject, tenantID, issuer string) *controlPlaneWebAuthnUser {
+	subject = strings.TrimSpace(subject)
+	tenantID = strings.TrimSpace(tenantID)
+	issuer = strings.TrimSpace(issuer)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.users[strings.TrimSpace(subject)]
+	userKey := controlPlaneStepUpPrincipalKey(subject, tenantID, issuer)
+	return m.users[userKey]
 }
 
-func (m *controlPlaneStepUpManager) upsertCredential(subject string, cred webauthnlib.Credential) error {
+func (m *controlPlaneStepUpManager) upsertCredential(subject, tenantID, issuer string, cred webauthnlib.Credential) error {
+	subject = strings.TrimSpace(subject)
+	tenantID = strings.TrimSpace(tenantID)
+	issuer = strings.TrimSpace(issuer)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	user := m.users[strings.TrimSpace(subject)]
+	user := m.users[controlPlaneStepUpPrincipalKey(subject, tenantID, issuer)]
 	if user == nil {
 		return fmt.Errorf("webauthn_subject_not_found")
 	}
@@ -585,7 +609,10 @@ func (m *controlPlaneStepUpManager) upsertCredential(subject string, cred webaut
 	return m.persistStateLocked()
 }
 
-func (m *controlPlaneStepUpManager) issueStepUpToken(subject, tenantID string) (string, time.Time, error) {
+func (m *controlPlaneStepUpManager) issueStepUpToken(subject, tenantID, issuer string) (string, time.Time, error) {
+	subject = strings.TrimSpace(subject)
+	tenantID = strings.TrimSpace(tenantID)
+	issuer = strings.TrimSpace(issuer)
 	token, err := randomToken(32)
 	if err != nil {
 		return "", time.Time{}, err
@@ -596,8 +623,9 @@ func (m *controlPlaneStepUpManager) issueStepUpToken(subject, tenantID string) (
 	m.pruneLocked(time.Now().UTC())
 	m.stepUpTokens[token] = controlPlaneWebAuthnStepUpToken{
 		Token:     token,
-		Subject:   strings.TrimSpace(subject),
-		TenantID:  strings.TrimSpace(tenantID),
+		Issuer:    issuer,
+		Subject:   subject,
+		TenantID:  tenantID,
 		ExpiresAt: expiresAt,
 	}
 	return token, expiresAt, nil
@@ -623,10 +651,13 @@ func (m *controlPlaneStepUpManager) consumeSession(sessionID, kind string, authC
 	if now.After(session.ExpiresAt) {
 		return controlPlaneWebAuthnSession{}, nil, fmt.Errorf("webauthn_session_expired")
 	}
+	if strings.TrimSpace(session.Issuer) != strings.TrimSpace(authCtx.Issuer) {
+		return controlPlaneWebAuthnSession{}, nil, fmt.Errorf("webauthn_session_issuer_mismatch")
+	}
 	if strings.TrimSpace(session.Subject) != strings.TrimSpace(authCtx.Subject) {
 		return controlPlaneWebAuthnSession{}, nil, fmt.Errorf("webauthn_session_subject_mismatch")
 	}
-	user := m.users[strings.TrimSpace(authCtx.Subject)]
+	user := m.users[controlPlaneStepUpPrincipalKey(authCtx.Subject, authCtx.TenantID, authCtx.Issuer)]
 	if user == nil {
 		return controlPlaneWebAuthnSession{}, nil, fmt.Errorf("webauthn_subject_not_found")
 	}
@@ -664,9 +695,14 @@ func (m *controlPlaneStepUpManager) loadState() error {
 		if user == nil || strings.TrimSpace(user.Subject) == "" {
 			continue
 		}
-		m.users[strings.TrimSpace(user.Subject)] = user
+		key := controlPlaneStepUpPrincipalKey(user.Subject, user.TenantID, user.Issuer)
+		m.users[key] = user
 	}
 	return nil
+}
+
+func controlPlaneStepUpPrincipalKey(subject, tenantID, issuer string) string {
+	return strings.ToLower(strings.TrimSpace(issuer)) + "|" + strings.TrimSpace(tenantID) + "|" + strings.TrimSpace(subject)
 }
 
 func (m *controlPlaneStepUpManager) persistStateLocked() error {
@@ -706,7 +742,8 @@ func randomToken(size int) (string, error) {
 }
 
 func (u *controlPlaneWebAuthnUser) WebAuthnID() []byte {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(u.Subject)))
+	scopeKey := controlPlaneStepUpPrincipalKey(u.Subject, u.TenantID, u.Issuer)
+	sum := sha256.Sum256([]byte(scopeKey))
 	return append([]byte(nil), sum[:]...)
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -164,6 +165,26 @@ func TestValidateAdminMutationStepUp(t *testing.T) {
 			t.Fatalf("error code = %q, want mfa_step_up_subject_mismatch", code)
 		}
 	})
+}
+
+func TestEnsureUser_ScopesByIssuerTenantAndSubject(t *testing.T) {
+	m := &controlPlaneStepUpManager{
+		users: map[string]*controlPlaneWebAuthnUser{},
+	}
+	userA := m.ensureUser("shared-subject", "tenant-a", "https://issuer-a.example", "Alice A")
+	userB := m.ensureUser("shared-subject", "tenant-a", "https://issuer-b.example", "Alice B")
+	if userA == nil || userB == nil {
+		t.Fatalf("ensureUser returned nil user")
+	}
+	if userA == userB {
+		t.Fatalf("user records collapsed unexpectedly across issuers")
+	}
+	if len(m.users) != 2 {
+		t.Fatalf("users map size=%d, want 2", len(m.users))
+	}
+	if bytes.Equal(userA.WebAuthnID(), userB.WebAuthnID()) {
+		t.Fatalf("WebAuthnID collision between issuer-scoped users")
+	}
 }
 
 func authErrCode(err error) string {

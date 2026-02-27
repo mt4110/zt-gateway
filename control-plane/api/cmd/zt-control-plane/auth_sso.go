@@ -61,6 +61,7 @@ type controlPlaneSSOConfig struct {
 
 type controlPlaneAuthContext struct {
 	Mode     string
+	Issuer   string
 	Subject  string
 	Role     string
 	TenantID string
@@ -298,6 +299,7 @@ func (cfg *controlPlaneSSOConfig) authenticateBearerToken(r *http.Request, requi
 		return ctx, &controlPlaneAuthError{Status: http.StatusForbidden, Code: "sso_policy_violation"}
 	}
 
+	ctx.Issuer = issuer
 	ctx.Subject = claimString(claims, cfg.SubjectClaim)
 	ctx.Role = cfg.mapDashboardRole(claims)
 	ctx.TenantID = strings.TrimSpace(claimString(claims, cfg.TenantClaim))

@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	_ "image/jpeg"
 	"image/png"
-	_ "image/png"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func main() {
@@ -43,7 +42,7 @@ func main() {
 
 func runRebuild(inputFile, outputFile string) error {
 	// 1. Identify file type by extension.
-	ext := filepath.Ext(inputFile)
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(inputFile)))
 	fmt.Printf("[Rebuild] Processing %s (Type: %s)\n", inputFile, ext)
 
 	// 2. Select sanitizer.

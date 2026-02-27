@@ -190,9 +190,13 @@ func (m *controlPlaneSCIMSyncManager) applySync(req controlPlaneSCIMSyncRequest,
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	prevUsers := m.users
+	prevLastSyncedAt := m.lastSyncedAt
 	m.users = users
 	m.lastSyncedAt = syncedAt
 	if err := m.saveState(); err != nil {
+		m.users = prevUsers
+		m.lastSyncedAt = prevLastSyncedAt
 		return controlPlaneSCIMSyncSummary{}, err
 	}
 	return controlPlaneSCIMSyncSummary{

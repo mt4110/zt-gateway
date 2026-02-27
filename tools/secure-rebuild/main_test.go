@@ -56,3 +56,30 @@ func TestRunRebuild_PNGSanitizerWritesOutput(t *testing.T) {
 		t.Fatalf("rebuilt output is empty")
 	}
 }
+
+func TestRunRebuild_UppercaseExtensionUsesImageSanitizer(t *testing.T) {
+	tmp := t.TempDir()
+	in := filepath.Join(tmp, "sample.PNG")
+	out := filepath.Join(tmp, "out.png")
+
+	src := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	src.Set(0, 0, color.RGBA{R: 0x11, G: 0x22, B: 0x33, A: 0xFF})
+	f, err := os.Create(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, src); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runRebuild(in, out); err != nil {
+		t.Fatalf("runRebuild() error = %v", err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("os.Stat(out): %v", err)
+	}
+}

@@ -110,3 +110,34 @@ func TestHandleAdminSCIMSync_Contract(t *testing.T) {
 		t.Fatalf("applied_users = %v, want 1", scimOut["applied_users"])
 	}
 }
+
+func TestApplySync_RollsBackInMemoryStateOnSaveFailure(t *testing.T) {
+	t.Setenv(controlPlaneSCIMSyncEnabledEnv, "1")
+	base := t.TempDir()
+	t.Setenv(controlPlaneSCIMSyncStateFileEnv, filepath.Join(base, "scim_state.json"))
+
+	scim, err := loadControlPlaneSCIMSyncManager(base)
+	if err != nil {
+		t.Fatalf("loadControlPlaneSCIMSyncManager: %v", err)
+	}
+	parentFile := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(parentFile, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(parentFile): %v", err)
+	}
+	scim.cfg.StateFile = filepath.Join(parentFile, "scim_state.json")
+	scim.users["legacy-user"] = controlPlaneSCIMMappedUser{Subject: "legacy-user", Role: dashboardRoleViewer}
+	scim.lastSyncedAt = "2026-02-01T00:00:00Z"
+
+	_, err = scim.applySync(controlPlaneSCIMSyncRequest{
+		Users: []controlPlaneSCIMSyncUser{{Subject: "new-user", Role: dashboardRoleAdmin}},
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatalf("applySync error=nil, want save failure")
+	}
+	if _, ok := scim.resolveUser("legacy-user"); !ok {
+		t.Fatalf("legacy user missing after failed applySync")
+	}
+	if _, ok := scim.resolveUser("new-user"); ok {
+		t.Fatalf("new user should not be applied on save failure")
+	}
+}

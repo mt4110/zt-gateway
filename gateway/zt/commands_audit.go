@@ -615,9 +615,6 @@ func rotateAuditEventsFile(opts auditRotateCLIOptions, now time.Time) (auditRota
 	if err := os.MkdirAll(filepath.Dir(opts.FilePath), 0o755); err != nil {
 		return auditRotateResult{}, err
 	}
-	if err := writeAuditJSONLLinesAtomic(opts.FilePath, retained); err != nil {
-		return auditRotateResult{}, err
-	}
 	if err := os.MkdirAll(opts.ArchiveDir, 0o755); err != nil {
 		return auditRotateResult{}, err
 	}
@@ -635,6 +632,9 @@ func rotateAuditEventsFile(opts auditRotateCLIOptions, now time.Time) (auditRota
 		}
 	}
 	sort.Strings(months)
+	if err := writeAuditJSONLLinesAtomic(opts.FilePath, retained); err != nil {
+		return auditRotateResult{}, err
+	}
 
 	purged, err := purgeExpiredAuditArchives(opts.ArchiveDir, opts.RetentionDays, now.UTC())
 	if err != nil {
