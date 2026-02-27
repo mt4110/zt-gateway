@@ -54,11 +54,11 @@ func TestHandleDashboardSaaSEconomicsAPI(t *testing.T) {
 	}
 }
 
-func TestHandleDashboardSaaSEconomicsAPI_FreeTierApplied(t *testing.T) {
-	t.Setenv(dashboardSaaSFreeTierEnabledEnv, "1")
-	t.Setenv(dashboardSaaSFreeTierFilesEnv, "1000")
-	t.Setenv(dashboardSaaSFreeTierDataGBEnv, "4")
-	req := httptest.NewRequest(http.MethodGet, "/api/saas/economics?files_per_month=500&avg_file_mb=4&retention_days=30", nil)
+func TestHandleDashboardSaaSEconomicsAPI_PersonalTrialApplied(t *testing.T) {
+	t.Setenv(dashboardSaaSTrialEnabledEnv, "1")
+	t.Setenv(dashboardSaaSTrialFilesPerUserEnv, "500")
+	t.Setenv(dashboardSaaSTrialDataGBPerUserEnv, "2")
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/economics?files_per_month=500&active_users=10&trial_users=1&avg_file_mb=4&retention_days=30", nil)
 	rr := httptest.NewRecorder()
 	handleDashboardSaaSEconomicsAPI(rr, req)
 	if rr.Code != http.StatusOK {
@@ -68,14 +68,14 @@ func TestHandleDashboardSaaSEconomicsAPI_FreeTierApplied(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatalf("json decode failed: %v", err)
 	}
-	if !out.FreeTierApplied {
-		t.Fatalf("free_tier_applied=false, want true")
+	if !out.TrialApplied {
+		t.Fatalf("trial_applied=false, want true")
 	}
 	if out.BillableFiles != 0 {
 		t.Fatalf("billable_files=%d, want 0", out.BillableFiles)
 	}
-	if out.FreeTierSubsidyUSD <= 0 {
-		t.Fatalf("free_tier_subsidy_usd=%f, want >0", out.FreeTierSubsidyUSD)
+	if out.TrialSubsidyUSD <= 0 {
+		t.Fatalf("trial_subsidy_usd=%f, want >0", out.TrialSubsidyUSD)
 	}
 }
 
@@ -95,6 +95,28 @@ func TestHandleDashboardSaaSStripePriceAPI(t *testing.T) {
 	}
 	if out.GrossUnitPriceUSD <= 0 {
 		t.Fatalf("gross_unit_price_usd=%f, want >0", out.GrossUnitPriceUSD)
+	}
+}
+
+func TestHandleDashboardSaaSStripePriceAPI_TrialZeroCharge(t *testing.T) {
+	t.Setenv(dashboardSaaSTrialEnabledEnv, "1")
+	t.Setenv(dashboardSaaSTrialFilesPerUserEnv, "1000")
+	t.Setenv(dashboardSaaSTrialDataGBPerUserEnv, "5")
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/stripe-price?files_per_month=500&active_users=10&trial_users=1&avg_file_mb=4&retention_days=30", nil)
+	rr := httptest.NewRecorder()
+	handleDashboardSaaSStripePriceAPI(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var out dashboardStripePriceResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if out.GrossChargeUSD != 0 {
+		t.Fatalf("gross_charge_usd=%f, want 0", out.GrossChargeUSD)
+	}
+	if out.GrossUnitPriceUSD != 0 {
+		t.Fatalf("gross_unit_price_usd=%f, want 0", out.GrossUnitPriceUSD)
 	}
 }
 

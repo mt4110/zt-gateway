@@ -48,6 +48,17 @@
     price_per_file_floor_usd: number;
     target_gross_margin: number;
     platform_fee_rate: number;
+    trial_enabled: boolean;
+    trial_files_per_user_per_month: number;
+    trial_data_gb_per_user_per_month: number;
+    trial_ad_revenue_per_user_usd: number;
+    personal_free_max_file_mb: number;
+    org_trial_min_files: number;
+    org_trial_max_files: number;
+    org_trial_max_file_mb: number;
+    org_trial_duration_days: number;
+    growth_max_file_mb: number;
+    enterprise_max_file_mb: number;
   };
 
   type SaaSEconomics = {
@@ -64,10 +75,11 @@
     safe_file_size_threshold_mb: number;
     safe_files_per_month: number;
     tier: string;
-    free_tier_applied: boolean;
-    free_tier_subsidy_usd: number;
+    trial_applied: boolean;
+    trial_subsidy_usd: number;
+    trial_ad_revenue_usd: number;
     billable_files: number;
-    required_paid_tenants_per_free_tenant: number;
+    required_paid_users_per_trial_user: number;
     monthly_reset: boolean;
   };
 
@@ -124,6 +136,8 @@
   let saasEconomics: SaaSEconomics | null = null;
   let stripePrice: StripePrice | null = null;
   let ecoFilesPerMonth = 10000;
+  let ecoActiveUsers = 20;
+  let ecoTrialUsers = 1;
   let ecoAvgFileMB = 8;
   let ecoRetentionDays = 30;
 
@@ -148,9 +162,9 @@
     );
   })();
   $: freeTierMessage =
-    saasEconomics?.free_tier_applied
-      ? `Free tier active (monthly reset=${saasEconomics.monthly_reset ? 'on' : 'off'})`
-      : 'Paid tier billing applies';
+    saasEconomics?.trial_applied
+      ? `Personal trial active (monthly reset=${saasEconomics.monthly_reset ? 'on' : 'off'})`
+      : 'Paid user billing applies';
 
   function showToast(message: string): void {
     toast = message;
@@ -429,6 +443,8 @@
   async function fetchSaaSEconomics(): Promise<void> {
     const query = new URLSearchParams({
       files_per_month: String(ecoFilesPerMonth),
+      active_users: String(ecoActiveUsers),
+      trial_users: String(ecoTrialUsers),
       avg_file_mb: String(ecoAvgFileMB),
       retention_days: String(ecoRetentionDays)
     });
@@ -443,6 +459,8 @@
   async function fetchStripePrice(): Promise<void> {
     const query = new URLSearchParams({
       files_per_month: String(ecoFilesPerMonth),
+      active_users: String(ecoActiveUsers),
+      trial_users: String(ecoTrialUsers),
       avg_file_mb: String(ecoAvgFileMB),
       retention_days: String(ecoRetentionDays)
     });
@@ -456,6 +474,8 @@
   function downloadQuotePDF(): void {
     const query = new URLSearchParams({
       files_per_month: String(ecoFilesPerMonth),
+      active_users: String(ecoActiveUsers),
+      trial_users: String(ecoTrialUsers),
       avg_file_mb: String(ecoAvgFileMB),
       retention_days: String(ecoRetentionDays)
     });
@@ -781,13 +801,21 @@
   <section class="pricing glass" in:fly={{ y: 10, duration: 200 }}>
     <div class="ops-head">
       <h2>Contract & SaaS Economics</h2>
-      <p class="muted">定数1つ（`ZT_DASHBOARD_SAAS_MODE=1`）で SaaS モード。契約価格は数理モデルで試算。</p>
+      <p class="muted">定数1つ（`ZT_DASHBOARD_SAAS_MODE=1`）で SaaS モード。企業無料枠は持たず、個人 trial 枠のみ数理試算。</p>
     </div>
 
     <div class="form-row">
       <label>
         Files / Month
         <input type="number" bind:value={ecoFilesPerMonth} min="1" step="100" />
+      </label>
+      <label>
+        Active Users
+        <input type="number" bind:value={ecoActiveUsers} min="1" step="1" />
+      </label>
+      <label>
+        Trial Users (personal)
+        <input type="number" bind:value={ecoTrialUsers} min="0" step="1" />
       </label>
       <label>
         Avg File Size MB
@@ -806,6 +834,9 @@
       <h3>{saasConfig?.contract_title ?? 'ZT Gateway SaaS Agreement'}</h3>
       <p class="muted">Mode: {saasConfig?.mode ?? 'local'} | Currency: {saasConfig?.currency ?? 'USD'}</p>
       <p class="muted">Included files: {saasConfig?.included_files ?? 0} / month</p>
+      <p class="muted">Personal Free: {saasConfig?.trial_files_per_user_per_month ?? 0} files, {saasConfig?.personal_free_max_file_mb ?? 0}MB/file, {saasConfig?.trial_data_gb_per_user_per_month ?? 0}GB/user</p>
+      <p class="muted">Org Trial: {saasConfig?.org_trial_min_files ?? 0}-{saasConfig?.org_trial_max_files ?? 0} files, {saasConfig?.org_trial_max_file_mb ?? 0}MB/file, {saasConfig?.org_trial_duration_days ?? 0} days</p>
+      <p class="muted">Paid tiers: Growth {saasConfig?.growth_max_file_mb ?? 0}MB/file, Enterprise {saasConfig?.enterprise_max_file_mb ?? 0}MB/file</p>
       <p class="muted">{freeTierMessage}</p>
       {#if saasEconomics}
         <div class="contract-metrics">
@@ -813,8 +844,9 @@
           <p>Recommended unit price: ${saasEconomics.recommended_unit_price_usd} / file</p>
           <p>Billable files: {saasEconomics.billable_files}</p>
           <p>Break-even files at floor: {saasEconomics.break_even_files_at_floor}</p>
-          <p>Free tier subsidy: ${saasEconomics.free_tier_subsidy_usd}</p>
-          <p>Required paid tenants per free tenant: {saasEconomics.required_paid_tenants_per_free_tenant}</p>
+          <p>Personal trial subsidy: ${saasEconomics.trial_subsidy_usd}</p>
+          <p>Ad revenue from trial users: ${saasEconomics.trial_ad_revenue_usd}</p>
+          <p>Required paid users per trial user: {saasEconomics.required_paid_users_per_trial_user}</p>
           <p>Safe threshold: {saasEconomics.safe_file_size_threshold_mb}MB x {saasEconomics.safe_files_per_month}/month ({saasEconomics.tier})</p>
         </div>
       {/if}

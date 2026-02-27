@@ -288,7 +288,7 @@ SaaS モード / 契約画面（LFC-1012: economics model）:
 
 - `ZT_DASHBOARD_SAAS_MODE=1` で dashboard を SaaS economics 表示モードに切り替え
 - `GET /api/saas/config` : 契約画面の定数（mode, contract title, margin, fee）
-- `GET /api/saas/economics` : 単価/閾値試算（query: `files_per_month`, `avg_file_mb`, `retention_days`）
+- `GET /api/saas/economics` : 単価/閾値試算（query: `files_per_month`, `active_users`, `trial_users`, `avg_file_mb`, `retention_days`）
 - `GET /api/saas/stripe-price` : `recommended_unit_price_usd` を Stripe 決済前提の gross 単価に変換
 - `GET /api/saas/economics/quote.pdf` : Starter/Growth/Enterprise 見積PDF
 - 主な調整用 env:
@@ -300,19 +300,25 @@ SaaS モード / 契約画面（LFC-1012: economics model）:
   - `ZT_DASHBOARD_TARGET_GROSS_MARGIN`
   - `ZT_DASHBOARD_PLATFORM_FEE_RATE`
   - `ZT_DASHBOARD_PRICE_PER_FILE_FLOOR_USD`
-  - `ZT_DASHBOARD_FREE_TIER_ENABLED`
-  - `ZT_DASHBOARD_FREE_TIER_FILES_PER_MONTH`
-  - `ZT_DASHBOARD_FREE_TIER_DATA_GB_PER_MONTH`
-  - `ZT_DASHBOARD_PAID_TENANT_SHARE`
+  - `ZT_DASHBOARD_TRIAL_ENABLED`
+  - `ZT_DASHBOARD_TRIAL_FILES_PER_USER_PER_MONTH`（default `500`）
+  - `ZT_DASHBOARD_TRIAL_DATA_GB_PER_USER_PER_MONTH`（default `5`）
+  - `ZT_DASHBOARD_TRIAL_AD_REVENUE_PER_USER_USD`（広告収益/人）
+  - `ZT_DASHBOARD_PAID_USER_SHARE`
   - `ZT_DASHBOARD_STRIPE_FEE_RATE`
   - `ZT_DASHBOARD_STRIPE_FIXED_FEE_USD`
   - `ZT_DASHBOARD_STRIPE_ROUND_UNIT_USD`
 
-無料閾値運用:
+無料閾値運用（固定値）:
 
-- free tier は「月次リセット（翌月復活）」前提でモデル化（`monthly_reset=true`）
-- 閾値内ユーザーは `billable_files=0` になり、`free_tier_subsidy_usd` を明示表示
-- 経済破綻を避けるため `required_paid_tenants_per_free_tenant` を同時表示し、paid比率で検証
+- 企業単位の無料枠は設けず、**個人 trial 枠**のみを対象にモデル化
+- Personal Free（広告あり）: `500 files/月`, `16MB/file`, `5GB/月`（1人）
+- Org Trial（広告なし）: `10-100 files/月`, `8MB/file`, `30日`
+- Paid: Growth `256MB/file`, Enterprise `1GB/file`
+- trial は「月次リセット（翌月復活）」前提（`monthly_reset=true`）
+- trial 適用時は `billable_files` が減り、`trial_subsidy_usd` と `trial_ad_revenue_usd` を明示表示
+- 経済破綻を避けるため `required_paid_users_per_trial_user` を同時表示し、paid user 比率で検証
+- 広告は送信 UI のみで表示し、署名対象データ/送信payloadには混入させない
 
 Control Plane dashboard API（tenant/role authz）:
 

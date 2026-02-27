@@ -26,14 +26,19 @@ const (
 	dashboardSaaSIncludedFilesEnv     = "ZT_DASHBOARD_INCLUDED_FILES"
 	dashboardSaaSPricePerFileFloorEnv = "ZT_DASHBOARD_PRICE_PER_FILE_FLOOR_USD"
 
-	dashboardSaaSFreeTierEnabledEnv = "ZT_DASHBOARD_FREE_TIER_ENABLED"
-	dashboardSaaSFreeTierFilesEnv   = "ZT_DASHBOARD_FREE_TIER_FILES_PER_MONTH"
-	dashboardSaaSFreeTierDataGBEnv  = "ZT_DASHBOARD_FREE_TIER_DATA_GB_PER_MONTH"
-	dashboardSaaSPaidTenantShareEnv = "ZT_DASHBOARD_PAID_TENANT_SHARE"
+	dashboardSaaSTrialEnabledEnv       = "ZT_DASHBOARD_TRIAL_ENABLED"
+	dashboardSaaSTrialFilesPerUserEnv  = "ZT_DASHBOARD_TRIAL_FILES_PER_USER_PER_MONTH"
+	dashboardSaaSTrialDataGBPerUserEnv = "ZT_DASHBOARD_TRIAL_DATA_GB_PER_USER_PER_MONTH"
+	dashboardSaaSPaidUserShareEnv      = "ZT_DASHBOARD_PAID_USER_SHARE"
+	dashboardSaaSFreeTierEnabledEnv    = "ZT_DASHBOARD_FREE_TIER_ENABLED"           // backward-compatible alias
+	dashboardSaaSFreeTierFilesEnv      = "ZT_DASHBOARD_FREE_TIER_FILES_PER_MONTH"   // backward-compatible alias
+	dashboardSaaSFreeTierDataGBEnv     = "ZT_DASHBOARD_FREE_TIER_DATA_GB_PER_MONTH" // backward-compatible alias
+	dashboardSaaSPaidTenantShareEnv    = "ZT_DASHBOARD_PAID_TENANT_SHARE"           // backward-compatible alias
 
 	dashboardSaaSStripeFeeRateEnv   = "ZT_DASHBOARD_STRIPE_FEE_RATE"
 	dashboardSaaSStripeFixedFeeEnv  = "ZT_DASHBOARD_STRIPE_FIXED_FEE_USD"
 	dashboardSaaSStripeRoundUnitEnv = "ZT_DASHBOARD_STRIPE_ROUND_UNIT_USD"
+	dashboardSaaSTrialAdRevenueEnv  = "ZT_DASHBOARD_TRIAL_AD_REVENUE_PER_USER_USD"
 )
 
 type dashboardSaaSConfig struct {
@@ -46,10 +51,19 @@ type dashboardSaaSConfig struct {
 	TargetMargin    float64 `json:"target_gross_margin"`
 	PlatformFeeRate float64 `json:"platform_fee_rate"`
 
-	FreeTierEnabled bool    `json:"free_tier_enabled"`
-	FreeTierFiles   int     `json:"free_tier_files_per_month"`
-	FreeTierDataGB  float64 `json:"free_tier_data_gb_per_month"`
-	PaidTenantShare float64 `json:"paid_tenant_share"`
+	TrialEnabled       bool    `json:"trial_enabled"`
+	TrialFilesPerUser  int     `json:"trial_files_per_user_per_month"`
+	TrialDataGBPerUser float64 `json:"trial_data_gb_per_user_per_month"`
+	PaidUserShare      float64 `json:"paid_user_share"`
+	TrialAdRevenueUSD  float64 `json:"trial_ad_revenue_per_user_usd"`
+
+	PersonalFreeMaxFileMB int `json:"personal_free_max_file_mb"`
+	OrgTrialMinFiles      int `json:"org_trial_min_files"`
+	OrgTrialMaxFiles      int `json:"org_trial_max_files"`
+	OrgTrialMaxFileMB     int `json:"org_trial_max_file_mb"`
+	OrgTrialDurationDays  int `json:"org_trial_duration_days"`
+	GrowthMaxFileMB       int `json:"growth_max_file_mb"`
+	EnterpriseMaxFileMB   int `json:"enterprise_max_file_mb"`
 
 	StripeFeeRate   float64 `json:"stripe_fee_rate"`
 	StripeFixedFee  float64 `json:"stripe_fixed_fee_usd"`
@@ -74,11 +88,12 @@ type dashboardSaaSEconomics struct {
 	SafeFilesPerMonth       int     `json:"safe_files_per_month"`
 	Tier                    string  `json:"tier"`
 
-	FreeTierApplied                  bool    `json:"free_tier_applied"`
-	FreeTierSubsidyUSD               float64 `json:"free_tier_subsidy_usd"`
-	BillableFiles                    int     `json:"billable_files"`
-	RequiredPaidTenantsPerFreeTenant float64 `json:"required_paid_tenants_per_free_tenant"`
-	MonthlyReset                     bool    `json:"monthly_reset"`
+	TrialApplied                  bool    `json:"trial_applied"`
+	TrialSubsidyUSD               float64 `json:"trial_subsidy_usd"`
+	TrialAdRevenueUSD             float64 `json:"trial_ad_revenue_usd"`
+	BillableFiles                 int     `json:"billable_files"`
+	RequiredPaidUsersPerTrialUser float64 `json:"required_paid_users_per_trial_user"`
+	MonthlyReset                  bool    `json:"monthly_reset"`
 }
 
 type dashboardStripePriceResponse struct {
@@ -139,7 +154,14 @@ func handleDashboardSaaSQuotePDFAPI(w http.ResponseWriter, r *http.Request) {
 		"Contract: " + cfg.ContractTitle,
 		"",
 		fmt.Sprintf("Tier: %s", strings.ToUpper(eco.Tier)),
-		fmt.Sprintf("Input: files/month=%v avg_file_mb=%v retention_days=%v", eco.Inputs["files_per_month"], eco.Inputs["avg_file_mb"], eco.Inputs["retention_days"]),
+		fmt.Sprintf(
+			"Input: files/month=%v active_users=%v trial_users=%v avg_file_mb=%v retention_days=%v",
+			eco.Inputs["files_per_month"],
+			eco.Inputs["active_users"],
+			eco.Inputs["trial_users"],
+			eco.Inputs["avg_file_mb"],
+			eco.Inputs["retention_days"],
+		),
 		fmt.Sprintf("Safe threshold: %dMB x %d files/month", eco.SafeFileSizeThresholdMB, eco.SafeFilesPerMonth),
 		"",
 		fmt.Sprintf("Recommended monthly minimum (net): $%.2f", eco.RecommendedMonthlyUSD),
@@ -148,9 +170,10 @@ func handleDashboardSaaSQuotePDFAPI(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("Stripe gross unit price: $%.4f / file", stripe.GrossUnitPriceUSD),
 		fmt.Sprintf("Billable files: %d", eco.BillableFiles),
 		"",
-		fmt.Sprintf("Free tier applied: %v (monthly reset=%v)", eco.FreeTierApplied, eco.MonthlyReset),
-		fmt.Sprintf("Free tier subsidy per tenant: $%.2f", eco.FreeTierSubsidyUSD),
-		fmt.Sprintf("Required paid tenants per free tenant: %.2f", eco.RequiredPaidTenantsPerFreeTenant),
+		fmt.Sprintf("Personal trial applied: %v (monthly reset=%v)", eco.TrialApplied, eco.MonthlyReset),
+		fmt.Sprintf("Personal trial subsidy: $%.2f", eco.TrialSubsidyUSD),
+		fmt.Sprintf("Ad revenue from trial users: $%.2f", eco.TrialAdRevenueUSD),
+		fmt.Sprintf("Required paid users per trial user: %.2f", eco.RequiredPaidUsersPerTrialUser),
 	}
 	pdf := buildSinglePagePDF(lines)
 	filename := fmt.Sprintf("zt-saas-quote-%s.pdf", strings.ToLower(eco.Tier))
@@ -164,6 +187,17 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 	filesPerMonth := queryInt(r, "files_per_month", cfg.IncludedFiles)
 	if filesPerMonth <= 0 {
 		filesPerMonth = cfg.IncludedFiles
+	}
+	activeUsers := queryInt(r, "active_users", 10)
+	if activeUsers <= 0 {
+		activeUsers = 1
+	}
+	trialUsers := queryInt(r, "trial_users", 0)
+	if trialUsers < 0 {
+		trialUsers = 0
+	}
+	if trialUsers > activeUsers {
+		trialUsers = activeUsers
 	}
 	avgFileMB := queryFloat(r, "avg_file_mb", 8)
 	if avgFileMB <= 0 {
@@ -186,13 +220,13 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 
 	billableFiles := filesPerMonth
 	billableDataGB := monthlySignedGB
-	freeTierApplied := false
-	if cfg.FreeTierEnabled {
-		freeTierApplied = filesPerMonth <= cfg.FreeTierFiles && monthlySignedGB <= cfg.FreeTierDataGB
-		if freeTierApplied {
-			billableFiles = 0
-			billableDataGB = 0
-		}
+	trialApplied := false
+	trialAllowanceFiles := maxInt(cfg.TrialFilesPerUser*trialUsers, 0)
+	trialAllowanceDataGB := math.Max(cfg.TrialDataGBPerUser*float64(trialUsers), 0)
+	if cfg.TrialEnabled && trialUsers > 0 {
+		billableFiles = maxInt(filesPerMonth-trialAllowanceFiles, 0)
+		billableDataGB = math.Max(monthlySignedGB-trialAllowanceDataGB, 0)
+		trialApplied = billableFiles < filesPerMonth || billableDataGB < monthlySignedGB
 	}
 
 	egressGB := billableDataGB * 2.0
@@ -211,7 +245,7 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 	}
 	recommendedMonthly := 0.0
 	if billableFiles > 0 {
-		recommendedMonthly = math.Max(recommendedRevenue, unitPrice*float64(maxInt(cfg.IncludedFiles-cfg.FreeTierFiles, 1)))
+		recommendedMonthly = math.Max(recommendedRevenue, unitPrice*float64(maxInt(cfg.IncludedFiles-trialAllowanceFiles, 1)))
 	}
 
 	variablePerFile := 0.0
@@ -224,67 +258,82 @@ func computeDashboardSaaSEconomics(r *http.Request, cfg dashboardSaaSConfig) das
 	}
 
 	safeSize, safeFiles, tier := recommendSaaSThresholds(avgFileMB, filesPerMonth)
-	freeTierSubsidy := 0.0
-	if freeTierApplied {
-		freeTierSubsidy = totalCost
+	trialSubsidy := 0.0
+	if trialApplied {
+		variableWithoutTrial := monthlySignedGB*2.0*egressPerGB + monthlySignedGB*(retentionDays/30.0)*storagePerGB + (float64(filesPerMonth)/1000.0)*reqPer1K
+		trialSubsidy = math.Max(variableWithoutTrial-variableCost, 0)
+		perUserFixed := fixedCost / float64(activeUsers)
+		trialSubsidy += perUserFixed * float64(trialUsers)
 	}
-	paidShare := clampFloat(cfg.PaidTenantShare, 0.01, 0.99)
+	trialAdRevenue := cfg.TrialAdRevenueUSD * float64(trialUsers)
+	effectiveSubsidy := math.Max(trialSubsidy-trialAdRevenue, 0)
+	paidShare := clampFloat(cfg.PaidUserShare, 0.01, 0.99)
 	requiredPaidPerFree := 0.0
 	if recommendedRevenue > 0 {
-		requiredPaidPerFree = freeTierSubsidy / (recommendedRevenue * paidShare)
+		requiredPaidPerFree = effectiveSubsidy / (recommendedRevenue * paidShare)
 	}
 
 	return dashboardSaaSEconomics{
 		Inputs: map[string]any{
 			"files_per_month": filesPerMonth,
+			"active_users":    activeUsers,
+			"trial_users":     trialUsers,
 			"avg_file_mb":     avgFileMB,
 			"retention_days":  retentionDays,
 			"currency":        cfg.Currency,
 		},
-		MonthlyDataGB:                    round2(monthlyDataGB),
-		MonthlySignedDataGB:              round2(monthlySignedGB),
-		BillableDataGB:                   round2(billableDataGB),
-		VariableCostUSD:                  round2(variableCost),
-		FixedCostUSD:                     round2(fixedCost),
-		TotalCostUSD:                     round2(totalCost),
-		RequiredRevenueUSD:               round2(requiredRevenue),
-		RecommendedRevenueUSD:            round2(recommendedRevenue),
-		RecommendedUnitUSD:               round4(unitPrice),
-		RecommendedMonthlyUSD:            round2(recommendedMonthly),
-		BreakEvenFilesAtFloor:            breakEven,
-		SafeFileSizeThresholdMB:          safeSize,
-		SafeFilesPerMonth:                safeFiles,
-		Tier:                             tier,
-		FreeTierApplied:                  freeTierApplied,
-		FreeTierSubsidyUSD:               round2(freeTierSubsidy),
-		BillableFiles:                    billableFiles,
-		RequiredPaidTenantsPerFreeTenant: round2(requiredPaidPerFree),
-		MonthlyReset:                     true,
+		MonthlyDataGB:                 round2(monthlyDataGB),
+		MonthlySignedDataGB:           round2(monthlySignedGB),
+		BillableDataGB:                round2(billableDataGB),
+		VariableCostUSD:               round2(variableCost),
+		FixedCostUSD:                  round2(fixedCost),
+		TotalCostUSD:                  round2(totalCost),
+		RequiredRevenueUSD:            round2(requiredRevenue),
+		RecommendedRevenueUSD:         round2(recommendedRevenue),
+		RecommendedUnitUSD:            round4(unitPrice),
+		RecommendedMonthlyUSD:         round2(recommendedMonthly),
+		BreakEvenFilesAtFloor:         breakEven,
+		SafeFileSizeThresholdMB:       safeSize,
+		SafeFilesPerMonth:             safeFiles,
+		Tier:                          tier,
+		TrialApplied:                  trialApplied,
+		TrialSubsidyUSD:               round2(effectiveSubsidy),
+		TrialAdRevenueUSD:             round2(trialAdRevenue),
+		BillableFiles:                 billableFiles,
+		RequiredPaidUsersPerTrialUser: round2(requiredPaidPerFree),
+		MonthlyReset:                  true,
 	}
 }
 
 func computeDashboardStripePrice(cfg dashboardSaaSConfig, eco dashboardSaaSEconomics) dashboardStripePriceResponse {
 	stripeRate := clampFloat(cfg.StripeFeeRate, 0, 0.5)
 	stripeFixed := math.Max(cfg.StripeFixedFee, 0)
-	netRevenue := eco.RecommendedRevenueUSD
+	netRevenue := eco.RecommendedMonthlyUSD
 	if netRevenue < 0 {
 		netRevenue = 0
 	}
-	grossCharge := netRevenue
-	if eco.BillableFiles > 0 {
-		den := 1.0 - stripeRate
-		if den <= 0.01 {
-			den = 0.01
+	if eco.BillableFiles <= 0 || netRevenue <= 0 {
+		return dashboardStripePriceResponse{
+			Currency:                 cfg.Currency,
+			NetRecommendedRevenueUSD: 0,
+			GrossChargeUSD:           0,
+			GrossUnitPriceUSD:        0,
+			StripeFeeUSD:             0,
+			StripeFeeRate:            stripeRate,
+			StripeFixedFeeUSD:        stripeFixed,
+			BillableFiles:            eco.BillableFiles,
 		}
-		grossCharge = (netRevenue + stripeFixed) / den
 	}
+	den := 1.0 - stripeRate
+	if den <= 0.01 {
+		den = 0.01
+	}
+	grossCharge := (netRevenue + stripeFixed) / den
 	grossCharge = round2(grossCharge)
 	stripeFee := round2(grossCharge*stripeRate + stripeFixed)
 	unit := 0.0
-	if eco.BillableFiles > 0 {
-		unit = grossCharge / float64(eco.BillableFiles)
-		unit = roundUpToUnit(unit, cfg.StripeRoundUnit)
-	}
+	unit = grossCharge / float64(eco.BillableFiles)
+	unit = roundUpToUnit(unit, cfg.StripeRoundUnit)
 
 	return dashboardStripePriceResponse{
 		Currency:                 cfg.Currency,
@@ -314,10 +363,19 @@ func loadDashboardSaaSConfig() dashboardSaaSConfig {
 		TargetMargin:    envFloat(dashboardSaaSTargetMarginEnv, 0.62),
 		PlatformFeeRate: envFloat(dashboardSaaSFeeRateEnv, 0.08),
 
-		FreeTierEnabled: envBool(dashboardSaaSFreeTierEnabledEnv),
-		FreeTierFiles:   maxInt(int(envFloat(dashboardSaaSFreeTierFilesEnv, 1000)), 0),
-		FreeTierDataGB:  math.Max(envFloat(dashboardSaaSFreeTierDataGBEnv, 4), 0),
-		PaidTenantShare: clampFloat(envFloat(dashboardSaaSPaidTenantShareEnv, 0.25), 0.01, 0.99),
+		TrialEnabled:       envBoolAny(dashboardSaaSTrialEnabledEnv, dashboardSaaSFreeTierEnabledEnv),
+		TrialFilesPerUser:  maxInt(int(envFloatAny(500, dashboardSaaSTrialFilesPerUserEnv, dashboardSaaSFreeTierFilesEnv)), 0),
+		TrialDataGBPerUser: math.Max(envFloatAny(5, dashboardSaaSTrialDataGBPerUserEnv, dashboardSaaSFreeTierDataGBEnv), 0),
+		PaidUserShare:      clampFloat(envFloatAny(0.25, dashboardSaaSPaidUserShareEnv, dashboardSaaSPaidTenantShareEnv), 0.01, 0.99),
+		TrialAdRevenueUSD:  math.Max(envFloat(dashboardSaaSTrialAdRevenueEnv, 1.2), 0),
+
+		PersonalFreeMaxFileMB: 16,
+		OrgTrialMinFiles:      10,
+		OrgTrialMaxFiles:      100,
+		OrgTrialMaxFileMB:     8,
+		OrgTrialDurationDays:  30,
+		GrowthMaxFileMB:       256,
+		EnterpriseMaxFileMB:   1024,
 
 		StripeFeeRate:   clampFloat(envFloat(dashboardSaaSStripeFeeRateEnv, 0.036), 0, 0.5),
 		StripeFixedFee:  math.Max(envFloat(dashboardSaaSStripeFixedFeeEnv, 0.30), 0),
@@ -367,6 +425,28 @@ func envFloat(key string, def float64) float64 {
 	return v
 }
 
+func envFloatAny(def float64, keys ...string) float64 {
+	for _, key := range keys {
+		raw := strings.TrimSpace(os.Getenv(strings.TrimSpace(key)))
+		if raw == "" {
+			continue
+		}
+		if v, err := strconv.ParseFloat(raw, 64); err == nil {
+			return v
+		}
+	}
+	return def
+}
+
+func envBoolAny(keys ...string) bool {
+	for _, key := range keys {
+		if envBool(strings.TrimSpace(key)) {
+			return true
+		}
+	}
+	return false
+}
+
 func round2(v float64) float64 {
 	return math.Round(v*100) / 100
 }
@@ -387,8 +467,10 @@ func clampFloat(v, minV, maxV float64) float64 {
 
 func recommendSaaSThresholds(avgFileMB float64, filesPerMonth int) (int, int, string) {
 	switch {
-	case avgFileMB <= 64 && filesPerMonth <= 20000:
-		return 64, 20000, "starter"
+	case avgFileMB <= 16 && filesPerMonth <= 500:
+		return 16, 500, "personal_free"
+	case avgFileMB <= 8 && filesPerMonth <= 100:
+		return 8, 100, "org_trial"
 	case avgFileMB <= 256 && filesPerMonth <= 120000:
 		return 256, 120000, "growth"
 	default:
