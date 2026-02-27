@@ -318,6 +318,139 @@ h3 {
   cursor: progress;
 }
 
+.ops,
+.holder-map,
+.pricing {
+  border-radius: 18px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.ops-head {
+  display: grid;
+  gap: 4px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: #3c4f63;
+}
+
+input,
+select {
+  border: 1px solid #cedae7;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #19334b;
+  padding: 9px 10px;
+  font-size: 0.86rem;
+  width: 100%;
+}
+
+button {
+  border: 1px solid #c7d6e3;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #173248;
+  padding: 8px 11px;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #fff;
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.ops-grid article {
+  border: 1px solid rgba(206, 219, 232, 0.9);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 11px;
+  display: grid;
+  gap: 8px;
+}
+
+.btns {
+  display: flex;
+  gap: 8px;
+}
+
+pre {
+  margin: 0;
+  border: 1px solid rgba(203, 216, 230, 0.95);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #263e54;
+  padding: 10px;
+  font-size: 0.77rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+th,
+td {
+  text-align: left;
+  border-bottom: 1px solid rgba(203, 214, 226, 0.84);
+  padding: 8px 7px;
+  font-size: 0.8rem;
+  color: #1f364d;
+  vertical-align: top;
+}
+
+th {
+  color: #49627a;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.contract-card {
+  border: 1px solid rgba(198, 214, 230, 0.92);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.contract-metrics {
+  display: grid;
+  gap: 4px;
+  color: #1c3b56;
+  font-size: 0.85rem;
+}
+
 .baseline {
   margin: 0;
   font-size: 0.84rem;
@@ -420,5 +553,13 @@ h3 {
   .session-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-grid {
+    grid-template-columns: 1fr;
   }
 }

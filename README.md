@@ -255,6 +255,17 @@ Local dashboard API（LFC-1009: 署名保有者数 MVP）:
   - `event_count` / `client_event_count`（算出根拠イベント件数）
 - receipt 取込時に `local_sor_signature_holders` を自動更新
 
+Local dashboard API（LFC-1011: ファイル -> 保有者マップ）:
+
+- `GET /api/files/holders` : content hash 単位の保有者マップ（`tenant_id`, `q`, `page`, `page_size`, `sort`, `export=csv`）
+- 表示項目:
+  - `content_sha256`
+  - `filename_sample`
+  - `holder_client_count` / `holder_clients[]`
+  - `signature_count` / `exchange_count`
+  - `last_seen_at`
+- `sort`: `last_seen_desc|last_seen_asc|holder_desc|holder_asc|exchange_desc|exchange_asc`
+
 Local dashboard API（LFC-1010: 外部通知安全ゲート）:
 
 - `POST /api/alerts/dispatch` : 外部通知送信（body: `channel`, `webhook_url`, `dry_run`）
@@ -266,6 +277,21 @@ Local dashboard API（LFC-1010: 外部通知安全ゲート）:
 - 送信 payload は最小化（`level/count` と alert code のみ。詳細メッセージは外部送信しない）
 - 送信結果（`rejected|dry_run|failed|sent`）は監査ログ `.zt-spool/events.jsonl` に
   `event_type=dashboard_alert_dispatch` として記録
+
+SaaS モード / 契約画面（LFC-1012: economics model）:
+
+- `ZT_DASHBOARD_SAAS_MODE=1` で dashboard を SaaS economics 表示モードに切り替え
+- `GET /api/saas/config` : 契約画面の定数（mode, contract title, margin, fee）
+- `GET /api/saas/economics` : 単価/閾値試算（query: `files_per_month`, `avg_file_mb`, `retention_days`）
+- 主な調整用 env:
+  - `ZT_DASHBOARD_FIXED_SERVER_COST_USD`
+  - `ZT_DASHBOARD_FIXED_SUPPORT_COST_USD`
+  - `ZT_DASHBOARD_EGRESS_COST_PER_GB_USD`
+  - `ZT_DASHBOARD_STORAGE_COST_PER_GB_MONTH_USD`
+  - `ZT_DASHBOARD_REQUEST_COST_PER_1K_USD`
+  - `ZT_DASHBOARD_TARGET_GROSS_MARGIN`
+  - `ZT_DASHBOARD_PLATFORM_FEE_RATE`
+  - `ZT_DASHBOARD_PRICE_PER_FILE_FLOOR_USD`
 
 Control Plane dashboard API（tenant/role authz）:
 
