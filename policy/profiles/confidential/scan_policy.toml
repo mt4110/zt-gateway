@@ -1,0 +1,4 @@
+# Trust profile: confidential (strict scanner requirements)
+
+required_scanners = ["ClamAV", "YARA"]
+require_clamav_db = true

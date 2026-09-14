@@ -1,0 +1,4 @@
+# Trust profile: public (sharing-priority baseline)
+
+required_scanners = []
+require_clamav_db = false

@@ -1,0 +1,15 @@
+profile = "regulated"
+allowed_runtimes = ["llama.cpp"]
+offline_lease_seconds = 43200
+require_kernel_shield = false
+require_attestation = false
+
+[formats]
+allow = ["gguf", "safetensors", "onnx"]
+warn = []
+deny = ["pt", "pth", "bin"]
+
+[scan]
+deny_secret_patterns = true
+deny_pickle_serialization = true
+require_signed_provenance = true

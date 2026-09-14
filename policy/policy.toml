@@ -1,0 +1,24 @@
+# Zero-Trust Gateway Policy
+# This file controls the security posture of the local gateway.
+
+# Allowed File Extensions (Allowlist)
+# Only files matching these extensions will be processed.
+# Unknown extensions are blocked by default.
+allowed_extensions = [
+    ".pdf",
+    ".docx",
+    ".xlsx",
+    ".txt",
+    ".md",
+    ".jpg",
+    ".jpeg",
+    ".png"
+]
+
+# Maximum File Size (in MB)
+# Files larger than this will be rejected.
+max_size_mb = 50
+
+# Sanitization Settings (Content Disarm and Reconstruction)
+# If enabled, files will be rebuilt to remove potential threats.
+sanitize_images = true

@@ -1,0 +1,406 @@
+package workflows
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mt4110/zt-gateway/tools/secure-pack/internal/config"
+	"github.com/mt4110/zt-gateway/tools/secure-pack/internal/pack"
+)
+
+func TestResolveSecurePackRootPubKeyFingerprintPins_FromEnvSupportsMultiple(t *testing.T) {
+	t.Setenv(securePackRootPubKeyFingerprintEnv, "0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567,\nFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "")
+
+	got, err := resolveSecurePackRootPubKeyFingerprintPins()
+	if err != nil {
+		t.Fatalf("resolveSecurePackRootPubKeyFingerprintPins() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2 (%v)", len(got), got)
+	}
+	wantA := "0123456789ABCDEF0123456789ABCDEF01234567"
+	wantB := "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	if (got[0] != wantA && got[1] != wantA) || (got[0] != wantB && got[1] != wantB) {
+		t.Fatalf("unexpected normalized pins: %v", got)
+	}
+}
+
+func TestResolveSecurePackRootPubKeyFingerprintPins_UsesZTEnvFallback(t *testing.T) {
+	t.Setenv(securePackRootPubKeyFingerprintEnv, "")
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+	got, err := resolveSecurePackRootPubKeyFingerprintPins()
+	if err != nil {
+		t.Fatalf("resolveSecurePackRootPubKeyFingerprintPins() error = %v", err)
+	}
+	if len(got) != 1 || got[0] != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" {
+		t.Fatalf("got = %v", got)
+	}
+}
+
+func TestParsePrimaryFingerprintFromGPGColons(t *testing.T) {
+	in := "" +
+		"pub:-:255:22:ABCDEF0123456789:1700000000:::-:::scESC::::::23::0:\n" +
+		"fpr:::::::::0123456789ABCDEF0123456789ABCDEF01234567:\n" +
+		"uid:-::::1700000000::X::Root <root@example.com>::::::::::0:\n" +
+		"sub:-:255:18:1111222233334444:1700000000::::::e::::::23:\n" +
+		"fpr:::::::::FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:\n"
+	got, err := parsePrimaryFingerprintFromGPGColons(in)
+	if err != nil {
+		t.Fatalf("parsePrimaryFingerprintFromGPGColons() error = %v", err)
+	}
+	if got != "0123456789ABCDEF0123456789ABCDEF01234567" {
+		t.Fatalf("got = %q", got)
+	}
+}
+
+func securePackSupplyChainFixtureDir() string {
+	return filepath.Join("..", "..", "..", "..", "testdata", "secure-pack-supplychain")
+}
+
+func setupSupplyChainFixtureConfig(t *testing.T) (*config.Config, string) {
+	t.Helper()
+	baseDir := t.TempDir()
+	for _, name := range []string{"tools.lock", "tools.lock.sig", "ROOT_PUBKEY.asc", "FINGERPRINT.txt"} {
+		data, err := os.ReadFile(filepath.Join(securePackSupplyChainFixtureDir(), name))
+		if err != nil {
+			t.Fatalf("read fixture %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(baseDir, name), data, 0o600); err != nil {
+			t.Fatalf("write fixture %s: %v", name, err)
+		}
+	}
+	cfg := config.NewConfig(baseDir)
+	fprBytes, err := os.ReadFile(filepath.Join(baseDir, "FINGERPRINT.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, strings.TrimSpace(string(fprBytes))
+}
+
+func withVerifyToolPinStub(t *testing.T, stub func(toolName, expectedSHA256, expectedVersion string) error) {
+	t.Helper()
+	prev := verifyToolPinFunc
+	verifyToolPinFunc = stub
+	t.Cleanup(func() { verifyToolPinFunc = prev })
+}
+
+func withVerifyPacketWithSignerStub(t *testing.T, stub func(inputPath string) (string, error)) {
+	t.Helper()
+	prev := verifyPacketWithSignerFunc
+	verifyPacketWithSignerFunc = stub
+	t.Cleanup(func() { verifyPacketWithSignerFunc = prev })
+}
+
+func withUnpackPacketStub(t *testing.T, stub func(opts pack.UnpackOptions) (string, error)) {
+	t.Helper()
+	prev := unpackPacketFunc
+	unpackPacketFunc = stub
+	t.Cleanup(func() { unpackPacketFunc = prev })
+}
+
+func TestResolveSecurePackSignerFingerprintPins_FromEnvSupportsMultiple(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567,\nFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+
+	got, err := resolveSecurePackSignerFingerprintPins()
+	if err != nil {
+		t.Fatalf("resolveSecurePackSignerFingerprintPins() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2 (%v)", len(got), got)
+	}
+	wantA := "0123456789ABCDEF0123456789ABCDEF01234567"
+	wantB := "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	if (got[0] != wantA && got[1] != wantA) || (got[0] != wantB && got[1] != wantB) {
+		t.Fatalf("unexpected normalized pins: %v", got)
+	}
+}
+
+func TestResolveSecurePackSignerFingerprintPins_FromAllowlistFile(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+
+	tmp := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	allowlist := "# comment\n0123456789ABCDEF0123456789ABCDEF01234567\n"
+	if err := os.WriteFile("SIGNERS_ALLOWLIST.txt", []byte(allowlist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveSecurePackSignerFingerprintPins()
+	if err != nil {
+		t.Fatalf("resolveSecurePackSignerFingerprintPins() error = %v", err)
+	}
+	if len(got) != 1 || got[0] != "0123456789ABCDEF0123456789ABCDEF01234567" {
+		t.Fatalf("got = %v", got)
+	}
+}
+
+func TestVerifyWorkflow_SignerPinMissingReturnsCode(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, filepath.Join(t.TempDir(), "missing.txt"))
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		t.Fatalf("verifyPacketWithSignerFunc should not be called when pins are missing")
+		return "", nil
+	})
+
+	err := VerifyWorkflow(inputPath)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeSignerPinMissing {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMissing, err)
+	}
+	if !strings.Contains(err.Error(), securePackSignersAllowlistFileEnv) {
+		t.Fatalf("error = %q, want hint for %s", err.Error(), securePackSignersAllowlistFileEnv)
+	}
+}
+
+func TestVerifyWorkflow_SignerPinMismatchReturnsCode(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		return "0123456789ABCDEF0123456789ABCDEF01234567", nil
+	})
+
+	err := VerifyWorkflow(inputPath)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeSignerPinMismatch {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMismatch, err)
+	}
+}
+
+func TestVerifyWorkflow_SignerPinMatchPasses(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		return "0123456789ABCDEF0123456789ABCDEF01234567", nil
+	})
+
+	if err := VerifyWorkflow(inputPath); err != nil {
+		t.Fatalf("VerifyWorkflow() error = %v", err)
+	}
+}
+
+func TestReceiverWorkflow_SignerPinMissingReturnsCode(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, filepath.Join(t.TempDir(), "missing.txt"))
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		t.Fatalf("verifyPacketWithSignerFunc should not be called when signer pins are missing")
+		return "", nil
+	})
+	withUnpackPacketStub(t, func(opts pack.UnpackOptions) (string, error) {
+		t.Fatalf("unpackPacketFunc should not be called when signer pins are missing")
+		return "", nil
+	})
+
+	_, err := ReceiverWorkflow(config.NewConfig(t.TempDir()), inputPath, filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeSignerPinMissing {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMissing, err)
+	}
+}
+
+func TestReceiverWorkflow_SignerPinMismatchReturnsCode(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		return "0123456789ABCDEF0123456789ABCDEF01234567", nil
+	})
+	withUnpackPacketStub(t, func(opts pack.UnpackOptions) (string, error) {
+		t.Fatalf("unpackPacketFunc should not be called when signer pin mismatch")
+		return "", nil
+	})
+
+	_, err := ReceiverWorkflow(config.NewConfig(t.TempDir()), inputPath, filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeSignerPinMismatch {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeSignerPinMismatch, err)
+	}
+}
+
+func TestReceiverWorkflow_SignerPinMatchExtracts(t *testing.T) {
+	t.Setenv(securePackSignerFingerprintEnv, "0123456789ABCDEF0123456789ABCDEF01234567")
+	t.Setenv(securePackSignerFingerprintZTEnv, "")
+	t.Setenv(securePackSignersAllowlistFileEnv, "")
+	inputPath := filepath.Join(t.TempDir(), "packet.spkg.tgz")
+	if err := os.WriteFile(inputPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectedOut := filepath.Join(t.TempDir(), "out")
+	withVerifyPacketWithSignerStub(t, func(inputPath string) (string, error) {
+		return "0123456789ABCDEF0123456789ABCDEF01234567", nil
+	})
+	withUnpackPacketStub(t, func(opts pack.UnpackOptions) (string, error) {
+		if opts.InputPath != inputPath {
+			t.Fatalf("opts.InputPath = %q, want %q", opts.InputPath, inputPath)
+		}
+		if opts.OutDir != expectedOut {
+			t.Fatalf("opts.OutDir = %q, want %q", opts.OutDir, expectedOut)
+		}
+		if len(opts.AllowedSignerFingerprints) != 1 || opts.AllowedSignerFingerprints[0] != "0123456789ABCDEF0123456789ABCDEF01234567" {
+			t.Fatalf("opts.AllowedSignerFingerprints = %v", opts.AllowedSignerFingerprints)
+		}
+		return expectedOut, nil
+	})
+
+	got, err := ReceiverWorkflow(config.NewConfig(t.TempDir()), inputPath, expectedOut)
+	if err != nil {
+		t.Fatalf("ReceiverWorkflow() error = %v", err)
+	}
+	if got != expectedOut {
+		t.Fatalf("got = %q, want %q", got, expectedOut)
+	}
+}
+
+func TestVerifySupplyChainLock_FixedFixture_SignatureValidWhenPinMatches(t *testing.T) {
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Skip("gpg not installed")
+	}
+	cfg, fpr := setupSupplyChainFixtureConfig(t)
+	t.Setenv(securePackRootPubKeyFingerprintEnv, fpr)
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "")
+	withVerifyToolPinStub(t, func(toolName, expectedSHA256, expectedVersion string) error { return nil })
+
+	if err := verifySupplyChainLock(cfg); err != nil {
+		t.Fatalf("verifySupplyChainLock() error = %v", err)
+	}
+}
+
+func TestVerifySupplyChainLock_FixedFixture_PinMissing(t *testing.T) {
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Skip("gpg not installed")
+	}
+	cfg, _ := setupSupplyChainFixtureConfig(t)
+	t.Setenv(securePackRootPubKeyFingerprintEnv, "")
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "")
+	withVerifyToolPinStub(t, func(toolName, expectedSHA256, expectedVersion string) error { return nil })
+
+	err := verifySupplyChainLock(cfg)
+	if err == nil || !strings.Contains(err.Error(), "no trusted root key fingerprint pins configured") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifySupplyChainLock_FixedFixture_PinMismatch(t *testing.T) {
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Skip("gpg not installed")
+	}
+	cfg, _ := setupSupplyChainFixtureConfig(t)
+	t.Setenv(securePackRootPubKeyFingerprintEnv, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "")
+	withVerifyToolPinStub(t, func(toolName, expectedSHA256, expectedVersion string) error { return nil })
+
+	err := verifySupplyChainLock(cfg)
+	if err == nil || !strings.Contains(err.Error(), "ROOT_PUBKEY.asc fingerprint mismatch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSenderWorkflow_ErrorCode_HashMismatch_FromFixedFixture(t *testing.T) {
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Skip("gpg not installed")
+	}
+	cfg, fpr := setupSupplyChainFixtureConfig(t)
+	t.Setenv(securePackRootPubKeyFingerprintEnv, fpr)
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "")
+
+	_, err := SenderWorkflow(cfg, "clientA")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeToolHashMismatch {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeToolHashMismatch, err)
+	}
+}
+
+func TestSenderWorkflow_ErrorCode_VersionMismatch_FromFixedFixture(t *testing.T) {
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Skip("gpg not installed")
+	}
+	cfg, fpr := setupSupplyChainFixtureConfig(t)
+	t.Setenv(securePackRootPubKeyFingerprintEnv, fpr)
+	t.Setenv(securePackRootPubKeyFingerprintZTEnv, "")
+	withVerifyToolPinStub(t, func(toolName, expectedSHA256, expectedVersion string) error {
+		return fmt.Errorf("version mismatch for %s: expected %q, got %q", toolName, expectedVersion, "fixture-stub")
+	})
+
+	_, err := SenderWorkflow(cfg, "clientA")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if got := ErrorCode(err); got != ErrCodeToolVersionMismatch {
+		t.Fatalf("ErrorCode(err) = %q, want %q (err=%v)", got, ErrCodeToolVersionMismatch, err)
+	}
+}
+
+func TestClassifySupplyChainVerifyError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  string
+		want string
+	}{
+		{"files", "required supply-chain file not found: tools.lock", ErrCodeSupplyChainFilesMissing},
+		{"pin invalid", "root key fingerprint pin configuration invalid: bad", ErrCodeRootPinConfigInvalid},
+		{"pin missing", "no trusted root key fingerprint pins configured", ErrCodeRootPinMissing},
+		{"pin mismatch", "ROOT_PUBKEY.asc fingerprint mismatch: got X", ErrCodeRootPinMismatch},
+		{"sig", "tools.lock signature verification failed: bad signature", ErrCodeToolsLockSignatureInvalid},
+		{"hash", "gpg pin verification failed: sha256 mismatch for gpg", ErrCodeToolHashMismatch},
+		{"version", "tar pin verification failed: version mismatch for tar", ErrCodeToolVersionMismatch},
+		{"fallback", "unexpected failure", ErrCodeSupplyChainVerifyFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifySupplyChainVerifyError(errors.New(tc.err)); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}

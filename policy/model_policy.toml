@@ -1,0 +1,11 @@
+# Model capsule policy defaults for zt model commands.
+profile = "internal"
+allowed_runtimes = ["llama.cpp"]
+offline_lease_seconds = 86400
+require_kernel_shield = false
+require_attestation = false
+
+[formats]
+allow = ["gguf", "safetensors", "onnx"]
+warn = ["pt", "pth", "bin"]
+deny = []

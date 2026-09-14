@@ -1,0 +1,9 @@
+profile = "regulated"
+shield_min_tier = "audit_only"
+offline_lease_seconds = 43200
+allowed_runtimes = ["fake", "llama.cpp"]
+require_signed_audit = true
+
+[egress]
+default = "deny"
+allow = []

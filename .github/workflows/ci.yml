@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      with:
+        nix_path: nixpkgs=channel:nixos-unstable
+
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: gateway/zt/dashboard-ui/package-lock.json
+
+    - name: Check and build dashboard
+      working-directory: gateway/zt/dashboard-ui
+      run: |
+        npm ci
+        npm run check
+        npm run build
+        git diff --exit-code -- dist
+
+    - name: Dashboard browser smoke tests
+      working-directory: gateway/zt/dashboard-ui
+      run: |
+        npx playwright install --with-deps chromium
+        npm run test:smoke
+
+    - name: Check Flake
+      run: nix flake check
+
+    - name: Build
+      run: nix build .#zt
+
+    - name: Test all Go modules
+      run: nix develop --command go test -count=1 ./...
+
+    - name: ZT Contract Gate
+      run: |
+        chmod +x scripts/ci/check-zt-contract-gate.sh
+        nix develop --command ./scripts/ci/check-zt-contract-gate.sh
+
+    - name: v0.8.0 Core Gate
+      run: |
+        chmod +x scripts/ci/check-v080-core-gate.sh
+        nix develop --command ./scripts/ci/check-v080-core-gate.sh
+
+    - name: Control Plane Contract Gate
+      run: |
+        chmod +x scripts/ci/check-control-plane-contract-gate.sh
+        nix develop --command ./scripts/ci/check-control-plane-contract-gate.sh
+
+    - name: Supply-Chain Setup JSON Gate (fixture)
+      env:
+        ZT_BIN: ${{ github.workspace }}/result/bin/zt
+      run: |
+        chmod +x scripts/ci/check-zt-setup-json-gate.sh
+        nix develop --command ./scripts/ci/check-zt-setup-json-gate.sh
+
+    - name: Policy Rollout Gate
+      run: |
+        chmod +x scripts/ci/check-policy-rollout-gate.sh
+        nix develop --command ./scripts/ci/check-policy-rollout-gate.sh
+
+    - name: Supply-Chain Setup JSON Gate (actual repo; fail-closed when artifacts exist)
+      env:
+        ZT_BIN: ${{ github.workspace }}/result/bin/zt
+        ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS: ${{ vars.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS != '' && vars.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS || secrets.ZT_SECURE_PACK_ROOT_PUBKEY_FINGERPRINTS }}
+      run: |
+        chmod +x scripts/ci/check-zt-setup-json-actual-gate.sh
+        nix develop --command ./scripts/ci/check-zt-setup-json-actual-gate.sh
+
+    - name: Run Integration Tests (isolated keys and tool pins)
+      env:
+        ZT_BIN: ${{ github.workspace }}/result/bin/zt
+      run: |
+        chmod +x test/integration.sh
+        nix develop --command ./test/integration.sh --client local-smoketest

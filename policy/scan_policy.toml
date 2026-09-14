@@ -1,0 +1,11 @@
+# zt-gateway scan policy (secure-scan JSON-mode requirements)
+#
+# This file controls scanner availability requirements passed from zt -> secure-scan.
+# Keep these separate from extension routing policy so enforcement can evolve independently.
+
+# Require these scanners to be available for zt send.
+required_scanners = ["ClamAV", "YARA"]
+
+# Require a usable ClamAV DB directory (with DB files) to be present.
+require_clamav_db = true
+

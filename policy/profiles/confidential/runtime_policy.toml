@@ -1,0 +1,8 @@
+profile = "confidential"
+shield_min_tier = "audit_only"
+offline_lease_seconds = 86400
+allowed_runtimes = ["fake", "llama.cpp"]
+
+[egress]
+default = "deny"
+allow = []

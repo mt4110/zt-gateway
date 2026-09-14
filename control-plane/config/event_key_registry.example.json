@@ -1,0 +1,9 @@
+[
+  {
+    "key_id": "dev-smoke",
+    "tenant_id": "local-dev",
+    "alg": "Ed25519",
+    "public_key_b64": "REPLACE_WITH_BASE64_ED25519_PUBLIC_KEY"
+  }
+]
+

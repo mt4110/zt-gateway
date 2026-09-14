@@ -1,0 +1,11 @@
+go 1.27.0
+
+use (
+	.
+	./control-plane/api
+	./gateway/zt
+	./tools/secure-pack
+	./tools/secure-model-scan
+	./tools/secure-scan
+	./tools/secure-rebuild
+)

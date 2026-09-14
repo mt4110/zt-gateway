@@ -1,0 +1,104 @@
+package main
+
+import (
+	"fmt"
+)
+
+func printUsage() {
+	fmt.Println(cliUsageRoot)
+	fmt.Println("")
+	fmt.Println("Start here:")
+	fmt.Println("  setup                       - Check local config/tools/key env/control-plane reachability")
+	fmt.Println("  send --client <name> <file> - Scan -> sanitize -> pack")
+	fmt.Println("  verify <packet.spkg.tgz>    - Verify received packet")
+	fmt.Println("  model pack|verify|run       - Package, verify and run model capsules")
+	fmt.Println("  capability doctor --json    - Inspect local shield/dataplane capabilities")
+	fmt.Println("  audit verify                - Verify local audit log contract")
+	fmt.Println("  audit report                - Generate monthly audit report (JSON/PDF, legal template optional)")
+	fmt.Println("  audit rotate                - Rotate audit logs by month and enforce retention")
+	fmt.Println("  policy status --json        - Show local policy sync/activation status")
+	fmt.Println("  dashboard                   - Local read-only dashboard for keys/policy/audit/receipts")
+	fmt.Println("  unlock issue|verify|revoke  - Two-approval break-glass token workflow")
+	fmt.Println("  relay slack|discord|drive   - Wrapper for channel/share handoff")
+	fmt.Println("  relay auto-drive            - Watch folder -> auto send -> auto drive relay")
+	fmt.Println("  relay hook wrap|serve|finder-quick-action|install-finder|configure-finder - Hook/extension bridge")
+	fmt.Println("  doctor                      - Validate local config resolution")
+	fmt.Println("")
+	fmt.Println("Help:")
+	fmt.Println("  zt --help-advanced          - Show all commands/flags")
+}
+
+func printAdvancedUsage() {
+	fmt.Println(cliUsageRoot)
+	fmt.Println("Commands:")
+	fmt.Printf("  %s - One-command local setup checks\n", cliSetupSignature)
+	fmt.Printf("  %s - Scan, sanitize and package a file\n", cliSendSignature)
+	fmt.Printf("  %s - Risk assessment\n", cliScanSignature)
+	fmt.Printf("  %s - Verify artifact or packet\n", cliVerifySignature)
+	fmt.Printf("  %s - Model capsule operations\n", cliModelSignature)
+	fmt.Printf("  %s - Create a signed model capsule wrapper\n", cliModelPackSignature)
+	fmt.Printf("  %s - Verify a model capsule and emit a receipt\n", cliModelVerifySignature)
+	fmt.Printf("  %s - Run a model capsule through an allowed runtime adapter\n", cliModelRunSignature)
+	fmt.Printf("  %s - Issue a local runtime lease from an env-provided signer\n", cliModelPermitIssueSignature)
+	fmt.Printf("  %s - List local model inventory\n", cliModelInventorySignature)
+	fmt.Printf("  %s - Show local model runtime/inventory status\n", cliModelStatusSignature)
+	fmt.Printf("  %s - Inspect local runtime shield capabilities\n", cliCapabilitySignature)
+	fmt.Printf("  %s - Inspect adaptive dataplane mode\n", cliDataplaneSignature)
+	fmt.Printf("  %s - Verify local audit events contract\n", cliAuditSignature)
+	fmt.Printf("  %s - Generate monthly audit report (JSON/PDF)\n", cliAuditReportSignature)
+	fmt.Printf("  %s - Rotate monthly audit logs and purge expired archives\n", cliAuditRotateSignature)
+	fmt.Printf("  %s - Retry sending locally spooled events\n", cliSyncSignature)
+	fmt.Printf("  %s - Show local policy sync/activation status\n", cliPolicySignature)
+	fmt.Printf("  %s - Start local read-only dashboard\n", cliDashboardSignature)
+	fmt.Printf("  %s - Break-glass token operations\n", cliUnlockSignature)
+	fmt.Printf("  %s - Channel/drive relay wrappers\n", cliRelaySignature)
+	fmt.Printf("  %s - Auto sender/drive relay loop\n", cliRelayAutoDriveSig)
+	fmt.Printf("  %s - Hook bridge for OS/browser integrations\n", cliRelayHookSignature)
+	fmt.Printf("  %s - Validate zt client config/env resolution\n", cliConfigSignature)
+	fmt.Printf("  %s - Alias of `zt config doctor`\n", cliDoctorSignature)
+	fmt.Printf("  %s - Show help\n", cliHelpSignature)
+	fmt.Println("")
+	fmt.Println("Notes:")
+	fmt.Println("  - Add `--copy-command` to copy the receiver `zt verify ...` command to clipboard.")
+	fmt.Println("  - `--share-format` defaults to `auto` (Japanese locale -> ja, otherwise en).")
+	fmt.Println("  - Add `--share-format en` (or `ja`) to force receiver share text language.")
+	fmt.Println("  - Add `--share-route none` to suppress the default stdout share hint.")
+	fmt.Println("  - Add `--share-route file:/tmp/share.txt` or `command-file:/tmp/verify.sh` (repeatable) to fan out share output.")
+	fmt.Println("  - Add `--share-json` to emit structured share payload JSON (stdout/file routes).")
+	fmt.Println("  - `relay drive` supports local sync-folder handoff and optional direct Google Drive API upload (`--api-upload`).")
+	fmt.Println("  - `relay auto-drive` adds stable-window, retry/backoff and dedup ledger for unattended handoff.")
+	fmt.Println("  - `relay hook finder-quick-action` can wrap multiple Finder-selected files in one command (`--force-public` for secure-scan repo guard override).")
+	fmt.Println("  - `relay hook install-finder` auto-registers a Finder Quick Action and writes stable config.")
+	fmt.Println("  - `dashboard` shows danger signals and can toggle local lock to block `send` / `relay` during incidents.")
+	fmt.Println("  - Add `--profile` to select trust posture presets (`internal` by default).")
+	fmt.Println("  - Team boundary break-glass requires explicit `--break-glass-reason` (persistent `ZT_BREAK_GLASS_REASON` is fail-fast).")
+	fmt.Println("  - Recommended break-glass reason token: `incident=<id>;approved_by=<id>;expires_at=<RFC3339>`.")
+	fmt.Println("  - `zt send` uses strict scan mode by default; `--allow-degraded-scan` requires explicit `--break-glass-reason` (`ZT_SEND_ALLOW_DEGRADED_SCAN_WITHOUT_BREAK_GLASS=1` only for controlled exceptions).")
+	fmt.Println("  - `send --client <name>` uses the new secure-pack adapter (spkg.tgz output).")
+	fmt.Println("  - Legacy `artifact.zp` send/verify path has been removed; use `*.spkg.tgz` only.")
+	fmt.Println("  - `model run --no-extract` skips runtime workspace extraction; signed payload metadata is still verified in temporary storage.")
+}
+
+func shouldPrintHelp(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "-h", "--help":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldPrintAdvancedHelp(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "--help-advanced":
+		return true
+	default:
+		return false
+	}
+}

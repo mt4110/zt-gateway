@@ -1,0 +1,22 @@
+# v0.9.2 Team/Enterprise Boundary policy
+# Set enabled=true to enforce recipient/signer/share-route boundary contracts.
+enabled = false
+
+tenant_id = "corp-example"
+team_id = "secops"
+boundary_policy_version = "2026-02-26"
+
+allowed_recipients = ["clientA", "clientB"]
+allowed_signer_fingerprints = [
+  "0123456789ABCDEF0123456789ABCDEF01234567",
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+]
+allowed_share_routes = ["stdout", "none", "file", "command-file"]
+
+break_glass_enabled = true
+break_glass_require_reason = true
+break_glass_require_approver = true
+break_glass_max_ttl_minutes = 60
+
+# break-glass reason token format (recommended):
+# incident=<id>;approved_by=<id>;expires_at=<RFC3339>

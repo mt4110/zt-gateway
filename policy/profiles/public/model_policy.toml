@@ -1,0 +1,14 @@
+profile = "public"
+allowed_runtimes = ["llama.cpp"]
+offline_lease_seconds = 86400
+require_kernel_shield = false
+require_attestation = false
+
+[formats]
+allow = ["gguf", "safetensors", "onnx"]
+warn = ["pt", "pth", "bin"]
+deny = []
+
+[scan]
+deny_secret_patterns = false
+deny_pickle_serialization = false

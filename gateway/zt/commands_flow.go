@@ -1,0 +1,549 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func checkUpdate() {
+	// Stub implementation of update check
+	remoteVer := os.Getenv("ZT_MOCK_REMOTE_VERSION")
+	if remoteVer == "" {
+		return
+	}
+
+	if remoteVer > CurrentRuleVersion {
+		fmt.Printf("[Updater] New signatures found: %s (Current: %s)\n", remoteVer, CurrentRuleVersion)
+		fmt.Println("[Updater] Downloading updates... (Stub)")
+		time.Sleep(500 * time.Millisecond)
+		fmt.Println("[Updater] Update applied successfully.")
+	}
+}
+
+func resolveSendScanStrict(opts sendOptions, envZTScanStrict bool) (bool, string) {
+	profile := normalizeTrustProfile(opts.Profile)
+	if isStrictTrustProfile(profile) {
+		return true, fmt.Sprintf("[Scan] strict mode enforced by profile=%s", profile)
+	}
+	if opts.AllowDegradedScan {
+		return false, "[Scan] degraded scan mode enabled (--allow-degraded-scan). No-scanner-available may be allowed (unsafe)."
+	}
+	if opts.Strict {
+		return true, "[Scan] strict mode enabled (--strict; default for zt send)"
+	}
+	if envZTScanStrict {
+		return true, "[Scan] strict mode enabled by default (`ZT_SCAN_STRICT=1` is redundant for zt send)"
+	}
+	return true, "[Scan] strict mode enabled by default (zt send)"
+}
+
+func resolveSendBoundaryDecisionProfile(raw string) string {
+	profile, err := validateTrustProfile(raw)
+	if err != nil {
+		return trustProfileInternal
+	}
+	return profile
+}
+
+func buildScanPostureSummary(strictEffective bool, requiredScanners []string, requireClamAVDB bool) *scanPostureSummary {
+	return normalizeScanPostureSummary(&scanPostureSummary{
+		StrictEffective:  strictEffective,
+		RequiredScanners: append([]string(nil), requiredScanners...),
+		RequireClamAVDB:  requireClamAVDB,
+		AllowDegraded:    !strictEffective,
+	})
+}
+
+func runSendSecurePackPrecheck(repoRoot string) (bool, []string) {
+	filesCheck, rootPinCheck, sigCheck, fixes := buildSecurePackSupplyChainSetupChecks(repoRoot)
+	checks := []setupCheck{filesCheck, rootPinCheck, sigCheck}
+
+	ok := true
+	for _, c := range checks {
+		if c.Status != "ok" {
+			ok = false
+			break
+		}
+	}
+
+	if ok {
+		fmt.Println("[Precheck] secure-pack root key + tools.lock signature OK (tool pins such as gpg/tar are verified in secure-pack send)")
+		return true, nil
+	}
+
+	fmt.Println("[Precheck] secure-pack supply-chain issues detected before packing:")
+	for _, c := range checks {
+		if c.Status == "ok" {
+			continue
+		}
+		printSetupCheckLine(c)
+	}
+	if len(fixes) > 0 {
+		fmt.Printf("[Hint] %s\n", fixes[0])
+	}
+	return false, fixes
+}
+
+func runScan(adapters *toolAdapters, opts scanOptions) {
+	if cpEvents != nil {
+		if opts.NoAutoSync {
+			cpEvents.SetAutoSync(false)
+		}
+	}
+	targetPath, err := filepath.Abs(opts.Target)
+	if err != nil {
+		printZTErrorCode(ztErrorCodeScanInvalidPath)
+		fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
+		os.Exit(1)
+	}
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		printZTErrorCode(ztErrorCodeScanStatFailed)
+		fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
+		os.Exit(1)
+	}
+	if !info.IsDir() {
+		if err := enforceFileTypeConsistency(targetPath); err != nil {
+			printZTErrorCode(ztErrorCodeScanInputRejected)
+			fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	scanProfile := trustProfileInternal
+	if opts.ForcePublic {
+		scanProfile = trustProfilePublic
+	}
+	tryPolicySync(adapters.repoRoot, "scan", scanProfile)
+
+	// File scan defaults to legacy JSON adapter (machine-readable) to preserve zt flow.
+	if !opts.TUI && !info.IsDir() {
+		out, stderr, err := adapters.modernScanCheckJSON(targetPath, opts.ForcePublic, opts.AutoUpdate, opts.Strict, nil, false)
+		if len(out) > 0 {
+			var scanRes ScanResult
+			_ = json.Unmarshal(out, &scanRes)
+			var scanMap map[string]any
+			if err := json.Unmarshal(out, &scanMap); err == nil {
+				profile := trustProfileInternal
+				if opts.ForcePublic {
+					profile = trustProfilePublic
+				}
+				manifestID := buildLocalPolicyManifestID(filepath.Join(adapters.repoRoot, "policy", "scan_policy.toml"), profile)
+				posture := buildScanPostureSummary(opts.Strict, nil, false)
+				decision := decisionFromScanResultWithPosture(scanRes, profile, manifestID, stringField(scanMap, "rule_hash"), posture)
+				scanMap["policy_decision"] = decision
+				if b, mErr := json.MarshalIndent(scanMap, "", "  "); mErr == nil {
+					out = append(b, '\n')
+				}
+				emitScanEventFromSecureScanJSON("scan", targetPath, out, decision)
+			}
+			fmt.Print(string(out))
+			if err != nil {
+				if len(stderr) > 0 {
+					fmt.Fprintf(os.Stderr, "%s", string(stderr))
+				}
+				printZTErrorCode(ztErrorCodeScanCheckFailed)
+				os.Exit(1)
+			}
+			return
+		}
+		if err != nil {
+			if len(stderr) > 0 {
+				printZTErrorCode(ztErrorCodeScanCheckFailed)
+				fmt.Fprintf(os.Stderr, "Scan Error: %s\n", strings.TrimSpace(string(stderr)))
+				os.Exit(1)
+			}
+			printZTErrorCode(ztErrorCodeScanCheckFailed)
+			fmt.Fprintf(os.Stderr, "Scan Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Println("[Adapter] Using interactive secure-scan (new CLI/TUI)")
+	if err := adapters.interactiveScan(targetPath, opts.ForcePublic, opts.AutoUpdate); err != nil {
+		printZTErrorCode(ztErrorCodeScanTUIFailed)
+		fmt.Fprintf(os.Stderr, "Failed to run secure-scan TUI: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runSend(adapters *toolAdapters, opts sendOptions) {
+	trustFail := func(code string) {
+		printTrustStatusLine(newTrustStatusFailure(code))
+	}
+	resetAuditAppendFailureState()
+	setActiveTeamBoundaryContext(nil)
+	if _, err := ensureOperationUnlocked(adapters.repoRoot, "send"); err != nil {
+		printZTErrorCode(ztErrorCodeLocalLockActive)
+		fmt.Printf("[LOCKED] %v\n", err)
+		trustFail(ztErrorCodeLocalLockActive)
+		os.Exit(1)
+	}
+
+	if cpEvents != nil {
+		if opts.NoAutoSync {
+			cpEvents.SetAutoSync(false)
+		}
+	}
+	inputPath, err := filepath.Abs(opts.InputFile)
+	if err != nil {
+		printZTErrorCode(ztErrorCodeSendInvalidPath)
+		fmt.Printf("GATEWAY_ERROR: Failed to resolve file path: %v\n", err)
+		trustFail(ztErrorCodeSendInvalidPath)
+		os.Exit(1)
+	}
+	opts.Client = strings.TrimSpace(opts.Client)
+	if opts.Client == "" {
+		printZTErrorCode(ztErrorCodeSendClientRequired)
+		fmt.Println("[BLOCKED] zt send now requires --client <name> and only supports spkg.tgz packets.")
+		fmt.Println("Reason: legacy artifact.zp path was removed.")
+		trustFail(ztErrorCodeSendClientRequired)
+		os.Exit(1)
+	}
+	boundaryDecisionProfile := resolveSendBoundaryDecisionProfile(opts.Profile)
+	fmt.Printf("Processing %s...\n", inputPath)
+	boundaryPolicy, boundaryActive, boundaryErr := resolveTeamBoundaryPolicy(adapters.repoRoot)
+	if boundaryErr != nil {
+		decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", "policy_team_boundary_load_failed")
+		emitPolicyDecisionCLI(decision)
+		emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.policy_load_failed", boundaryErr.Error(), decision)
+		printZTErrorCode(ztErrorCodeSendBoundaryPolicy)
+		fmt.Printf("[BLOCKED] Team boundary policy failed: %v\n", boundaryErr)
+		fmt.Printf("[HINT] Repair %s or disable strict requirement (`%s=0` / `%s=0`) only in non-boundary mode.\n", teamBoundaryPolicyFileLabel, teamBoundaryRequiredEnv, teamBoundaryRequiredV094Env)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendBoundaryPolicy)
+		os.Exit(1)
+	}
+	if boundaryActive {
+		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, false, ""))
+		if guardErr := enforceTeamBoundaryBreakGlassStartupGuardrail(boundaryPolicy); guardErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(guardErr)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.break_glass_env_present", guardErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary startup guardrail failed: %v\n", guardErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		breakGlassUsed, breakGlassReason, boundaryEnforceErr := enforceTeamBoundaryForSend(boundaryPolicy, opts)
+		if boundaryEnforceErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(boundaryEnforceErr)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.contract_failed", boundaryEnforceErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary contract failed: %v\n", boundaryEnforceErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		degradedBreakGlassUsed, degradedBreakGlassReason, degradedErr := enforceTeamBoundaryDegradedScanOverride(boundaryPolicy, opts)
+		if degradedErr != nil {
+			errorCode, reasonCode := classifyTeamBoundarySendEnforcementError(degradedErr)
+			decision := decisionForSendPolicyBlock(boundaryDecisionProfile, "team_boundary.local", reasonCode)
+			emitPolicyDecisionCLI(decision)
+			emitSendBoundaryEvent(inputPath, opts.Client, false, "team_boundary.contract_failed", degradedErr.Error(), decision)
+			printZTErrorCode(errorCode)
+			fmt.Printf("[BLOCKED] Team boundary contract failed: %v\n", degradedErr)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(errorCode)
+			os.Exit(1)
+		}
+		if !breakGlassUsed && degradedBreakGlassUsed {
+			breakGlassUsed = true
+			breakGlassReason = degradedBreakGlassReason
+		}
+		setActiveTeamBoundaryContext(newTeamBoundaryRuntimeContext(boundaryPolicy, breakGlassUsed, breakGlassReason))
+		if breakGlassUsed {
+			fmt.Printf("[WARN] Team boundary break-glass accepted (reason=%q).\n", breakGlassReason)
+		}
+	}
+	profileSelection, profileErr := resolveTrustProfilePolicySelection(adapters.repoRoot, opts.Profile)
+	if profileErr != nil {
+		printZTErrorCode(ztErrorCodeSendExtPolicyLoad)
+		fmt.Printf("[BLOCKED] Failed to resolve trust profile %q: %v\n", opts.Profile, profileErr)
+		fmt.Println("Reason: profile-specific policy files must be present for fail-closed routing.")
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendExtPolicyLoad)
+		os.Exit(1)
+	}
+	fmt.Printf("[Profile] %s source=%s\n", profileSelection.Name, profileSelection.Source)
+	tryPolicySync(adapters.repoRoot, "extension", profileSelection.Name)
+	tryPolicySync(adapters.repoRoot, "scan", profileSelection.Name)
+	manifestID := buildLocalPolicyManifestID(profileSelection.ExtensionPolicyPath, profileSelection.Name)
+
+	policyFile := profileSelection.ExtensionPolicyPath
+	extPolicy, policyErr := loadExtensionPolicy(policyFile)
+	if policyErr != nil {
+		printZTErrorCode(ztErrorCodeSendExtPolicyLoad)
+		fmt.Printf("[BLOCKED] Failed to load %s: %v\n", policyFile, policyErr)
+		fmt.Println("Reason: extension policy files are mandatory; missing/invalid policy is fail-closed.")
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendExtPolicyLoad)
+		os.Exit(1)
+	}
+	scanPolicyFile := profileSelection.ScanPolicyPath
+	scanPol, scanPolicyErr := loadScanPolicy(scanPolicyFile)
+	if scanPolicyErr != nil {
+		printZTErrorCode(ztErrorCodeSendScanPolicyLoad)
+		fmt.Printf("[BLOCKED] Failed to load %s: %v\n", scanPolicyFile, scanPolicyErr)
+		fmt.Println("Reason: scan policy files are mandatory; missing/invalid policy is fail-closed.")
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendScanPolicyLoad)
+		os.Exit(1)
+	}
+	mode, policyReason := resolveExtensionMode(inputPath, extPolicy)
+	fmt.Printf("[Policy] %s (%s) source=%s\n", mode, policyReason, extPolicy.Source)
+	if len(scanPol.RequiredScanners) > 0 || scanPol.RequireClamAVDB {
+		fmt.Printf("[Policy] scan requirements: required_scanners=%v require_clamav_db=%t source=%s\n", scanPol.RequiredScanners, scanPol.RequireClamAVDB, scanPol.Source)
+	}
+	if mode == ExtModeDeny {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_extension_denied"))
+		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
+		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %s\n", policyReason)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendPolicyBlocked)
+		os.Exit(1)
+	}
+	if err := enforceFilePolicy(inputPath, mode, extPolicy); err != nil {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_file_constraints_failed"))
+		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
+		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendPolicyBlocked)
+		os.Exit(1)
+	}
+	if err := enforceFileTypeConsistency(inputPath); err != nil {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlockWithCause(profileSelection.Name, manifestID, "policy_magic_mismatch", err))
+		printZTErrorCode(ztErrorCodeSendPolicyBlocked)
+		fmt.Printf("\n[BLOCKED] File was rejected by zt policy.\nReason: %v\n", err)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendPolicyBlocked)
+		os.Exit(1)
+	}
+	if ok, _ := runSendSecurePackPrecheck(adapters.repoRoot); !ok {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_precheck_failed"))
+		printZTErrorCode(ztErrorCodePrecheckSupplyChain)
+		fmt.Println("[BLOCKED] secure-pack supply-chain precheck failed; fix the items above and retry `zt send`.")
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodePrecheckSupplyChain)
+		os.Exit(1)
+	}
+
+	// 1. secure-scan check (new secure-scan JSON mode)
+	fmt.Println("[Step 1/3] Scanning...")
+	scanStrict, strictMsg := resolveSendScanStrict(opts, envBool("ZT_SCAN_STRICT"))
+	fmt.Println(strictMsg)
+	scanPosture := buildScanPostureSummary(scanStrict, scanPol.RequiredScanners, scanPol.RequireClamAVDB)
+	output, scanStderr, err := adapters.modernScanCheckJSON(
+		inputPath,
+		opts.ForcePublic,
+		opts.AutoUpdate,
+		scanStrict,
+		scanPol.RequiredScanners,
+		scanPol.RequireClamAVDB,
+	)
+
+	var res ScanResult
+	if jsonErr := json.Unmarshal(output, &res); jsonErr != nil {
+		if opts.AutoUpdate && len(scanStderr) > 0 {
+			printZTErrorCode(ztErrorCodeSendScanUpdateFail)
+			fmt.Printf("GATEWAY_ERROR: secure-scan update/scan failed before JSON result.\n")
+			fmt.Printf("Hint: `--update` requires `freshclam` (ClamAV updater) and network access.\n")
+			fmt.Printf("stderr: %s\n", strings.TrimSpace(string(scanStderr)))
+			trustFail(ztErrorCodeSendScanUpdateFail)
+			os.Exit(1)
+		}
+		printZTErrorCode(ztErrorCodeSendScanJSONParse)
+		fmt.Printf("GATEWAY_ERROR: Failed to parse scan result: %v\nRaw output: %s\n", jsonErr, string(output))
+		trustFail(ztErrorCodeSendScanJSONParse)
+		os.Exit(1)
+	}
+	if err != nil && res.Result == "" {
+		if opts.AutoUpdate && len(scanStderr) > 0 {
+			printZTErrorCode(ztErrorCodeSendScanUpdateFail)
+			fmt.Printf("GATEWAY_ERROR: secure-scan failed during `--update` pre-scan step.\n")
+			fmt.Printf("Hint: install `freshclam` / ClamAV DB tooling, or rerun without `--update`.\n")
+			fmt.Printf("stderr: %s\n", strings.TrimSpace(string(scanStderr)))
+			trustFail(ztErrorCodeSendScanUpdateFail)
+			os.Exit(1)
+		}
+		printZTErrorCode(ztErrorCodeSendScanCheckFail)
+		fmt.Printf("GATEWAY_ERROR: secure-scan (modern JSON adapter) failed: %v\nOutput: %s\n", err, string(output))
+		if len(scanStderr) > 0 {
+			fmt.Printf("stderr: %s\n", strings.TrimSpace(string(scanStderr)))
+		}
+		trustFail(ztErrorCodeSendScanCheckFail)
+		os.Exit(1)
+	}
+	if len(output) > 0 {
+		var scanMeta map[string]any
+		_ = json.Unmarshal(output, &scanMeta)
+		scanDecision := decisionFromScanResultWithPosture(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"), scanPosture)
+		emitPolicyDecisionCLI(scanDecision)
+		emitScanEventFromSecureScanJSON("send", inputPath, output, scanDecision)
+		if scanDecision.ErrorCode == "policy_scan_posture_violation" {
+			printZTErrorCode(ztErrorCodeSendScanDenied)
+			fmt.Printf("\n[BLOCKED] File was rejected by scan posture contract.\nReason: %s\n", scanDecision.ReasonCode)
+			if opts.SyncNow {
+				runSyncEvents(true)
+			}
+			trustFail(ztErrorCodeSendScanDenied)
+			os.Exit(1)
+		}
+	}
+	if res.Reason == "clean.no_scanners_available" {
+		if scanPosture != nil && scanPosture.AllowDegraded {
+			fmt.Println("[WARN] secure-scan returned allow with no scanners available (degraded mode).")
+		}
+	}
+
+	if res.Result != "allow" {
+		emitPolicyDecisionCLI(decisionForSendPolicyBlock(profileSelection.Name, manifestID, "policy_scan_denied"))
+		printZTErrorCode(ztErrorCodeSendScanDenied)
+		fmt.Printf("\n[BLOCKED] File was rejected by secure-scan.\nReason: %s\n", res.Reason)
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		trustFail(ztErrorCodeSendScanDenied)
+		os.Exit(1)
+	}
+	fmt.Println("Scan passed.")
+
+	// 2. secure-rebuild (Sanitizer) - only for SCAN_REBUILD
+	sanitizedPath := inputPath
+	inputSHA := hashPathSHA256(inputPath)
+	rebuildProvenance := map[string]any{
+		"policy_mode":                 string(mode),
+		"input_sha256":                inputSHA,
+		"requested":                   mode == ExtModeScanRebuild,
+		"tool":                        "secure-rebuild",
+		"supported_scan_rebuild_exts": secureRebuildSupportedExtensions(),
+	}
+	if mode == ExtModeScanRebuild {
+		fmt.Println("[Step 2/3] Sanitizing (secure-rebuild)...")
+		tmpFile, err := os.CreateTemp("", "zt-sanitized-*"+filepath.Ext(inputPath))
+		if err != nil {
+			printZTErrorCode(ztErrorCodeSendSanitizeTemp)
+			fmt.Printf("GATEWAY_ERROR: Failed to create temp file: %v\n", err)
+			trustFail(ztErrorCodeSendSanitizeTemp)
+			os.Exit(1)
+		}
+		tmpFile.Close()
+		sanitizedPath = tmpFile.Name()
+		defer os.Remove(sanitizedPath)
+
+		rebuildOut, rebuildErr := adapters.rebuild(inputPath, sanitizedPath)
+		if rebuildErr != nil {
+			printZTErrorCode(ztErrorCodeSendSanitizeFail)
+			fmt.Printf("GATEWAY_ERROR: Sanitization failed: %v\nOutput: %s\n", rebuildErr, string(rebuildOut))
+			trustFail(ztErrorCodeSendSanitizeFail)
+			os.Exit(1)
+		}
+		outputSHA := hashPathSHA256(sanitizedPath)
+		rebuildProvenance["status"] = "sanitized"
+		rebuildProvenance["method"] = "decode_reencode"
+		rebuildProvenance["output_sha256"] = outputSHA
+		rebuildProvenance["changed"] = inputSHA != "" && outputSHA != "" && inputSHA != outputSHA
+		fmt.Println("Sanitization complete.")
+	} else {
+		fmt.Println("[Step 2/3] Sanitizing (secure-rebuild)...")
+		fmt.Println("Skipped (SCAN_ONLY policy).")
+		rebuildProvenance["status"] = "skipped"
+		rebuildProvenance["reason"] = "policy_scan_only"
+		rebuildProvenance["output_sha256"] = inputSHA
+		rebuildProvenance["changed"] = false
+	}
+
+	// 3. secure-pack
+	fmt.Println("[Step 3/3] Packing...")
+	cwd, _ := os.Getwd()
+
+	if opts.Client != "" {
+		fmt.Printf("[Adapter] Using modern secure-pack (client=%s)\n", opts.Client)
+		packetPath, packOut, packErr := adapters.modernPackSingleFile(sanitizedPath, cwd, opts.Client)
+		if packErr != nil {
+			printZTErrorCode(ztErrorCodeSendPackFail)
+			fmt.Printf("GATEWAY_ERROR: Packing failed (modern adapter): %v\nOutput: %s\n", packErr, string(packOut))
+			trustFail(ztErrorCodeSendPackFail)
+			os.Exit(1)
+		}
+		var scanMeta map[string]any
+		_ = json.Unmarshal(output, &scanMeta)
+		finalDecision := decisionFromScanResultWithPosture(res, profileSelection.Name, manifestID, stringField(scanMeta, "rule_hash"), scanPosture)
+		emitArtifactEvent("spkg.tgz", packetPath, inputPath, opts.Client, stringField(scanMeta, "rule_hash"), finalDecision, rebuildProvenance)
+		if auditFail := consumeAuditAppendFailureState(); auditFail != nil {
+			printZTErrorCode(ztErrorCodeSendAuditAppendFail)
+			fmt.Printf("[FAIL] Packet was generated but audit trail append failed (endpoint=%s): %s\n", auditFail.Endpoint, auditFail.Message)
+			fmt.Printf("[HINT] Restore spool/audit write path and run `zt config doctor --json`; follow docs/V0.9.2_ABNORMAL_USECASES.md#audit-trail-append-failed.\n")
+			trustFail(ztErrorCodeSendAuditAppendFail)
+			os.Exit(1)
+		}
+		if opts.SyncNow {
+			runSyncEvents(true)
+		}
+		fmt.Printf("\n[SUCCESS] Packet generated.\n%s\nSaved: %s\n", string(packOut), packetPath)
+		emitPolicyDecisionCLI(finalDecision)
+		deliverReceiverShare(packetPath, opts)
+		printTrustStatusLine(newTrustStatusSuccess("pending"))
+		return
+	}
+	printZTErrorCode(ztErrorCodeSendClientRequired)
+	fmt.Println("[BLOCKED] zt send now requires --client <name> and only supports spkg.tgz packets.")
+	fmt.Println("Reason: legacy artifact.zp path was removed.")
+	trustFail(ztErrorCodeSendClientRequired)
+	os.Exit(1)
+}
+
+func emitSendBoundaryEvent(inputPath, client string, ok bool, reason string, details string, decision policyDecision) {
+	result := "blocked"
+	if ok {
+		result = "allowed"
+	}
+	payload := map[string]any{
+		"event_id":        fmt.Sprintf("evt_send_%d", time.Now().UTC().UnixNano()),
+		"occurred_at":     time.Now().UTC().Format(time.RFC3339Nano),
+		"host_id":         hostID(),
+		"tool_version":    ztVersion,
+		"command":         "send",
+		"result":          result,
+		"reason":          reason,
+		"target_name":     filepath.Base(strings.TrimSpace(inputPath)),
+		"recipient_name":  strings.TrimSpace(client),
+		"policy_decision": normalizePolicyDecision(decision),
+		"details": map[string]any{
+			"path":    strings.TrimSpace(inputPath),
+			"message": strings.TrimSpace(details),
+		},
+	}
+	applyTeamBoundaryMetadata(payload)
+	emitControlPlaneEvent("/v1/events/send", payload)
+}
