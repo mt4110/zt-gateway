@@ -26,13 +26,16 @@ func TestVerificationSummaryEdgeFixture(t *testing.T) {
 	if file == "" {
 		t.Skip("opt-in LeakFence integration fixture")
 	}
-	var cfg struct{ DSN, TransportSecret, AuthorityKey, JWTSecret, Directory string }
+	var cfg struct{ DSN, TransportSecret, AuthorityKey, JWTSecret, Directory, SyntheticSubject string }
 	bytes, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal("read fixture config")
 	}
 	if json.Unmarshal(bytes, &cfg) != nil {
 		t.Fatal("invalid fixture config")
+	}
+	if cfg.SyntheticSubject != "" && (!strings.HasPrefix(cfg.SyntheticSubject, "synthetic-") || !verificationSummaryIDPattern.MatchString(cfg.SyntheticSubject)) {
+		t.Fatal("additional fixture subject must be an explicit synthetic identifier")
 	}
 	u, err := url.Parse(cfg.DSN)
 	if err != nil || u.Hostname() != "127.0.0.1" || !strings.HasPrefix(u.Path, "/leakfence_validation_") {
@@ -88,7 +91,11 @@ func TestVerificationSummaryEdgeFixture(t *testing.T) {
 			t.Fatal("signed fixture ingest failed")
 		}
 		ids = append(ids, accepted.IngestID)
-		tokens = append(tokens, mustDashboardSSOToken(t, srv.sso.HS256Secret, map[string]any{"iss": srv.sso.Issuer, "aud": srv.sso.Audience, "exp": time.Now().Add(10 * time.Minute).Unix(), "sub": "synthetic-user", "tenant_id": tenant, "role": "admin"}))
+		subject := "synthetic-user"
+		if tenant == "synthetic-zt-a" && cfg.SyntheticSubject != "" {
+			subject = cfg.SyntheticSubject
+		}
+		tokens = append(tokens, mustDashboardSSOToken(t, srv.sso.HS256Secret, map[string]any{"iss": srv.sso.Issuer, "aud": srv.sso.Audience, "exp": time.Now().Add(10 * time.Minute).Unix(), "sub": subject, "tenant_id": tenant, "role": "admin"}))
 	}
 	production := srv.verificationSummaryEdgeHandler()
 	var savedProof string
