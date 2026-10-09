@@ -51,4 +51,4 @@ The Control Plane is a Go service, not a Cloudflare Worker. A Service Binding al
 
 ## Validation evidence
 
-The current checks and their limits are recorded in [the evidence note](./evidence/VERIFICATION_EVENT_SUMMARY.md). The implementation test records mock-DB behavior; an actual PostgreSQL integration run remains unverified. Use synthetic tenant A/B credentials and event signing keys; retain only a public dummy ID and sanitized response, never JWTs, private keys, or real event payloads.
+The API passed both mock-DB contract tests and a local integration test against disposable PostgreSQL 16. The integration test exercised signed event ingestion, the real PostgreSQL JSONB summary query, same-tenant retrieval, and cross-tenant denial for viewer and admin roles. This confirms the local Control Plane path; it does not establish production deployment behavior. Full commands, outcomes, and remaining limits are recorded in [the evidence note](./evidence/VERIFICATION_EVENT_SUMMARY.md). Use synthetic tenant A/B credentials and event signing keys; retain only a public dummy ID and sanitized response, never JWTs, private keys, or real event payloads.
