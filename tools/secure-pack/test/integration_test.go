@@ -108,6 +108,10 @@ func commandVersionLine(t *testing.T, tool string) string {
 }
 
 func TestFullFlow(t *testing.T) {
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Fatalf("GnuPG executable is required for this integration test; run `nix develop --command go test ./...`: %v", err)
+	}
+
 	// 1. Setup secure test workspace
 	tmpRoot, err := os.MkdirTemp("", "secure-pack-test-*")
 	assert.NoError(t, err)

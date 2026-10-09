@@ -191,9 +191,16 @@ go run ./gateway/zt send --client <recipient-name> --share-json ./safe.txt
 ### Go workspace
 
 このリポジトリは `go.work` で複数モジュールを同時開発します。
+全体テストには、統合テストが使用するGnuPGなどを含むNix開発環境を使ってください。
 
 ```bash
 go work sync
+```
+
+全体テストはNix開発環境内で実行してください。secure-packの統合テストがGnuPGを使います。
+
+```bash
+nix develop --command go test ./...
 ```
 
 ### Colima（Docker Desktop を使わない構成）

@@ -284,6 +284,53 @@ paths:
                 type: string
         '503':
           description: Postgres not configured
+  /v1/verification-events/{ingest_id}/summary:
+    get:
+      tags: [Events]
+      summary: Read a minimal summary of one verified verify event
+      description: >
+        Requires SSO JWT authentication with exp, sub, and tenant claims. The event must
+        have been accepted with a valid event signature and a tenant from the signing-key
+        registry. reported_result and reported_policy_decision are values reported by the
+        endpoint; this read does not re-run file verification or re-check the current key.
+        All roles (viewer, operator, auditor, admin) are limited to the JWT tenant.
+        Responses contain only the eight fields in VerificationEventSummary.
+      parameters:
+        - name: ingest_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        - name: Authorization
+          in: header
+          required: true
+          schema: { type: string, example: 'Bearer <SSO JWT>' }
+          description: SSO JWT; API keys and dashboard tokens are not accepted.
+      responses:
+        '200':
+          description: One verified event summary
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            X-Content-Type-Options:
+              schema: { type: string, example: nosniff }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationEventSummary'
+        '400': { description: Invalid path identifier or unsupported query parameter }
+        '401': { description: Missing or invalid SSO JWT }
+        '403': { description: Authenticated principal rejected by SSO policy }
+        '404': { description: Event is missing, outside the JWT tenant, or not an eligible verified event }
+        '405':
+          description: Method not allowed
+          headers:
+            Allow:
+              schema: { type: string, example: GET }
+        '503': { description: SSO/Postgres unavailable or a database/record integrity error }
   /v1/dashboard/activity/groups:
     get:
       tags: [Dashboard]
@@ -662,7 +709,7 @@ paths:
             type: string
             enum: [disable, delete]
             default: disable
-          description: `disable` sets enabled=false; `delete` removes the row.
+          description: '`disable` sets enabled=false; `delete` removes the row.'
         - name: updated_by
           in: query
           required: false
@@ -771,7 +818,7 @@ components:
       required: false
       schema:
         type: string
-      description: Bearer JWT header (`Authorization: Bearer <token>`) when SSO is enabled.
+      description: 'Bearer JWT header (`Authorization: Bearer <token>`) when SSO is enabled.'
     DashboardRoleHeader:
       name: X-ZT-Dashboard-Role
       in: header
@@ -795,6 +842,19 @@ components:
         type: string
       description: Required for admin mutation endpoints when WebAuthn step-up MFA is enabled.
   schemas:
+    VerificationEventSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        ingest_id: { type: string, maxLength: 128 }
+        tenant_id: { type: string, maxLength: 128 }
+        kind: { type: string, enum: [verify] }
+        received_at: { type: string, format: date-time }
+        reported_result: { type: string, enum: [verified, failed, warning, unknown] }
+        reported_policy_decision: { type: string, enum: [allow, deny, degraded, unknown] }
+        event_signature_verified: { type: boolean, enum: [true] }
+      required: [schema_version, ingest_id, tenant_id, kind, received_at, reported_result, reported_policy_decision, event_signature_verified]
     IngestAccepted:
       type: object
       properties:
