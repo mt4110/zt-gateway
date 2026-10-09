@@ -154,6 +154,7 @@ func main() {
 	mux.HandleFunc("/v1/events/scan", s.handleEventIngest("scan"))
 	mux.HandleFunc("/v1/events/artifact", s.handleEventIngest("artifact"))
 	mux.HandleFunc("/v1/events/verify", s.handleEventIngest("verify"))
+	mux.HandleFunc("/v1/verification-events/", s.handleVerificationEventSummary)
 	mux.HandleFunc("/v1/models/passports", s.handleModelPassports)
 	mux.HandleFunc("/v1/models/inventory", s.handleModelsInventory)
 	mux.HandleFunc("/v1/models/grants", s.handleModelGrants)
