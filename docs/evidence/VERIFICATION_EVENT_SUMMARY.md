@@ -1,6 +1,6 @@
 # Verification event summary implementation evidence
 
-- Source revision: `faa539d91a5c0e79d959e33d3b93934763e410a3` (`Initial public release`); implementation changes are uncommitted in the working tree.
+- Test-time source base: `faa539d91a5c0e79d959e33d3b93934763e410a3` (`Initial public release`) plus the then-uncommitted implementation. Those implementation changes were subsequently committed as `8f5d8f6`, with this evidence clarified in `7d16d3b`, and merged in PR #1 as `8d228813`. The original local test record is not a claim that CI ran against an uncommitted tree.
 - Environment: macOS Darwin 27.0.0, arm64; Go `go1.27.1 darwin/arm64`.
 - Test data: generated Ed25519 event-signing key and short-lived HS256 test JWTs; synthetic tenant IDs and payload only. No production credentials or event data.
 

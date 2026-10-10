@@ -18,6 +18,7 @@ type server struct {
 	policyDir               string
 	apiKey                  string
 	sso                     *controlPlaneSSOConfig
+	summaryEdge             *verificationSummaryEdgeConfig
 	scim                    *controlPlaneSCIMSyncManager
 	stepUp                  *controlPlaneStepUpManager
 	allowUnsignedEvents     bool
@@ -88,6 +89,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid control-plane SSO config: %v", err)
 	}
+	summaryEdge, err := loadVerificationSummaryEdgeConfig()
+	if err != nil {
+		log.Fatal("invalid verification summary edge configuration")
+	}
 	verifyPub, err := parseEd25519PublicKeyEnv("ZT_CP_EVENT_VERIFY_PUBKEY_B64")
 	if err != nil {
 		log.Fatalf("invalid ZT_CP_EVENT_VERIFY_PUBKEY_B64: %v", err)
@@ -139,6 +144,7 @@ func main() {
 		policyDir:               policyDir,
 		apiKey:                  apiKey,
 		sso:                     ssoConfig,
+		summaryEdge:             summaryEdge,
 		scim:                    scim,
 		stepUp:                  stepUp,
 		allowUnsignedEvents:     allowUnsignedEvents,
@@ -181,7 +187,13 @@ func main() {
 	mux.HandleFunc("/v1/admin/scim/sync", s.handleAdminSCIMSync)
 
 	log.Printf("zt-control-plane listening on %s (data=%s policy=%s)", addr, dataDir, policyDir)
-	if err := http.ListenAndServe(addr, loggingMiddleware(mux)); err != nil {
+	var handler http.Handler = loggingMiddleware(mux)
+	if summaryEdge != nil {
+		// Expose only the protected summary route on this dedicated instance.
+		// Run ingestion/administration separately on a private listener.
+		handler = s.verificationSummaryEdgeHandler()
+	}
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
 }

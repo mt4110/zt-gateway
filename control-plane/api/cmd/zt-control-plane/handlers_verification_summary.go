@@ -42,6 +42,10 @@ func (s *server) handleVerificationEventSummary(w http.ResponseWriter, r *http.R
 		writeVerificationSummaryError(w, http.StatusServiceUnavailable)
 		return
 	}
+	if s.summaryEdge != nil && !s.summaryEdge.validRequest(r) {
+		writeVerificationSummaryError(w, http.StatusUnauthorized)
+		return
+	}
 	if r.URL.RawQuery != "" {
 		writeVerificationSummaryError(w, http.StatusBadRequest)
 		return
@@ -141,6 +145,14 @@ limit 1
 	if err != nil || len(encoded)+1 > 4096 {
 		writeVerificationSummaryError(w, http.StatusServiceUnavailable)
 		return
+	}
+	if s.summaryEdge != nil {
+		proof, err := s.summaryEdge.proof(r, authCtx, row.IngestID)
+		if err != nil {
+			writeVerificationSummaryError(w, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("X-ZT-Read-Authority", proof)
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(append(encoded, '\n'))
