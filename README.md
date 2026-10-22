@@ -29,6 +29,12 @@
 nix develop
 ```
 
+開発シェルのNode.jsは24.22.1、共有Brotliは1.2.1です。
+2026-10-21の[Node.js security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)に対応するため、
+Node用のnixpkgs入力を別に固定しています。Goなどの既存ツール用の入力は維持します。
+`nix flake check` は実際のNode/Brotliの版と圧縮・展開の基本動作を確認します。
+この動作確認自体は脆弱性の再現試験ではありません。
+
 Gitリポジトリ内で実行する場合は、作業ディレクトリの `origin` を確認し、検査を許可するURLを指定します。下記はSSHでcloneした場合の例です。HTTPSの場合は実際のURLに置き換えてください。
 
 ```bash

@@ -3,9 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Node and its shared Brotli library need the October 2026 security fixes.
+    nodejs-nixpkgs.url = "github:NixOS/nixpkgs/04b65f5f819c8f0d0592a4b34fb3ee57ac92b1ad";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, nodejs-nixpkgs }:
     let
       forAllSystems = nixpkgs.lib.genAttrs [
         "x86_64-linux"
@@ -16,6 +18,11 @@
       perSystem = system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          nodejsPkgs = nodejs-nixpkgs.legacyPackages.${system};
+          nodejs =
+            assert nodejsPkgs.lib.versionAtLeast nodejsPkgs.nodejs_24.version "24.22.1";
+            assert nodejsPkgs.lib.versionAtLeast nodejsPkgs.brotli.version "1.2.1";
+            nodejsPkgs.nodejs_24;
           go = pkgs.go_1_27;
           buildGoModule = pkgs.buildGoModule.override { inherit go; };
         
@@ -65,9 +72,24 @@
         in
         {
           packages = {
-            inherit zt-bin secure-scan secure-pack secure-rebuild zt;
+            inherit zt-bin secure-scan secure-pack secure-rebuild zt nodejs;
             default = zt;
           };
+
+          checks.nodejs-security = nodejsPkgs.runCommand "nodejs-security" {
+            nativeBuildInputs = [ nodejs ];
+          } ''
+            node <<'JS'
+            const assert = require("node:assert/strict");
+            const zlib = require("node:zlib");
+            assert.equal(process.versions.node, "${nodejs.version}");
+            assert.equal(process.versions.brotli, "${nodejsPkgs.brotli.version}");
+            const input = Buffer.from("Brotli runtime check");
+            assert.deepEqual(zlib.brotliDecompressSync(zlib.brotliCompressSync(input)), input);
+            console.log(process.versions.node, process.versions.brotli);
+            JS
+            touch "$out"
+          '';
 
           devShells.default = pkgs.mkShell {
             buildInputs = [
@@ -77,7 +99,7 @@
               pkgs.go-tools
               pkgs.gnupg
               pkgs.gnutar
-              pkgs.nodejs_24
+              nodejs
               pkgs.python3
               # Now these variables are in scope
               secure-scan
@@ -89,6 +111,7 @@
     in
     {
       packages = forAllSystems (system: (perSystem system).packages);
+      checks = forAllSystems (system: (perSystem system).checks);
       devShells = forAllSystems (system: (perSystem system).devShells);
     };
 }
